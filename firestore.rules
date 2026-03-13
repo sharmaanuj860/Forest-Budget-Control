@@ -39,56 +39,47 @@ service cloud.firestore {
 
     match /financialYears/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /ranges/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /schemes/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /sectors/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /activities/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /subActivities/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /soeHeads/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /allocations/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
 
     match /expenditures/{id} {
       allow read: if isAuthenticated();
-      allow create, update: if canWrite();
-      allow delete: if isAdmin();
+      allow create, update, delete: if canWrite();
     }
   }
 }

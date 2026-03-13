@@ -22,6 +22,57 @@ type Allocation = { id: string; soeId: string; rangeId: string; amount: number }
 type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' };
 
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId: string | undefined;
+    email: string | undefined;
+    emailVerified: boolean | undefined;
+    isAnonymous: boolean | undefined;
+    tenantId: string | undefined;
+    providerInfo: {
+      providerId: string;
+      displayName: string | null;
+      email: string | null;
+      photoUrl: string | null;
+    }[];
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email || undefined,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId || undefined,
+      providerInfo: auth.currentUser?.providerData.map(provider => ({
+        providerId: provider.providerId,
+        displayName: provider.displayName,
+        email: provider.email,
+        photoUrl: provider.photoURL
+      })) || []
+    },
+    operationType,
+    path
+  }
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [user, setUser] = useState<any>(null);
@@ -51,6 +102,17 @@ export default function App() {
 
   // --- Auth & Role Check ---
   useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+        }
+      }
+    }
+    testConnection();
+
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
@@ -70,26 +132,30 @@ export default function App() {
            return;
         }
 
-        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-        if (userDoc.exists()) {
-          setUserRole(userDoc.data().role);
-        } else {
-          // If first user ever, make admin, else wait for admin to assign role
-          try {
-            const usersSnap = await getDocs(collection(db, 'users'));
-            if (usersSnap.empty) {
-              const newRole = 'admin';
-              await setDoc(doc(db, 'users', currentUser.uid), {
-                email: currentUser.email,
-                role: newRole
-              });
-              setUserRole(newRole);
-            } else {
-              setUserRole(null);
+        try {
+          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          if (userDoc.exists()) {
+            setUserRole(userDoc.data().role);
+          } else {
+            // If first user ever, make admin, else wait for admin to assign role
+            try {
+              const usersSnap = await getDocs(collection(db, 'users'));
+              if (usersSnap.empty) {
+                const newRole = 'admin';
+                await setDoc(doc(db, 'users', currentUser.uid), {
+                  email: currentUser.email,
+                  role: newRole
+                });
+                setUserRole(newRole);
+              } else {
+                setUserRole(null);
+              }
+            } catch (e) {
+               setUserRole(null);
             }
-          } catch (e) {
-             setUserRole(null);
           }
+        } catch (error) {
+          handleFirestoreError(error, OperationType.GET, 'users');
         }
       } else {
         setUserRole(null);
@@ -107,43 +173,43 @@ export default function App() {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialYear));
       setFys(data);
       if (data.length > 0 && !selectedFyId) setSelectedFyId(data[0].id);
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'financialYears'));
 
     const unsubRanges = onSnapshot(collection(db, 'ranges'), (snap) => {
       setRanges(snap.docs.map(d => ({ id: d.id, ...d.data() } as Range)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'ranges'));
 
     const unsubSchemes = onSnapshot(collection(db, 'schemes'), (snap) => {
       setSchemes(snap.docs.map(d => ({ id: d.id, ...d.data() } as Scheme)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'schemes'));
 
     const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
       setSectors(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sector)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'sectors'));
 
     const unsubActivities = onSnapshot(collection(db, 'activities'), (snap) => {
       setActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'activities'));
 
     const unsubSubActivities = onSnapshot(collection(db, 'subActivities'), (snap) => {
       setSubActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'subActivities'));
 
     const unsubSoes = onSnapshot(collection(db, 'soeHeads'), (snap) => {
       setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
 
     const unsubAllocations = onSnapshot(collection(db, 'allocations'), (snap) => {
       setAllocations(snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
 
     const unsubExpenses = onSnapshot(collection(db, 'expenditures'), (snap) => {
       setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser)));
-    });
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
@@ -607,39 +673,51 @@ export default function App() {
   const handleAddRange = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    if (editingItem?.type === 'Range') {
-      await updateDoc(doc(db, 'ranges', editingItem.item.id), { name });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'ranges'), { name });
+    try {
+      if (editingItem?.type === 'Range') {
+        await updateDoc(doc(db, 'ranges', editingItem.item.id), { name });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'ranges'), { name });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Range' ? OperationType.UPDATE : OperationType.CREATE, 'ranges');
     }
-    e.target.reset();
   };
 
   const handleAddScheme = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     const fyId = e.target.fyId.value;
-    if (editingItem?.type === 'Scheme') {
-      await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, fyId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'schemes'), { name, fyId });
+    try {
+      if (editingItem?.type === 'Scheme') {
+        await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, fyId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'schemes'), { name, fyId });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Scheme' ? OperationType.UPDATE : OperationType.CREATE, 'schemes');
     }
-    e.target.reset();
   };
 
   const handleAddSector = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     const schemeId = e.target.schemeId.value;
-    if (editingItem?.type === 'Sector') {
-      await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'sectors'), { name, schemeId });
+    try {
+      if (editingItem?.type === 'Sector') {
+        await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'sectors'), { name, schemeId });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Sector' ? OperationType.UPDATE : OperationType.CREATE, 'sectors');
     }
-    e.target.reset();
   };
 
   const handleAddActivity = async (e: any) => {
@@ -653,47 +731,59 @@ export default function App() {
       return;
     }
 
-    if (editingItem?.type === 'Activity') {
-      await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'activities'), { id: Date.now().toString(), sectorId, schemeId, name });
+    try {
+      if (editingItem?.type === 'Activity') {
+        await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'activities'), { id: Date.now().toString(), sectorId, schemeId, name });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Activity' ? OperationType.UPDATE : OperationType.CREATE, 'activities');
     }
-    e.target.reset();
   };
 
   const handleAddSubActivity = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     const activityId = e.target.activityId.value;
-    if (editingItem?.type === 'Sub-Activity') {
-      await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'subActivities'), { activityId, name });
+    try {
+      if (editingItem?.type === 'Sub-Activity') {
+        await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'subActivities'), { activityId, name });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Sub-Activity' ? OperationType.UPDATE : OperationType.CREATE, 'subActivities');
     }
-    e.target.reset();
   };
 
   const handleAddSoe = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     const budgetLimit = parseFloat(e.target.budgetLimit.value);
-    const activityId = e.target.activityId.value || null;
     const subActivityId = e.target.subActivityId.value || null;
+    const activityId = subActivityId ? null : (e.target.activityId.value || null);
     
     if (!activityId && !subActivityId) {
       alert("Please select either an Activity or a Sub-Activity");
       return;
     }
 
-    if (editingItem?.type === 'SOE Head') {
-      await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit, activityId, subActivityId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'soeHeads'), { activityId, subActivityId, name, budgetLimit });
+    try {
+      if (editingItem?.type === 'SOE Head') {
+        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit, activityId, subActivityId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'soeHeads'), { activityId, subActivityId, name, budgetLimit });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'SOE Head' ? OperationType.UPDATE : OperationType.CREATE, 'soeHeads');
     }
-    e.target.reset();
   };
 
   const handleAddAllocation = async (e: any) => {
@@ -714,13 +804,17 @@ export default function App() {
       return;
     }
 
-    if (editingItem?.type === 'Allocation') {
-      await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount });
+    try {
+      if (editingItem?.type === 'Allocation') {
+        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Allocation' ? OperationType.UPDATE : OperationType.CREATE, 'allocations');
     }
-    e.target.reset();
   };
 
   const handleAddExpense = async (e: any) => {
@@ -743,28 +837,44 @@ export default function App() {
       return;
     }
 
-    if (editingItem?.type === 'Expenditure') {
-      await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId });
-      setEditingItem(null);
-    } else {
-      await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId });
+    try {
+      if (editingItem?.type === 'Expenditure') {
+        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
     }
-    e.target.reset();
   };
 
   const handleDelete = async (collectionName: string, id: string) => {
     if (window.confirm('Are you sure you want to delete this entry?')) {
-      await deleteDoc(doc(db, collectionName, id));
+      try {
+        await deleteDoc(doc(db, collectionName, id));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, collectionName);
+      }
     }
   };
 
   const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo') => {
-    await updateDoc(doc(db, 'users', userId), { role: newRole });
+    try {
+      await updateDoc(doc(db, 'users', userId), { role: newRole });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
   };
 
   const handleDeleteUser = async (userId: string) => {
     if (window.confirm('Delete this user access?')) {
-      await deleteDoc(doc(db, 'users', userId));
+      try {
+        await deleteDoc(doc(db, 'users', userId));
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, 'users');
+      }
     }
   };
 
@@ -1628,11 +1738,10 @@ function CascadingDropdowns({
       {(type === 'Sub-Activity' || type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
-            name={type === 'Sub-Activity' ? 'activityId' : undefined}
             className="w-full p-2 border rounded" 
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            required
+            required={type !== 'SOE Head'}
           >
             <option value="">Select Activity</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -1644,7 +1753,6 @@ function CascadingDropdowns({
       {(type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && filteredSubActivities.length > 0 && (
         <div className="flex gap-2">
           <select 
-            name={type === 'SOE Head' ? 'subActivityId' : undefined}
             className="w-full p-2 border rounded" 
             value={subActivityId} 
             onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
@@ -1657,15 +1765,8 @@ function CascadingDropdowns({
       )}
       
       {/* Hidden inputs to ensure correct fields are submitted */}
-      {type === 'SOE Head' && (
-        <>
-          <input type="hidden" name="activityId" value={!subActivityId ? activityId : ''} />
-          <input type="hidden" name="subActivityId" value={subActivityId} />
-        </>
-      )}
-      {type === 'Expenditure' && (
-        <input type="hidden" name="activityId" value={activityId} />
-      )}
+      <input type="hidden" name="activityId" value={activityId} />
+      <input type="hidden" name="subActivityId" value={subActivityId} />
 
       {(type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
