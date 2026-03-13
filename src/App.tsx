@@ -2,12 +2,13 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
 import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search } from 'lucide-react';
 import { 
-  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged,
+  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { preloadDatabase } from './preloadData';
 
 // --- Types ---
 type FinancialYear = { id: string; name: string };
@@ -53,21 +54,41 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
+        const email = currentUser.email?.toLowerCase();
+        
+        // Hardcode roles for specific emails to bypass DB requirement
+        if (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com') {
+           setUserRole('admin');
+           // Try to save it, ignore if fails
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'admin' }, { merge: true }).catch(() => {});
+           setLoading(false);
+           return;
+        } else if (email === 'da123@rajgarhforest.app') {
+           setUserRole('deo');
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'deo' }, { merge: true }).catch(() => {});
+           setLoading(false);
+           return;
+        }
+
         const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
         if (userDoc.exists()) {
           setUserRole(userDoc.data().role);
         } else {
           // If first user ever, make admin, else wait for admin to assign role
-          const usersSnap = await getDocs(collection(db, 'users'));
-          if (usersSnap.empty) {
-            const newRole = 'admin';
-            await setDoc(doc(db, 'users', currentUser.uid), {
-              email: currentUser.email,
-              role: newRole
-            });
-            setUserRole(newRole);
-          } else {
-            setUserRole(null);
+          try {
+            const usersSnap = await getDocs(collection(db, 'users'));
+            if (usersSnap.empty) {
+              const newRole = 'admin';
+              await setDoc(doc(db, 'users', currentUser.uid), {
+                email: currentUser.email,
+                role: newRole
+              });
+              setUserRole(newRole);
+            } else {
+              setUserRole(null);
+            }
+          } catch (e) {
+             setUserRole(null);
           }
         }
       } else {
@@ -130,7 +151,92 @@ export default function App() {
     };
   }, [user, userRole]);
 
-  const handleLogin = () => signInWithPopup(auth, googleProvider);
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+
+  const handleLogin = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLoginError('');
+    try {
+      let emailToUse = loginEmail;
+      if (!emailToUse.includes('@')) {
+        emailToUse = `${emailToUse}@rajgarhforest.app`;
+      }
+      if (isSignUp) {
+        await createUserWithEmailAndPassword(auth, emailToUse, loginPassword);
+      } else {
+        await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
+      }
+    } catch (error: any) {
+      console.error('Auth error:', error);
+      if (error.code === 'auth/operation-not-allowed') {
+        setLoginError('Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
+      } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
+        setLoginError('User not found or invalid credentials. If this is a new account, please click "Sign Up" below.');
+      } else {
+        setLoginError(error.message || 'Authentication failed. Please check your credentials.');
+      }
+    }
+  };
+
+  const handleQuickLogin = async (id: string, pass: string) => {
+    setLoginEmail(id);
+    setLoginPassword(pass);
+    setLoginError('');
+    try {
+      const emailToUse = `${id}@rajgarhforest.app`;
+      try {
+        await signInWithEmailAndPassword(auth, emailToUse, pass);
+      } catch (err: any) {
+        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
+          // Auto-create if not found
+          await createUserWithEmailAndPassword(auth, emailToUse, pass);
+          // Wait for auth state change to set role
+          setTimeout(async () => {
+             const user = auth.currentUser;
+             if (user) {
+                const role = id === 'Admin' ? 'admin' : 'deo';
+                await setDoc(doc(db, 'users', user.uid), {
+                  email: user.email,
+                  role: role
+                }, { merge: true });
+                setUserRole(role);
+             }
+          }, 2000);
+        } else {
+          throw err;
+        }
+      }
+    } catch (error: any) {
+      console.error('Quick login error:', error);
+      if (error.code === 'auth/operation-not-allowed') {
+        setLoginError('CRITICAL: Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
+      } else {
+        setLoginError(error.message || 'Quick login failed.');
+      }
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!loginEmail) {
+      setLoginError('Please enter your ID/Email first to reset password.');
+      return;
+    }
+    try {
+      let emailToUse = loginEmail;
+      if (!emailToUse.includes('@')) {
+        emailToUse = `${emailToUse}@rajgarhforest.app`;
+      }
+      await sendPasswordResetEmail(auth, emailToUse);
+      alert('Password reset email sent! Check your inbox (or contact admin if using a dummy ID).');
+    } catch (error: any) {
+      console.error('Reset error:', error);
+      setLoginError(error.message || 'Failed to send reset email.');
+    }
+  };
+
   const handleLogout = () => signOut(auth);
 
   // --- Derived Data / Helpers ---
@@ -411,7 +517,7 @@ export default function App() {
           <h3 className="text-lg font-semibold mb-4 border-b pb-2">
             {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
           </h3>
-          <form onSubmit={onAdd} className="space-y-4">
+          <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-4">
             {formContent}
             <div className="flex gap-2">
               <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
@@ -705,81 +811,126 @@ export default function App() {
 
   const renderReports = () => {
     const downloadPDF = (title: string, data: any[], headers: string[]) => {
-      const doc = new jsPDF();
+      const doc = new jsPDF('landscape');
       doc.text(title, 14, 15);
       (doc as any).autoTable({
         head: [headers],
         body: data,
         startY: 20,
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [5, 150, 105] }
       });
       doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
     };
 
     const downloadExcel = (title: string, data: any[], headers: string[]) => {
-      const ws = XLSX.utils.json_to_sheet([headers, ...data]);
+      const wsData = [headers, ...data];
+      const ws = XLSX.utils.aoa_to_sheet(wsData);
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "Report");
       XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
     };
 
-    const allocationReportData = currentAllocations.map(a => {
+    const comprehensiveReportData = currentAllocations.map(a => {
       const soe = soes.find(s => s.id === a.soeId);
       const range = ranges.find(r => r.id === a.rangeId);
-      const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-      const sch = schemes.find(s => s.id === (sectors.find(sec => sec.id === act?.sectorId)?.schemeId || act?.schemeId));
-      return [sch?.name || 'N/A', act?.name || 'N/A', soe?.name || 'N/A', range?.name || 'N/A', a.amount];
+      
+      let sa = null;
+      let act = null;
+      let sec = null;
+      let sch = null;
+
+      if (soe?.subActivityId) {
+        sa = subActivities.find(s => s.id === soe.subActivityId);
+        act = activities.find(ac => ac.id === sa?.activityId);
+      } else if (soe?.activityId) {
+        act = activities.find(ac => ac.id === soe.activityId);
+      }
+
+      if (act?.sectorId) {
+        sec = sectors.find(s => s.id === act.sectorId);
+        sch = schemes.find(s => s.id === sec?.schemeId);
+      } else if (act?.schemeId) {
+        sch = schemes.find(s => s.id === act.schemeId);
+      }
+
+      const totalBudget = soe?.budgetLimit || 0;
+      const allocated = a.amount;
+      const expenditure = currentExpenses.filter(e => e.allocationId === a.id).reduce((sum, e) => sum + e.amount, 0);
+      const remaining = allocated - expenditure;
+
+      return {
+        range: range?.name || 'N/A',
+        scheme: sch?.name || 'N/A',
+        sector: sec?.name || 'N/A',
+        activity: act?.name || 'N/A',
+        subActivity: sa?.name || 'N/A',
+        soe: soe?.name || 'N/A',
+        totalBudget,
+        allocated,
+        expenditure,
+        remaining
+      };
     });
 
-    const expenditureReportData = currentExpenses.map(e => {
-      const al = allocations.find(a => a.id === e.allocationId);
-      const soe = soes.find(s => s.id === al?.soeId);
-      const range = ranges.find(r => r.id === al?.rangeId);
-      const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-      const sch = schemes.find(s => s.id === (sectors.find(sec => sec.id === act?.sectorId)?.schemeId || act?.schemeId));
-      return [e.date, sch?.name || 'N/A', act?.name || 'N/A', soe?.name || 'N/A', range?.name || 'N/A', e.amount, e.description];
-    });
+    const headers = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Total Budget', 'Allocated', 'Expenditure', 'Remaining'];
+    const tableData = comprehensiveReportData.map(row => [
+      row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, 
+      row.totalBudget, row.allocated, row.expenditure, row.remaining
+    ]);
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <FileBarChart className="text-emerald-600" /> Allocation Report
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
             </h3>
             <div className="flex gap-2">
               <button 
-                onClick={() => downloadPDF('Allocation Report', allocationReportData, ['Scheme', 'Activity', 'SOE', 'Range', 'Amount'])}
-                className="flex-1 bg-red-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700"
+                onClick={() => downloadPDF('Comprehensive Budget Report', tableData, headers)}
+                className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
               >
-                <Download className="w-4 h-4" /> PDF
+                <Download className="w-4 h-4" /> Export PDF
               </button>
               <button 
-                onClick={() => downloadExcel('Allocation Report', allocationReportData, ['Scheme', 'Activity', 'SOE', 'Range', 'Amount'])}
-                className="flex-1 bg-emerald-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700"
+                onClick={() => downloadExcel('Comprehensive Budget Report', tableData, headers)}
+                className="bg-emerald-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
               >
-                <Download className="w-4 h-4" /> Excel
+                <Download className="w-4 h-4" /> Export Excel
               </button>
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-              <TrendingDown className="text-red-600" /> Expenditure Report
-            </h3>
-            <div className="flex gap-2">
-              <button 
-                onClick={() => downloadPDF('Expenditure Report', expenditureReportData, ['Date', 'Scheme', 'Activity', 'SOE', 'Range', 'Amount', 'Description'])}
-                className="flex-1 bg-red-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700"
-              >
-                <Download className="w-4 h-4" /> PDF
-              </button>
-              <button 
-                onClick={() => downloadExcel('Expenditure Report', expenditureReportData, ['Date', 'Scheme', 'Activity', 'SOE', 'Range', 'Amount', 'Description'])}
-                className="flex-1 bg-emerald-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700"
-              >
-                <Download className="w-4 h-4" /> Excel
-              </button>
-            </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  {headers.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-600">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {comprehensiveReportData.map((row, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="p-3 text-sm">{row.range}</td>
+                    <td className="p-3 text-sm">{row.scheme}</td>
+                    <td className="p-3 text-sm">{row.sector}</td>
+                    <td className="p-3 text-sm">{row.activity}</td>
+                    <td className="p-3 text-sm">{row.subActivity}</td>
+                    <td className="p-3 text-sm font-medium">{row.soe}</td>
+                    <td className="p-3 text-sm text-right text-gray-500">₹{row.totalBudget.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-emerald-600 font-medium">₹{row.allocated.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-red-600 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-blue-600 font-bold">₹{row.remaining.toLocaleString()}</td>
+                  </tr>
+                ))}
+                {comprehensiveReportData.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-8 text-center text-gray-500">No data available for the selected Financial Year.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -795,12 +946,73 @@ export default function App() {
           <Landmark className="h-16 w-16 text-emerald-600 mx-auto" />
           <h1 className="text-3xl font-bold text-gray-900">Forest Budget Control</h1>
           <p className="text-gray-500">Please sign in to access the financial management system.</p>
-          <button 
-            onClick={handleLogin}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
-          >
-            <User className="w-5 h-5" /> Sign in with Google
-          </button>
+          
+          <form onSubmit={handleLogin} className="space-y-4 text-left">
+            {loginError && <div className="p-3 bg-red-50 text-red-600 rounded text-sm">{loginError}</div>}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">ID / Email</label>
+              <input 
+                type="text" 
+                required
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+                placeholder="e.g. DA123 or admin@email.com"
+                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Password</label>
+              <input 
+                type="password" 
+                required
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+                placeholder="••••••••"
+                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+            </div>
+            
+            <div className="flex justify-between items-center">
+              <button 
+                type="button" 
+                onClick={() => setIsSignUp(!isSignUp)}
+                className="text-sm text-emerald-600 hover:underline"
+              >
+                {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
+              </button>
+              <button 
+                type="button" 
+                onClick={handleForgotPassword}
+                className="text-sm text-emerald-600 hover:underline"
+              >
+                Forgot Password?
+              </button>
+            </div>
+
+            <button 
+              type="submit"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
+            >
+              {isSignUp ? 'Sign Up' : 'Sign In'}
+            </button>
+            
+            <div className="pt-4 border-t border-gray-100 flex gap-3">
+              <button 
+                type="button"
+                onClick={() => handleQuickLogin('Admin', 'Admin@123')}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Quick Login: Admin
+              </button>
+              <button 
+                type="button"
+                onClick={() => handleQuickLogin('DA123', 'DA@78406')}
+                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                Quick Login: DEO
+              </button>
+            </div>
+          </form>
         </div>
       </div>
     );
@@ -846,6 +1058,17 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
+              {fys.length === 0 && userRole === 'admin' && (
+                <button
+                  onClick={async () => {
+                    await preloadDatabase();
+                    alert('Database initialized!');
+                  }}
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  Init DB
+                </button>
+              )}
               {isInstallable && (
                 <button
                   onClick={handleInstallClick}
@@ -875,6 +1098,7 @@ export default function App() {
           ].map((item) => (
             <button 
               key={item} 
+              id={`tab-${item}`}
               onClick={() => setActiveTab(item)}
               className={`px-4 py-2 text-sm font-medium rounded transition-colors ${activeTab === item ? 'bg-emerald-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             >
@@ -924,10 +1148,13 @@ export default function App() {
           handleAddSector, 
           (id) => handleDelete('sectors', id), 
           <>
-            <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-2 border rounded">
-              <option value="">Select Scheme</option>
-              {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-2 border rounded">
+                <option value="">Select Scheme</option>
+                {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+            </div>
             <input name="name" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.name : ''} placeholder="Sector Name (e.g. CA, NPV)" className="w-full p-2 border rounded" />
           </>,
           (item) => setEditingItem({ type: 'Sector', item })
@@ -972,16 +1199,12 @@ export default function App() {
           ], 
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
-          <>
-            <select name="activityId" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.activityId : ''} className="w-full p-2 border rounded">
-              <option value="">Select Activity</option>
-              {activities.map(act => {
-                const sec = sectors.find(s => s.id === act.sectorId);
-                return <option key={act.id} value={act.id}>[{sec?.name}] {act.name}</option>
-              })}
-            </select>
+          <CascadingDropdowns 
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            editingItem={editingItem} type="Sub-Activity"
+          >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
-          </>,
+          </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Sub-Activity', item })
         )}
 
@@ -1006,26 +1229,13 @@ export default function App() {
           ], 
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
-          <>
-            <div className="text-xs text-gray-500 mb-1">Select either Activity OR Sub-Activity</div>
-            <select name="activityId" defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.activityId : ''} className="w-full p-2 border rounded">
-              <option value="">Select Activity (Optional if Sub-Activity selected)</option>
-              {activities.map(a => {
-                const sec = sectors.find(s => s.id === a.sectorId);
-                return <option key={a.id} value={a.id}>{sec?.name} {'->'} {a.name}</option>
-              })}
-            </select>
-            <select name="subActivityId" defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.subActivityId : ''} className="w-full p-2 border rounded">
-              <option value="">Select Sub-Activity (Optional if Activity selected)</option>
-              {subActivities.map(sa => {
-                const act = activities.find(a => a.id === sa.activityId);
-                const sec = sectors.find(s => s.id === act?.sectorId);
-                return <option key={sa.id} value={sa.id}>{sec?.name} {'->'} {act?.name} {'->'} {sa.name}</option>
-              })}
-            </select>
+          <CascadingDropdowns 
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            editingItem={editingItem} type="SOE Head"
+          >
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
             <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.budgetLimit : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
-          </>,
+          </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'SOE Head', item })
         )}
 
@@ -1087,33 +1297,16 @@ export default function App() {
           ], 
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
-          <>
-            <select name="soeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.soeId : ''} className="w-full p-2 border rounded">
-              <option value="">Select SOE</option>
-              {soes.map(s => {
-                let hierarchy = '';
-                if (s.subActivityId) {
-                  const sa = subActivities.find(sa => sa.id === s.subActivityId);
-                  const act = activities.find(a => a.id === sa?.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name} -> ${sa?.name}`;
-                } else if (s.activityId) {
-                  const act = activities.find(a => a.id === s.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name}`;
-                }
-                const avail = s.budgetLimit - getSoeAllocated(s.id) + (editingItem?.type === 'Allocation' && editingItem.item.soeId === s.id ? editingItem.item.amount : 0);
-                return <option key={s.id} value={s.id}>[{hierarchy}] {s.name} (Avail: ₹{avail})</option>
-              })}
-            </select>
+          <CascadingDropdowns 
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            editingItem={editingItem} type="Allocation"
+          >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
               <option value="">Select Range</option>
               {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
             <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
-          </>,
+          </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Allocation', item })
         )}
 
@@ -1231,24 +1424,14 @@ export default function App() {
               ], 
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
-              <>
-                <select name="allocationId" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.allocationId : ''} className="w-full p-2 border rounded">
-                  <option value="">Select Allocation</option>
-                  {allocations.map(a => {
-                    const r = ranges.find(r => r.id === a.rangeId);
-                    const s = soes.find(s => s.id === a.soeId);
-                    const avail = a.amount - getAllocSpent(a.id) + (editingItem?.type === 'Expenditure' && editingItem.item.allocationId === a.id ? editingItem.item.amount : 0);
-                    return <option key={a.id} value={a.id}>{r?.name} - {s?.name} (Avail: ₹{avail})</option>
-                  })}
-                </select>
-                <select name="activityId" defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.activityId : ''} className="w-full p-2 border rounded">
-                  <option value="">Select Activity (Optional)</option>
-                  {activities.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>
+              <CascadingDropdowns 
+                schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+                editingItem={editingItem} type="Expenditure"
+              >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
                 <input name="date" type="date" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
                 <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
-              </>,
+              </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Expenditure', item })
             )}
           </div>
@@ -1326,6 +1509,203 @@ export default function App() {
   );
 }
 
+function CascadingDropdowns({ 
+  schemes, sectors, activities, subActivities, soes, allocations, ranges,
+  editingItem, type, children 
+}: any) {
+  const [schemeId, setSchemeId] = useState('');
+  const [sectorId, setSectorId] = useState('');
+  const [activityId, setActivityId] = useState('');
+  const [subActivityId, setSubActivityId] = useState('');
+  const [soeId, setSoeId] = useState('');
+  const [allocationId, setAllocationId] = useState('');
+
+  // Initialize state based on editingItem
+  useEffect(() => {
+    if (editingItem?.item && editingItem.type === type) {
+      const item = editingItem.item;
+      let currentSoeId = '';
+      let currentSubActivityId = '';
+      let currentActivityId = '';
+      let currentSectorId = '';
+      let currentSchemeId = '';
+
+      if (type === 'Expenditure') {
+        const alloc = allocations.find((a: any) => a.id === item.allocationId);
+        setAllocationId(item.allocationId);
+        currentSoeId = alloc?.soeId || '';
+      } else if (type === 'Allocation') {
+        currentSoeId = item.soeId;
+      } else if (type === 'SOE Head') {
+        currentSubActivityId = item.subActivityId || '';
+        currentActivityId = item.activityId || '';
+      } else if (type === 'Sub-Activity') {
+        currentActivityId = item.activityId;
+      }
+
+      if (currentSoeId) {
+        setSoeId(currentSoeId);
+        const soe = soes.find((s: any) => s.id === currentSoeId);
+        currentSubActivityId = soe?.subActivityId || '';
+        currentActivityId = soe?.activityId || '';
+      }
+
+      if (currentSubActivityId) {
+        setSubActivityId(currentSubActivityId);
+        const sa = subActivities.find((s: any) => s.id === currentSubActivityId);
+        currentActivityId = sa?.activityId || '';
+      }
+
+      if (currentActivityId) {
+        setActivityId(currentActivityId);
+        const act = activities.find((a: any) => a.id === currentActivityId);
+        currentSectorId = act?.sectorId || '';
+        currentSchemeId = act?.schemeId || '';
+      }
+
+      if (currentSectorId) {
+        setSectorId(currentSectorId);
+        const sec = sectors.find((s: any) => s.id === currentSectorId);
+        currentSchemeId = sec?.schemeId || '';
+      }
+
+      if (currentSchemeId) {
+        setSchemeId(currentSchemeId);
+      }
+    } else {
+      setSchemeId('');
+      setSectorId('');
+      setActivityId('');
+      setSubActivityId('');
+      setSoeId('');
+      setAllocationId('');
+    }
+  }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
+
+  const selectedScheme = schemes.find((s: any) => s.id === schemeId);
+  const isCampa = selectedScheme?.name.toUpperCase().includes('CAMPA');
+
+  const filteredSectors = sectors.filter((s: any) => s.schemeId === schemeId);
+  const filteredActivities = activities.filter((a: any) => 
+    isCampa ? a.sectorId === sectorId : a.schemeId === schemeId
+  );
+  const filteredSubActivities = subActivities.filter((sa: any) => sa.activityId === activityId);
+  const filteredSoes = soes.filter((s: any) => 
+    subActivityId ? s.subActivityId === subActivityId : s.activityId === activityId
+  );
+  const filteredAllocations = allocations.filter((a: any) => a.soeId === soeId);
+
+  return (
+    <>
+      <div className="flex gap-2">
+        <select 
+          className="w-full p-2 border rounded" 
+          value={schemeId} 
+          onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+          required={type !== 'Activity'}
+        >
+          <option value="">Select Scheme</option>
+          {schemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+      </div>
+
+      {isCampa && (
+        <div className="flex gap-2">
+          <select 
+            className="w-full p-2 border rounded" 
+            value={sectorId} 
+            onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+            required
+          >
+            <option value="">Select Sector</option>
+            {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
+        </div>
+      )}
+
+      {(type === 'Sub-Activity' || type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
+        <div className="flex gap-2">
+          <select 
+            name={type === 'Sub-Activity' ? 'activityId' : undefined}
+            className="w-full p-2 border rounded" 
+            value={activityId} 
+            onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+            required
+          >
+            <option value="">Select Activity</option>
+            {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Activity">+</button>
+        </div>
+      )}
+
+      {(type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && filteredSubActivities.length > 0 && (
+        <div className="flex gap-2">
+          <select 
+            name={type === 'SOE Head' ? 'subActivityId' : undefined}
+            className="w-full p-2 border rounded" 
+            value={subActivityId} 
+            onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
+          >
+            <option value="">Select Sub-Activity (Optional)</option>
+            {filteredSubActivities.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-Sub-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sub-Activity">+</button>
+        </div>
+      )}
+      
+      {/* Hidden inputs to ensure correct fields are submitted */}
+      {type === 'SOE Head' && (
+        <>
+          <input type="hidden" name="activityId" value={!subActivityId ? activityId : ''} />
+          <input type="hidden" name="subActivityId" value={subActivityId} />
+        </>
+      )}
+      {type === 'Expenditure' && (
+        <input type="hidden" name="activityId" value={activityId} />
+      )}
+
+      {(type === 'Allocation' || type === 'Expenditure') && (
+        <div className="flex gap-2">
+          <select 
+            name={type === 'Allocation' ? 'soeId' : undefined}
+            className="w-full p-2 border rounded" 
+            value={soeId} 
+            onChange={(e) => { setSoeId(e.target.value); setAllocationId(''); }}
+            required
+          >
+            <option value="">Select SOE Head</option>
+            {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add SOE Head">+</button>
+        </div>
+      )}
+
+      {type === 'Expenditure' && (
+        <div className="flex gap-2">
+          <select 
+            name="allocationId"
+            className="w-full p-2 border rounded" 
+            value={allocationId} 
+            onChange={(e) => setAllocationId(e.target.value)}
+            required
+          >
+            <option value="">Select Allocation (Range)</option>
+            {filteredAllocations.map((a: any) => {
+              const r = ranges.find((r: any) => r.id === a.rangeId);
+              return <option key={a.id} value={a.id}>{r?.name} (Allocated: ₹{a.amount})</option>
+            })}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Allocation">+</button>
+        </div>
+      )}
+
+      {children}
+    </>
+  );
+}
 function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[], sectors: any[], editingItem: any }) {
   const [selectedSchemeId, setSelectedSchemeId] = useState(editingItem?.item?.schemeId || (editingItem?.item?.sectorId ? sectors.find((s: any) => s.id === editingItem.item.sectorId)?.schemeId : ''));
   
@@ -1334,24 +1714,30 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
 
   return (
     <>
-      <select 
-        name="schemeId" 
-        required 
-        value={selectedSchemeId}
-        onChange={(e) => setSelectedSchemeId(e.target.value)}
-        className="w-full p-2 border rounded"
-      >
-        <option value="">Select Scheme</option>
-        {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-      </select>
+      <div className="flex gap-2">
+        <select 
+          name="schemeId" 
+          required 
+          value={selectedSchemeId}
+          onChange={(e) => setSelectedSchemeId(e.target.value)}
+          className="w-full p-2 border rounded"
+        >
+          <option value="">Select Scheme</option>
+          {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+      </div>
       
       {isCampa && (
-        <select name="sectorId" required defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
-          <option value="">Select Sector</option>
-          {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
-            <option key={sec.id} value={sec.id}>{sec.name}</option>
-          ))}
-        </select>
+        <div className="flex gap-2">
+          <select name="sectorId" required defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
+            <option value="">Select Sector</option>
+            {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
+              <option key={sec.id} value={sec.id}>{sec.name}</option>
+            ))}
+          </select>
+          <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
+        </div>
       )}
       
       <input name="name" required defaultValue={editingItem?.type === 'Activity' ? editingItem.item.name : ''} placeholder="Activity Name" className="w-full p-2 border rounded" />
