@@ -1,0 +1,121 @@
+{
+  "entities": {
+    "FinancialYear": {
+      "title": "Financial Year",
+      "description": "Represents a financial year (e.g., 2025-26)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the financial year" }
+      },
+      "required": ["name"]
+    },
+    "Range": {
+      "title": "Range",
+      "description": "Represents a forest range",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the range" }
+      },
+      "required": ["name"]
+    },
+    "Scheme": {
+      "title": "Scheme",
+      "description": "Represents a budget scheme",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the scheme" },
+        "fyId": { "type": "string", "description": "ID of the financial year" }
+      },
+      "required": ["name", "fyId"]
+    },
+    "Sector": {
+      "title": "Sector",
+      "description": "Represents a sector within a scheme",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the sector" },
+        "schemeId": { "type": "string", "description": "ID of the scheme" }
+      },
+      "required": ["name", "schemeId"]
+    },
+    "Activity": {
+      "title": "Activity",
+      "description": "Represents an activity within a sector or scheme",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the activity" },
+        "sectorId": { "type": "string", "description": "ID of the sector (optional)" },
+        "schemeId": { "type": "string", "description": "ID of the scheme (optional)" }
+      },
+      "required": ["name"]
+    },
+    "SubActivity": {
+      "title": "Sub Activity",
+      "description": "Represents a sub-activity within an activity",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the sub-activity" },
+        "activityId": { "type": "string", "description": "ID of the activity" }
+      },
+      "required": ["name", "activityId"]
+    },
+    "SOEHead": {
+      "title": "SOE Head",
+      "description": "Represents an SOE budget head",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the SOE head" },
+        "budgetLimit": { "type": "number", "description": "The total budget limit" },
+        "activityId": { "type": "string", "description": "ID of the activity (optional)" },
+        "subActivityId": { "type": "string", "description": "ID of the sub-activity (optional)" }
+      },
+      "required": ["name", "budgetLimit"]
+    },
+    "Allocation": {
+      "title": "Allocation",
+      "description": "Represents a budget allocation to a range",
+      "type": "object",
+      "properties": {
+        "soeId": { "type": "string", "description": "ID of the SOE head" },
+        "rangeId": { "type": "string", "description": "ID of the range" },
+        "amount": { "type": "number", "description": "The allocated amount" }
+      },
+      "required": ["soeId", "rangeId", "amount"]
+    },
+    "Expenditure": {
+      "title": "Expenditure",
+      "description": "Represents an expenditure entry",
+      "type": "object",
+      "properties": {
+        "allocationId": { "type": "string", "description": "ID of the allocation" },
+        "amount": { "type": "number", "description": "The expenditure amount" },
+        "date": { "type": "string", "description": "The date of expenditure (ISO format)" },
+        "description": { "type": "string", "description": "Description of the expenditure" },
+        "activityId": { "type": "string", "description": "ID of the activity (optional)" }
+      },
+      "required": ["allocationId", "amount", "date", "description"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Represents an application user",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "description": "The user's email" },
+        "role": { "type": "string", "enum": ["admin", "deo"], "description": "The user's role" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/financialYears": { "schema": "FinancialYear", "description": "Collection of financial years" },
+    "/ranges": { "schema": "Range", "description": "Collection of forest ranges" },
+    "/schemes": { "schema": "Scheme", "description": "Collection of budget schemes" },
+    "/sectors": { "schema": "Sector", "description": "Collection of sectors" },
+    "/activities": { "schema": "Activity", "description": "Collection of activities" },
+    "/subActivities": { "schema": "SubActivity", "description": "Collection of sub-activities" },
+    "/soeHeads": { "schema": "SOEHead", "description": "Collection of SOE heads" },
+    "/allocations": { "schema": "Allocation", "description": "Collection of budget allocations" },
+    "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
+    "/users": { "schema": "User", "description": "Collection of application users" }
+  }
+}

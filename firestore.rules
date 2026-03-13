@@ -1,0 +1,93 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' || 
+         (request.auth.token.email == "sharmaanuj860@gmail.com" && request.auth.token.email_verified == true));
+    }
+    
+    function isDEO() {
+      return isAuthenticated() && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo';
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasOnly(['email', 'role']) &&
+             data.email is string &&
+             data.role in ['admin', 'deo'];
+    }
+
+    function isValidExpenditure(data) {
+      return data.keys().hasAll(['allocationId', 'amount', 'date', 'description']) &&
+             data.allocationId is string &&
+             data.amount is number && data.amount > 0 &&
+             data.date is string &&
+             data.description is string && data.description.size() < 1000;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /financialYears/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /ranges/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /schemes/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /sectors/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /activities/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /subActivities/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /soeHeads/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /allocations/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /expenditures/{id} {
+      allow read: if isAuthenticated();
+      allow create, update: if (isAdmin() || isDEO()) && isValidExpenditure(request.resource.data);
+      allow delete: if isAdmin();
+    }
+  }
+}

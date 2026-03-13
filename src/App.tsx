@@ -1,119 +1,175 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search } from 'lucide-react';
+import { 
+  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged,
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
+} from './firebase';
+import { jsPDF } from 'jspdf';
+import 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 
 // --- Types ---
-type FinancialYear = { id: number; name: string };
-type Range = { id: number; name: string };
-type Scheme = { id: number; name: string; fyId: number };
-type Sector = { id: number; schemeId: number; name: string };
-type ActivityItem = { id: number; sectorId?: number; schemeId?: number; name: string };
-type SubActivity = { id: number; activityId: number; name: string };
-type SOE = { id: number; activityId?: number; subActivityId?: number; name: string; budgetLimit: number };
-type Allocation = { id: number; soeId: number; rangeId: number; amount: number };
-type Expense = { id: number; allocationId: number; amount: number; date: string; description: string; activityId?: number };
-
-// --- Initial Mock Data ---
-const initialFYs: FinancialYear[] = [{ id: 1, name: '2025-26' }, { id: 2, name: '2026-27' }];
-const initialRanges: Range[] = [{ id: 1, name: 'Rajgarh' }, { id: 2, name: 'Habban' }];
-const initialSchemes: Scheme[] = [{ id: 1, name: 'CAMPA', fyId: 1 }];
-const initialSectors: Sector[] = [
-  { id: 1, schemeId: 1, name: 'CA (Compensatory Afforestation)' },
-  { id: 2, schemeId: 1, name: 'NPV (Net Present Value)' }
-];
-const initialActivities: ActivityItem[] = [
-  { id: 1, sectorId: 1, name: 'Plantation' },
-  { id: 2, sectorId: 2, name: 'SMC Works' },
-  { id: 3, sectorId: 2, name: 'Nursery works' }
-];
-const initialSubActivities: SubActivity[] = [
-  { id: 1, activityId: 2, name: 'Check Dam' },
-  { id: 2, activityId: 2, name: 'Water Pond' },
-  { id: 3, activityId: 3, name: '1st year activity' },
-  { id: 4, activityId: 3, name: '2nd year activity' }
-];
-const initialSoes: SOE[] = [
-  { id: 1, activityId: 1, name: '20 OC', budgetLimit: 50000 },
-  { id: 2, subActivityId: 1, name: '36 MW', budgetLimit: 150000 }
-];
-const initialAllocations: Allocation[] = [
-  { id: 1, soeId: 1, rangeId: 1, amount: 25000 },
-  { id: 2, soeId: 1, rangeId: 2, amount: 25000 }
-];
-const initialExpenses: Expense[] = [
-  { id: 1, allocationId: 1, amount: 5000, date: '2026-03-10', description: 'Site clearance' }
-];
+type FinancialYear = { id: string; name: string };
+type Range = { id: string; name: string };
+type Scheme = { id: string; name: string; fyId: string };
+type Sector = { id: string; schemeId: string; name: string };
+type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
+type SubActivity = { id: string; activityId: string; name: string };
+type SOE = { id: string; activityId?: string; subActivityId?: string; name: string; budgetLimit: number };
+type Allocation = { id: string; soeId: string; rangeId: string; amount: number };
+type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' };
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [user, setUser] = useState<any>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
+  const [loading, setLoading] = useState(true);
 
   // --- State ---
-  const [fys, setFys] = useState<FinancialYear[]>(initialFYs);
-  const [selectedFyId, setSelectedFyId] = useState<number>(1);
-  const [ranges, setRanges] = useState<Range[]>(initialRanges);
-  const [schemes, setSchemes] = useState<Scheme[]>(initialSchemes);
-  const [sectors, setSectors] = useState<Sector[]>(initialSectors);
-  const [activities, setActivities] = useState<ActivityItem[]>(initialActivities);
-  const [subActivities, setSubActivities] = useState<SubActivity[]>(initialSubActivities);
-  const [soes, setSoes] = useState<SOE[]>(initialSoes);
-  const [allocations, setAllocations] = useState<Allocation[]>(initialAllocations);
-  const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
+  const [fys, setFys] = useState<FinancialYear[]>([]);
+  const [selectedFyId, setSelectedFyId] = useState<string>('');
+  const [ranges, setRanges] = useState<Range[]>([]);
+  const [schemes, setSchemes] = useState<Scheme[]>([]);
+  const [sectors, setSectors] = useState<Sector[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [subActivities, setSubActivities] = useState<SubActivity[]>([]);
+  const [soes, setSoes] = useState<SOE[]>([]);
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '' });
+  const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
 
-  // --- PWA Install State ---
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [isInstallable, setIsInstallable] = useState(false);
-
+  // --- Auth & Role Check ---
   useEffect(() => {
-    const handleBeforeInstallPrompt = (e: Event) => {
-      // Prevent the mini-infobar from appearing on mobile
-      e.preventDefault();
-      // Stash the event so it can be triggered later.
-      setDeferredPrompt(e);
-      // Update UI notify the user they can install the PWA
-      setIsInstallable(true);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    };
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+        if (userDoc.exists()) {
+          setUserRole(userDoc.data().role);
+        } else {
+          // If first user ever, make admin, else wait for admin to assign role
+          const usersSnap = await getDocs(collection(db, 'users'));
+          if (usersSnap.empty) {
+            const newRole = 'admin';
+            await setDoc(doc(db, 'users', currentUser.uid), {
+              email: currentUser.email,
+              role: newRole
+            });
+            setUserRole(newRole);
+          } else {
+            setUserRole(null);
+          }
+        }
+      } else {
+        setUserRole(null);
+      }
+      setLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
-  const handleInstallClick = async () => {
-    if (!deferredPrompt) return;
-    // Show the install prompt
-    deferredPrompt.prompt();
-    // Wait for the user to respond to the prompt
-    const { outcome } = await deferredPrompt.userChoice;
-    if (outcome === 'accepted') {
-      console.log('User accepted the install prompt');
-    } else {
-      console.log('User dismissed the install prompt');
-    }
-    // We've used the prompt, and can't use it again, throw it away
-    setDeferredPrompt(null);
-    setIsInstallable(false);
-  };
+  // --- Real-time Data Sync ---
+  useEffect(() => {
+    if (!user || !userRole) return;
+
+    const unsubFys = onSnapshot(collection(db, 'financialYears'), (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialYear));
+      setFys(data);
+      if (data.length > 0 && !selectedFyId) setSelectedFyId(data[0].id);
+    });
+
+    const unsubRanges = onSnapshot(collection(db, 'ranges'), (snap) => {
+      setRanges(snap.docs.map(d => ({ id: d.id, ...d.data() } as Range)));
+    });
+
+    const unsubSchemes = onSnapshot(collection(db, 'schemes'), (snap) => {
+      setSchemes(snap.docs.map(d => ({ id: d.id, ...d.data() } as Scheme)));
+    });
+
+    const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
+      setSectors(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sector)));
+    });
+
+    const unsubActivities = onSnapshot(collection(db, 'activities'), (snap) => {
+      setActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem)));
+    });
+
+    const unsubSubActivities = onSnapshot(collection(db, 'subActivities'), (snap) => {
+      setSubActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity)));
+    });
+
+    const unsubSoes = onSnapshot(collection(db, 'soeHeads'), (snap) => {
+      setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
+    });
+
+    const unsubAllocations = onSnapshot(collection(db, 'allocations'), (snap) => {
+      setAllocations(snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation)));
+    });
+
+    const unsubExpenses = onSnapshot(collection(db, 'expenditures'), (snap) => {
+      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
+    });
+
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser)));
+    });
+
+    return () => {
+      unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
+      unsubSubActivities(); unsubSoes(); unsubAllocations(); unsubExpenses(); unsubUsers();
+    };
+  }, [user, userRole]);
+
+  const handleLogin = () => signInWithPopup(auth, googleProvider);
+  const handleLogout = () => signOut(auth);
 
   // --- Derived Data / Helpers ---
   const currentSchemes = useMemo(() => schemes.filter(s => s.fyId === selectedFyId), [schemes, selectedFyId]);
   const currentSectors = useMemo(() => sectors.filter(sec => currentSchemes.some(s => s.id === sec.schemeId)), [sectors, currentSchemes]);
-  const currentActivities = useMemo(() => activities.filter(a => currentSectors.some(sec => sec.id === a.sectorId)), [activities, currentSectors]);
+  const currentActivities = useMemo(() => activities.filter(a => {
+    if (a.sectorId) return currentSectors.some(sec => sec.id === a.sectorId);
+    if (a.schemeId) return currentSchemes.some(s => s.id === a.schemeId);
+    return false;
+  }), [activities, currentSectors, currentSchemes]);
   const currentSubActivities = useMemo(() => subActivities.filter(sa => currentActivities.some(a => a.id === sa.activityId)), [subActivities, currentActivities]);
   const currentSoes = useMemo(() => soes.filter(s => 
     (s.activityId && currentActivities.some(a => a.id === s.activityId)) || 
     (s.subActivityId && currentSubActivities.some(sa => sa.id === s.subActivityId))
   ), [soes, currentActivities, currentSubActivities]);
   
-  const currentAllocations = useMemo(() => allocations.filter(a => currentSoes.some(s => s.id === a.soeId)), [allocations, currentSoes]);
+  const currentAllocations = useMemo(() => {
+    let filtered = allocations.filter(a => currentSoes.some(s => s.id === a.soeId));
+    if (allocFilters.schemeId) {
+      filtered = filtered.filter(a => {
+        const soe = soes.find(s => s.id === a.soeId);
+        const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
+        const sec = sectors.find(s => s.id === act?.sectorId);
+        const schId = sec ? sec.schemeId : act?.schemeId;
+        return schId === allocFilters.schemeId;
+      });
+    }
+    if (allocFilters.activityId) {
+      filtered = filtered.filter(a => {
+        const soe = soes.find(s => s.id === a.soeId);
+        const actId = soe?.activityId || subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId;
+        return actId === allocFilters.activityId;
+      });
+    }
+    if (allocFilters.rangeId) {
+      filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
+    }
+    return filtered;
+  }, [allocations, currentSoes, allocFilters, soes, activities, subActivities, sectors]);
   
   const currentExpenses = useMemo(() => {
     let filtered = expenses.filter(e => currentAllocations.some(a => a.id === e.allocationId));
@@ -128,7 +184,7 @@ export default function App() {
         const act = activities.find(a => a.id === soe?.activityId || a.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
         const sec = sectors.find(s => s.id === act?.sectorId);
         const schId = sec ? sec.schemeId : act?.schemeId;
-        return schId === parseInt(expFilters.schemeId);
+        return schId === expFilters.schemeId;
       });
     }
     
@@ -137,7 +193,7 @@ export default function App() {
         const alloc = allocations.find(a => a.id === e.allocationId);
         const soe = soes.find(s => s.id === alloc?.soeId);
         const act = activities.find(a => a.id === soe?.activityId || a.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-        return act?.sectorId === parseInt(expFilters.sectorId);
+        return act?.sectorId === expFilters.sectorId;
       });
     }
     
@@ -146,15 +202,15 @@ export default function App() {
         const alloc = allocations.find(a => a.id === e.allocationId);
         const soe = soes.find(s => s.id === alloc?.soeId);
         const actId = soe?.activityId || subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId;
-        return actId === parseInt(expFilters.activityId);
+        return actId === expFilters.activityId;
       });
     }
 
     return filtered;
   }, [expenses, currentAllocations, expDateRange, expFilters, allocations, soes, activities, subActivities, sectors]);
 
-  const getSoeAllocated = (soeId: number) => allocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
-  const getAllocSpent = (allocId: number) => expenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
+  const getSoeAllocated = (soeId: string) => allocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
+  const getAllocSpent = (allocId: string) => expenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
   const totalBudget = currentSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
   const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
@@ -345,67 +401,71 @@ export default function App() {
     items: any[], 
     columns: {key: string, label: string, render?: (val: any, item: any) => React.ReactNode}[], 
     onAdd: (e: React.FormEvent) => void, 
-    onDelete: (id: number) => void,
+    onDelete: (id: string) => void,
     formContent: React.ReactNode,
     onEdit: (item: any) => void
   ) => (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit sticky top-6">
-        <h3 className="text-lg font-semibold mb-4 border-b pb-2">
-          {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
-        </h3>
-        <form onSubmit={onAdd} className="space-y-4">
-          {formContent}
-          <div className="flex gap-2">
-            <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
-              {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-              {editingItem?.type === title ? 'Update' : 'Add'}
-            </button>
-            {editingItem?.type === title && (
-              <button 
-                type="button" 
-                onClick={() => setEditingItem(null)}
-                className="px-4 py-2 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
-              >
-                Cancel
+      {(userRole === 'admin' || title === 'Expenditure') && (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit sticky top-6">
+          <h3 className="text-lg font-semibold mb-4 border-b pb-2">
+            {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
+          </h3>
+          <form onSubmit={onAdd} className="space-y-4">
+            {formContent}
+            <div className="flex gap-2">
+              <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
+                {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                {editingItem?.type === title ? 'Update' : 'Add'}
               </button>
-            )}
-          </div>
-        </form>
-      </div>
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+              {editingItem?.type === title && (
+                <button 
+                  type="button" 
+                  onClick={() => setEditingItem(null)}
+                  className="px-4 py-2 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+          </form>
+        </div>
+      )}
+      <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
         <h3 className="text-lg font-semibold mb-4 border-b pb-2">Existing {title}s</h3>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                <th className="p-3 border-b text-right">Actions</th>
+                {userRole === 'admin' && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {items.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  <td className="p-3 text-right flex justify-end gap-2">
-                    <button 
-                      onClick={() => onEdit(item)} 
-                      className="text-blue-500 hover:text-blue-700 p-1"
-                      title="Edit"
-                    >
-                      <Activity className="w-4 h-4"/>
-                    </button>
-                    <button 
-                      onClick={() => onDelete(item.id)} 
-                      className="text-red-500 hover:text-red-700 p-1"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-4 h-4"/>
-                    </button>
-                  </td>
+                  {userRole === 'admin' && (
+                    <td className="p-3 text-right flex justify-end gap-2">
+                      <button 
+                        onClick={() => onEdit(item)} 
+                        className="text-blue-500 hover:text-blue-700 p-1"
+                        title="Edit"
+                      >
+                        <Activity className="w-4 h-4"/>
+                      </button>
+                      <button 
+                        onClick={() => onDelete(item.id)} 
+                        className="text-red-500 hover:text-red-700 p-1"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4"/>
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
-              {items.length === 0 && <tr><td colSpan={columns.length + 1} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {items.length === 0 && <tr><td colSpan={columns.length + (userRole === 'admin' ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -413,50 +473,74 @@ export default function App() {
     </div>
   );
 
+  // --- PWA Install Logic ---
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+
+  useEffect(() => {
+    const handler = (e: any) => {
+      e.preventDefault();
+      setInstallPrompt(e);
+      setIsInstallable(true);
+    };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstallable(false);
+      setInstallPrompt(null);
+    }
+  };
+
   // --- Handlers ---
-  const handleAddRange = (e: any) => {
+  const handleAddRange = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     if (editingItem?.type === 'Range') {
-      setRanges(ranges.map(r => r.id === editingItem.item.id ? { ...r, name } : r));
+      await updateDoc(doc(db, 'ranges', editingItem.item.id), { name });
       setEditingItem(null);
     } else {
-      setRanges([...ranges, { id: Date.now(), name }]);
+      await addDoc(collection(db, 'ranges'), { name });
     }
     e.target.reset();
   };
 
-  const handleAddScheme = (e: any) => {
+  const handleAddScheme = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const fyId = parseInt(e.target.fyId.value);
+    const fyId = e.target.fyId.value;
     if (editingItem?.type === 'Scheme') {
-      setSchemes(schemes.map(s => s.id === editingItem.item.id ? { ...s, name, fyId } : s));
+      await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, fyId });
       setEditingItem(null);
     } else {
-      setSchemes([...schemes, { id: Date.now(), name, fyId }]);
+      await addDoc(collection(db, 'schemes'), { name, fyId });
     }
     e.target.reset();
   };
 
-  const handleAddSector = (e: any) => {
+  const handleAddSector = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const schemeId = parseInt(e.target.schemeId.value);
+    const schemeId = e.target.schemeId.value;
     if (editingItem?.type === 'Sector') {
-      setSectors(sectors.map(s => s.id === editingItem.item.id ? { ...s, name, schemeId } : s));
+      await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId });
       setEditingItem(null);
     } else {
-      setSectors([...sectors, { id: Date.now(), schemeId, name }]);
+      await addDoc(collection(db, 'sectors'), { name, schemeId });
     }
     e.target.reset();
   };
 
-  const handleAddActivity = (e: any) => {
+  const handleAddActivity = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const sectorId = e.target.sectorId?.value ? parseInt(e.target.sectorId.value) : undefined;
-    const schemeId = e.target.schemeId?.value ? parseInt(e.target.schemeId.value) : undefined;
+    const sectorId = e.target.sectorId?.value || null;
+    const schemeId = e.target.schemeId?.value || null;
 
     if (!sectorId && !schemeId) {
       alert("Please select either a Sector or a Scheme");
@@ -464,33 +548,33 @@ export default function App() {
     }
 
     if (editingItem?.type === 'Activity') {
-      setActivities(activities.map(a => a.id === editingItem.item.id ? { ...a, name, sectorId, schemeId } : a));
+      await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId });
       setEditingItem(null);
     } else {
-      setActivities([...activities, { id: Date.now(), sectorId, schemeId, name }]);
+      await addDoc(collection(db, 'activities'), { id: Date.now().toString(), sectorId, schemeId, name });
     }
     e.target.reset();
   };
 
-  const handleAddSubActivity = (e: any) => {
+  const handleAddSubActivity = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const activityId = parseInt(e.target.activityId.value);
+    const activityId = e.target.activityId.value;
     if (editingItem?.type === 'Sub-Activity') {
-      setSubActivities(subActivities.map(sa => sa.id === editingItem.item.id ? { ...sa, name, activityId } : sa));
+      await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId });
       setEditingItem(null);
     } else {
-      setSubActivities([...subActivities, { id: Date.now(), activityId, name }]);
+      await addDoc(collection(db, 'subActivities'), { activityId, name });
     }
     e.target.reset();
   };
 
-  const handleAddSoe = (e: any) => {
+  const handleAddSoe = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
     const budgetLimit = parseFloat(e.target.budgetLimit.value);
-    const activityId = e.target.activityId.value ? parseInt(e.target.activityId.value) : undefined;
-    const subActivityId = e.target.subActivityId.value ? parseInt(e.target.subActivityId.value) : undefined;
+    const activityId = e.target.activityId.value || null;
+    const subActivityId = e.target.subActivityId.value || null;
     
     if (!activityId && !subActivityId) {
       alert("Please select either an Activity or a Sub-Activity");
@@ -498,24 +582,23 @@ export default function App() {
     }
 
     if (editingItem?.type === 'SOE Head') {
-      setSoes(soes.map(s => s.id === editingItem.item.id ? { ...s, name, budgetLimit, activityId, subActivityId } : s));
+      await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit, activityId, subActivityId });
       setEditingItem(null);
     } else {
-      setSoes([...soes, { id: Date.now(), activityId, subActivityId, name, budgetLimit }]);
+      await addDoc(collection(db, 'soeHeads'), { activityId, subActivityId, name, budgetLimit });
     }
     e.target.reset();
   };
 
-  const handleAddAllocation = (e: any) => {
+  const handleAddAllocation = async (e: any) => {
     e.preventDefault();
-    const soeId = parseInt(e.target.soeId.value);
-    const rangeId = parseInt(e.target.rangeId.value);
+    const soeId = e.target.soeId.value;
+    const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
     
     const soe = soes.find(s => s.id === soeId);
     if (!soe) return;
 
-    // Validation
     const currentAllocated = allocations
       .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
       .reduce((sum, a) => sum + a.amount, 0);
@@ -526,26 +609,25 @@ export default function App() {
     }
 
     if (editingItem?.type === 'Allocation') {
-      setAllocations(allocations.map(a => a.id === editingItem.item.id ? { ...a, soeId, rangeId, amount } : a));
+      await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount });
       setEditingItem(null);
     } else {
-      setAllocations([...allocations, { id: Date.now(), soeId, rangeId, amount }]);
+      await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount });
     }
     e.target.reset();
   };
 
-  const handleAddExpense = (e: any) => {
+  const handleAddExpense = async (e: any) => {
     e.preventDefault();
-    const allocationId = parseInt(e.target.allocationId.value);
+    const allocationId = e.target.allocationId.value;
     const amount = parseFloat(e.target.amount.value);
     const date = e.target.date.value;
     const description = e.target.description.value;
-    const activityId = e.target.activityId?.value ? parseInt(e.target.activityId.value) : undefined;
+    const activityId = e.target.activityId?.value || null;
 
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
 
-    // Validation
     const currentSpent = expenses
       .filter(e => e.allocationId === allocationId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
       .reduce((sum, e) => sum + e.amount, 0);
@@ -556,15 +638,187 @@ export default function App() {
     }
 
     if (editingItem?.type === 'Expenditure') {
-      setExpenses(expenses.map(exp => exp.id === editingItem.item.id ? { ...exp, allocationId, amount, date, description, activityId } : exp));
+      await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId });
       setEditingItem(null);
     } else {
-      setExpenses([...expenses, { id: Date.now(), allocationId, amount, date, description, activityId }]);
+      await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId });
     }
     e.target.reset();
   };
 
-  // --- Main Render ---
+  const handleDelete = async (collectionName: string, id: string) => {
+    if (window.confirm('Are you sure you want to delete this entry?')) {
+      await deleteDoc(doc(db, collectionName, id));
+    }
+  };
+
+  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo') => {
+    await updateDoc(doc(db, 'users', userId), { role: newRole });
+  };
+
+  const handleDeleteUser = async (userId: string) => {
+    if (window.confirm('Delete this user access?')) {
+      await deleteDoc(doc(db, 'users', userId));
+    }
+  };
+
+  const renderUserManagement = () => (
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+      <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+        <Shield className="h-5 w-5 text-emerald-600" /> User Access Management
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left border-collapse">
+          <thead>
+            <tr className="bg-gray-50 text-gray-600 text-sm">
+              <th className="p-3 border-b">Email</th>
+              <th className="p-3 border-b">Role</th>
+              <th className="p-3 border-b text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u => (
+              <tr key={u.id} className="border-b hover:bg-gray-50">
+                <td className="p-3">{u.email}</td>
+                <td className="p-3">
+                  <select 
+                    value={u.role} 
+                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo')}
+                    className="p-1 border rounded text-sm"
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="deo">DEO</option>
+                  </select>
+                </td>
+                <td className="p-3 text-right">
+                  <button onClick={() => handleDeleteUser(u.id)} className="text-red-500 hover:text-red-700">
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const renderReports = () => {
+    const downloadPDF = (title: string, data: any[], headers: string[]) => {
+      const doc = new jsPDF();
+      doc.text(title, 14, 15);
+      (doc as any).autoTable({
+        head: [headers],
+        body: data,
+        startY: 20,
+      });
+      doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
+    };
+
+    const downloadExcel = (title: string, data: any[], headers: string[]) => {
+      const ws = XLSX.utils.json_to_sheet([headers, ...data]);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Report");
+      XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
+    };
+
+    const allocationReportData = currentAllocations.map(a => {
+      const soe = soes.find(s => s.id === a.soeId);
+      const range = ranges.find(r => r.id === a.rangeId);
+      const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
+      const sch = schemes.find(s => s.id === (sectors.find(sec => sec.id === act?.sectorId)?.schemeId || act?.schemeId));
+      return [sch?.name || 'N/A', act?.name || 'N/A', soe?.name || 'N/A', range?.name || 'N/A', a.amount];
+    });
+
+    const expenditureReportData = currentExpenses.map(e => {
+      const al = allocations.find(a => a.id === e.allocationId);
+      const soe = soes.find(s => s.id === al?.soeId);
+      const range = ranges.find(r => r.id === al?.rangeId);
+      const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
+      const sch = schemes.find(s => s.id === (sectors.find(sec => sec.id === act?.sectorId)?.schemeId || act?.schemeId));
+      return [e.date, sch?.name || 'N/A', act?.name || 'N/A', soe?.name || 'N/A', range?.name || 'N/A', e.amount, e.description];
+    });
+
+    return (
+      <div className="space-y-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <FileBarChart className="text-emerald-600" /> Allocation Report
+            </h3>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => downloadPDF('Allocation Report', allocationReportData, ['Scheme', 'Activity', 'SOE', 'Range', 'Amount'])}
+                className="flex-1 bg-red-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700"
+              >
+                <Download className="w-4 h-4" /> PDF
+              </button>
+              <button 
+                onClick={() => downloadExcel('Allocation Report', allocationReportData, ['Scheme', 'Activity', 'SOE', 'Range', 'Amount'])}
+                className="flex-1 bg-emerald-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700"
+              >
+                <Download className="w-4 h-4" /> Excel
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <TrendingDown className="text-red-600" /> Expenditure Report
+            </h3>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => downloadPDF('Expenditure Report', expenditureReportData, ['Date', 'Scheme', 'Activity', 'SOE', 'Range', 'Amount', 'Description'])}
+                className="flex-1 bg-red-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700"
+              >
+                <Download className="w-4 h-4" /> PDF
+              </button>
+              <button 
+                onClick={() => downloadExcel('Expenditure Report', expenditureReportData, ['Date', 'Scheme', 'Activity', 'SOE', 'Range', 'Amount', 'Description'])}
+                className="flex-1 bg-emerald-600 text-white py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700"
+              >
+                <Download className="w-4 h-4" /> Excel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
+
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+        <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md w-full text-center space-y-6">
+          <Landmark className="h-16 w-16 text-emerald-600 mx-auto" />
+          <h1 className="text-3xl font-bold text-gray-900">Forest Budget Control</h1>
+          <p className="text-gray-500">Please sign in to access the financial management system.</p>
+          <button 
+            onClick={handleLogin}
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
+          >
+            <User className="w-5 h-5" /> Sign in with Google
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (user && !userRole) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6 text-center">
+        <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md w-full space-y-4">
+          <Shield className="h-16 w-16 text-amber-500 mx-auto" />
+          <h2 className="text-2xl font-bold">Access Pending</h2>
+          <p className="text-gray-500">Your account ({user.email}) is registered but has no assigned role. Please contact an administrator to grant you access.</p>
+          <button onClick={handleLogout} className="text-emerald-600 font-semibold hover:underline">Sign Out</button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6 font-sans text-gray-800">
       <div className="max-w-7xl mx-auto space-y-6">
@@ -584,28 +838,41 @@ export default function App() {
               <span className="text-sm font-semibold text-gray-600">Financial Year:</span>
               <select 
                 value={selectedFyId} 
-                onChange={(e) => setSelectedFyId(parseInt(e.target.value))}
+                onChange={(e) => setSelectedFyId(e.target.value)}
                 className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer"
               >
                 {fys.map(fy => <option key={fy.id} value={fy.id}>FY {fy.name}</option>)}
               </select>
             </div>
 
-            {isInstallable && (
-              <button
-                onClick={handleInstallClick}
-                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+            <div className="flex items-center gap-2">
+              {isInstallable && (
+                <button
+                  onClick={handleInstallClick}
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+                >
+                  <Download className="w-4 h-4" />
+                  Install
+                </button>
+              )}
+              <button 
+                onClick={handleLogout}
+                className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors"
               >
-                <Download className="w-4 h-4" />
-                Install
+                <LogOut className="w-4 h-4" />
+                Logout
               </button>
-            )}
+            </div>
           </div>
         </div>
 
         {/* Navigation */}
         <div className="flex flex-wrap gap-2 bg-gray-800 p-4 rounded-lg shadow-sm">
-          {['Dashboard', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 'SOE Heads', 'Allocations', 'Expenditures', 'Ledger'].map((item) => (
+          {[
+            'Dashboard', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
+            'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 
+            ...(userRole === 'admin' ? ['Users'] : [])
+          ].map((item) => (
             <button 
               key={item} 
               onClick={() => setActiveTab(item)}
@@ -624,7 +891,7 @@ export default function App() {
           ranges, 
           [{key: 'name', label: 'Range Name'}], 
           handleAddRange, 
-          (id) => setRanges(ranges.filter(r => r.id !== id)), 
+          (id) => handleDelete('ranges', id), 
           <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Range Name" className="w-full p-2 border rounded" />,
           (item) => setEditingItem({ type: 'Range', item })
         )}
@@ -637,7 +904,7 @@ export default function App() {
             {key: 'name', label: 'Scheme Name'}
           ], 
           handleAddScheme, 
-          (id) => setSchemes(schemes.filter(s => s.id !== id)), 
+          (id) => handleDelete('schemes', id), 
           <>
             <select name="fyId" required defaultValue={editingItem?.type === 'Scheme' ? editingItem.item.fyId : selectedFyId} className="w-full p-2 border rounded">
               {fys.map(fy => <option key={fy.id} value={fy.id}>FY {fy.name}</option>)}
@@ -655,7 +922,7 @@ export default function App() {
             {key: 'name', label: 'Sector Name'}
           ], 
           handleAddSector, 
-          (id) => setSectors(sectors.filter(s => s.id !== id)), 
+          (id) => handleDelete('sectors', id), 
           <>
             <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-2 border rounded">
               <option value="">Select Scheme</option>
@@ -683,7 +950,7 @@ export default function App() {
             {key: 'name', label: 'Activity Name'}
           ], 
           handleAddActivity, 
-          (id) => setActivities(activities.filter(a => a.id !== id)), 
+          (id) => handleDelete('activities', id), 
           <ActivityFormContent 
             schemes={schemes} 
             sectors={sectors} 
@@ -704,7 +971,7 @@ export default function App() {
             {key: 'name', label: 'Sub-Activity Name'}
           ], 
           handleAddSubActivity, 
-          (id) => setSubActivities(subActivities.filter(sa => sa.id !== id)), 
+          (id) => handleDelete('subActivities', id), 
           <>
             <select name="activityId" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.activityId : ''} className="w-full p-2 border rounded">
               <option value="">Select Activity</option>
@@ -738,7 +1005,7 @@ export default function App() {
             {key: 'budgetLimit', label: 'Budget Limit', render: (val) => `₹${val.toLocaleString()}`}
           ], 
           handleAddSoe, 
-          (id) => setSoes(soes.filter(s => s.id !== id)), 
+          (id) => handleDelete('soeHeads', id), 
           <>
             <div className="text-xs text-gray-500 mb-1">Select either Activity OR Sub-Activity</div>
             <select name="activityId" defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.activityId : ''} className="w-full p-2 border rounded">
@@ -789,7 +1056,6 @@ export default function App() {
               const totalAllocatedForSoe = getSoeAllocated(item.soeId);
               const remaining = (soe?.budgetLimit || 0) - totalAllocatedForSoe;
               
-              // Find other allocations for the same range and same parent (activity/subactivity)
               const parentId = soe?.subActivityId || soe?.activityId;
               const isSub = !!soe?.subActivityId;
               
@@ -820,7 +1086,7 @@ export default function App() {
             }}
           ], 
           handleAddAllocation, 
-          (id) => setAllocations(allocations.filter(a => a.id !== id)), 
+          (id) => handleDelete('allocations', id), 
           <>
             <select name="soeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.soeId : ''} className="w-full p-2 border rounded">
               <option value="">Select SOE</option>
@@ -905,7 +1171,7 @@ export default function App() {
                     className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
                   >
                     <option value="">All Sectors</option>
-                    {sectors.filter(s => s.schemeId === parseInt(expFilters.schemeId)).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {sectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -918,8 +1184,8 @@ export default function App() {
                   >
                     <option value="">All Activities</option>
                     {activities.filter(a => {
-                      if (expFilters.sectorId) return a.sectorId === parseInt(expFilters.sectorId);
-                      if (expFilters.schemeId) return a.schemeId === parseInt(expFilters.schemeId);
+                      if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
+                      if (expFilters.schemeId) return a.schemeId === expFilters.schemeId;
                       return true;
                     }).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                   </select>
@@ -964,7 +1230,7 @@ export default function App() {
                 {key: 'amount', label: 'Amount', render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>}
               ], 
               handleAddExpense, 
-              (id) => setExpenses(expenses.filter(e => e.id !== id)), 
+              (id) => handleDelete('expenditures', id), 
               <>
                 <select name="allocationId" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.allocationId : ''} className="w-full p-2 border rounded">
                   <option value="">Select Allocation</option>
@@ -1052,15 +1318,18 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'Reports' && renderReports()}
+        {activeTab === 'Users' && userRole === 'admin' && renderUserManagement()}
+
       </div>
     </div>
   );
 }
 
 function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[], sectors: any[], editingItem: any }) {
-  const [selectedSchemeId, setSelectedSchemeId] = useState(editingItem?.item?.schemeId || editingItem?.item?.sectorId ? sectors.find((s: any) => s.id === editingItem.item.sectorId)?.schemeId : '');
+  const [selectedSchemeId, setSelectedSchemeId] = useState(editingItem?.item?.schemeId || (editingItem?.item?.sectorId ? sectors.find((s: any) => s.id === editingItem.item.sectorId)?.schemeId : ''));
   
-  const selectedScheme = schemes.find(s => s.id === parseInt(selectedSchemeId as string));
+  const selectedScheme = schemes.find(s => s.id === selectedSchemeId);
   const isCampa = selectedScheme?.name.toUpperCase().includes('CAMPA');
 
   return (
@@ -1079,7 +1348,7 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
       {isCampa && (
         <select name="sectorId" required defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
           <option value="">Select Sector</option>
-          {sectors.filter(s => s.schemeId === parseInt(selectedSchemeId as string)).map(sec => (
+          {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
             <option key={sec.id} value={sec.id}>{sec.name}</option>
           ))}
         </select>
