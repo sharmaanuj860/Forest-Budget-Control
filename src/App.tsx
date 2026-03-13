@@ -1,6 +1,6 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2 } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download } from 'lucide-react';
 
 // --- Types ---
 type Range = { id: number; name: string };
@@ -36,6 +36,43 @@ export default function App() {
   const [soes, setSoes] = useState<SOE[]>(initialSoes);
   const [allocations, setAllocations] = useState<Allocation[]>(initialAllocations);
   const [expenses, setExpenses] = useState<Expense[]>(initialExpenses);
+
+  // --- PWA Install State ---
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+  const [isInstallable, setIsInstallable] = useState(false);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: Event) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      setDeferredPrompt(e);
+      // Update UI notify the user they can install the PWA
+      setIsInstallable(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) return;
+    // Show the install prompt
+    deferredPrompt.prompt();
+    // Wait for the user to respond to the prompt
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      console.log('User accepted the install prompt');
+    } else {
+      console.log('User dismissed the install prompt');
+    }
+    // We've used the prompt, and can't use it again, throw it away
+    setDeferredPrompt(null);
+    setIsInstallable(false);
+  };
 
   // --- Derived Data / Helpers ---
   const getSoeAllocated = (soeId: number) => allocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
@@ -304,6 +341,15 @@ export default function App() {
             <Landmark className="h-8 w-8 text-emerald-600" />
             Forest Division Budget Portal
           </h1>
+          {isInstallable && (
+            <button
+              onClick={handleInstallClick}
+              className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+            >
+              <Download className="w-4 h-4" />
+              Install App
+            </button>
+          )}
         </div>
 
         {/* Navigation */}
