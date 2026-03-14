@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil } from 'lucide-react';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
@@ -75,7 +75,10 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [dashboardSearch, setDashboardSearch] = useState('');
+  const [showAllBudget, setShowAllBudget] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -440,6 +443,33 @@ export default function App() {
 
     return (
       <div className="space-y-6">
+        {/* Top Bar for Mobile/Desktop */}
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+          <div className="flex items-center gap-3">
+            <Landmark className="h-8 w-8 text-emerald-600" />
+            <h2 className="text-xl font-bold text-gray-900">Dashboard Overview</h2>
+          </div>
+          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
+            <div className="flex items-center gap-2 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
+              <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">FY:</span>
+              <select 
+                value={selectedFyId} 
+                onChange={(e) => setSelectedFyId(e.target.value)}
+                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-sm p-0"
+              >
+                {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
+              </select>
+            </div>
+            <button 
+              onClick={handleLogout}
+              className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-1.5 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors text-sm font-medium"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="hidden xs:inline">Logout</span>
+            </button>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard title="Total SOE Budget" amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
           <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
@@ -485,6 +515,74 @@ export default function App() {
           </div>
         </div>
 
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-2">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <Table className="h-5 w-5 text-gray-500" /> Budget Abstract (Scheme/Sector/Activity)
+            </h3>
+            <div className="relative w-full md:w-64">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search budget..." 
+                value={dashboardSearch}
+                onChange={(e) => setDashboardSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead>
+                <tr className="bg-gray-50 text-gray-600 font-semibold">
+                  <th className="p-3 border-b">Scheme</th>
+                  <th className="p-3 border-b">Sector</th>
+                  <th className="p-3 border-b">Activity</th>
+                  <th className="p-3 border-b text-right">Received</th>
+                  <th className="p-3 border-b text-right">Allocated</th>
+                  <th className="p-3 border-b text-right">Spent</th>
+                  <th className="p-3 border-b text-right">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activitySummary
+                  .filter(act => 
+                    act.scheme.toLowerCase().includes(dashboardSearch.toLowerCase()) ||
+                    act.sector.toLowerCase().includes(dashboardSearch.toLowerCase()) ||
+                    act.name.toLowerCase().includes(dashboardSearch.toLowerCase())
+                  )
+                  .slice(0, showAllBudget ? undefined : 5)
+                  .map((act, idx) => (
+                    <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
+                      <td className="p-3 text-xs text-gray-500">{act.scheme}</td>
+                      <td className="p-3 text-xs text-gray-500">{act.sector}</td>
+                      <td className="p-3 font-medium text-gray-800">{act.name}</td>
+                      <td className="p-3 text-right font-mono">₹{act.budget.toLocaleString()}</td>
+                      <td className="p-3 text-right font-mono text-blue-600">₹{act.allocated.toLocaleString()}</td>
+                      <td className="p-3 text-right font-mono text-red-600">₹{act.spent.toLocaleString()}</td>
+                      <td className="p-3 text-right font-mono font-bold text-emerald-600">₹{act.balance.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                {activitySummary.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="p-8 text-center text-gray-400 italic">No budget data found for this Financial Year.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {activitySummary.length > 5 && (
+            <div className="mt-4 text-center">
+              <button 
+                onClick={() => setShowAllBudget(!showAllBudget)}
+                className="text-emerald-600 font-semibold hover:text-emerald-700 transition-colors flex items-center gap-1 mx-auto"
+              >
+                {showAllBudget ? 'Show Less' : 'Read More'}
+              </button>
+            </div>
+          )}
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
@@ -509,29 +607,6 @@ export default function App() {
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
-              <Activity className="h-5 w-5 text-gray-500" /> Activity-wise Budget
-            </h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={activitySummary} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
-                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
-                  <Legend />
-                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
               <Activity className="h-5 w-5 text-gray-500" /> Range-wise Budget (Allocated vs Spent)
             </h3>
             <div className="h-64">
@@ -547,27 +622,6 @@ export default function App() {
                   <Bar dataKey="remaining" name="Remaining" fill="#28a745" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
-              <TrendingDown className="h-5 w-5 text-gray-500" /> Expenditure Trend
-            </h3>
-            <div className="h-64">
-              {trendData.length > 0 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <XAxis dataKey="date" axisLine={false} tickLine={false} />
-                    <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
-                    <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
-                    <Line type="monotone" dataKey="amount" name="Daily Expense" stroke="#dc3545" strokeWidth={3} dot={{r: 4, fill: '#dc3545', strokeWidth: 2, stroke: '#fff'}} activeDot={{r: 6}} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-full flex items-center justify-center text-gray-400">No expenditure data available</div>
-              )}
             </div>
           </div>
         </div>
@@ -700,7 +754,7 @@ export default function App() {
                         className="text-blue-500 hover:text-blue-700 p-1"
                         title="Edit"
                       >
-                        <Activity className="w-4 h-4"/>
+                        <Pencil className="w-4 h-4"/>
                       </button>
                       <button 
                         onClick={() => onDelete(item.id)} 
@@ -884,6 +938,11 @@ export default function App() {
     const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
     
+    if (isNaN(amount) || amount <= 0) {
+      alert("Please enter a valid positive amount.");
+      return;
+    }
+    
     const soe = soes.find(s => s.id === soeId);
     if (!soe) return;
 
@@ -891,8 +950,10 @@ export default function App() {
       .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
       .reduce((sum, a) => sum + a.amount, 0);
 
-    if (currentAllocated + amount > soe.budgetLimit) {
-      alert(`Cannot allocate. Exceeds SOE budget limit of ₹${soe.budgetLimit}. Current allocated: ₹${currentAllocated}`);
+    const remainingBudget = soe.budgetLimit - currentAllocated;
+
+    if (amount > remainingBudget) {
+      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining SOE budget of ₹${remainingBudget.toLocaleString()}.`);
       return;
     }
 
@@ -1217,39 +1278,39 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6 font-sans text-gray-800">
+    <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans text-gray-800">
       <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
           <div className="flex items-center gap-3">
             <Landmark className="h-10 w-10 text-emerald-600" />
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">Forest Budget Control</h1>
-              <p className="text-sm text-gray-500">Financial Management System</p>
+              <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-tight">Forest Budget Control</h1>
+              <p className="text-xs md:text-sm text-gray-500">Financial Management System</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border border-gray-200 shadow-sm">
-              <span className="text-sm font-semibold text-gray-600">Financial Year:</span>
+          <div className="flex flex-wrap items-center gap-3 justify-between md:justify-end">
+            <div className="flex items-center gap-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
+              <span className="text-sm font-semibold text-emerald-800">FY:</span>
               <select 
                 value={selectedFyId} 
                 onChange={(e) => setSelectedFyId(e.target.value)}
-                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer"
+                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-sm"
               >
-                {fys.map(fy => <option key={fy.id} value={fy.id}>FY {fy.name}</option>)}
+                {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
               </select>
             </div>
 
             <div className="flex items-center gap-2">
-              {userRole === 'admin' && (
+              {userRole === 'admin' && schemes.length === 0 && (
                 <button
                   onClick={async () => {
                     await preloadDatabase();
                     alert('Preloaded data added successfully!');
                   }}
-                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+                  className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm"
                 >
                   Load Preloaded Data
                 </button>
@@ -1257,7 +1318,7 @@ export default function App() {
               {isInstallable && (
                 <button
                   onClick={handleInstallClick}
-                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
+                  className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm"
                 >
                   <Download className="w-4 h-4" />
                   Install
@@ -1265,7 +1326,7 @@ export default function App() {
               )}
               <button 
                 onClick={handleLogout}
-                className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors"
+                className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors text-sm"
               >
                 <LogOut className="w-4 h-4" />
                 Logout
@@ -1275,24 +1336,37 @@ export default function App() {
         </div>
 
         {/* Navigation */}
-        <div className="flex flex-wrap gap-2 bg-gray-800 p-4 rounded-lg shadow-sm">
-          {[
-            'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
-            'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 
-            ...(userRole === 'admin' ? ['Users'] : [])
-          ].map((item) => (
+        <div className="bg-gray-800 rounded-lg shadow-sm mb-6 overflow-hidden">
+          <div className="lg:hidden flex items-center justify-between p-4 border-b border-gray-700">
+            <span className="text-white font-medium">Menu: {activeTab}</span>
             <button 
-              key={item} 
-              id={`tab-${item}`}
-              onClick={() => {
-                setActiveTab(item);
-                setSearchTerm('');
-              }}
-              className={`px-4 py-2 text-sm font-medium rounded transition-colors ${activeTab === item ? 'bg-emerald-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+              onClick={() => setMenuOpen(!menuOpen)}
+              className="p-2 text-gray-400 hover:text-white transition-colors"
             >
-              {item}
+              <Menu className="w-6 h-6" />
             </button>
-          ))}
+          </div>
+          
+          <div className={`${menuOpen ? 'flex' : 'hidden'} lg:flex flex-col lg:flex-row flex-wrap gap-1 p-2`}>
+            {[
+              'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
+              'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 
+              ...(userRole === 'admin' ? ['Users'] : [])
+            ].map((item) => (
+              <button 
+                key={item} 
+                id={`tab-${item}`}
+                onClick={() => {
+                  setActiveTab(item);
+                  setSearchTerm('');
+                  setMenuOpen(false);
+                }}
+                className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+              >
+                {item}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Tab Content */}
