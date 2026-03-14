@@ -6,7 +6,7 @@ import {
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
 } from './firebase';
 import { jsPDF } from 'jspdf';
-import 'jspdf-autotable';
+import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { preloadDatabase } from './preloadData';
 
@@ -75,6 +75,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [searchTerm, setSearchTerm] = useState('');
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -571,12 +572,33 @@ export default function App() {
   const renderSimpleManager = (
     title: string, 
     items: any[], 
-    columns: {key: string, label: string, render?: (val: any, item: any) => React.ReactNode}[], 
+    columns: {key: string, label: string, render?: (val: any, item: any) => React.ReactNode, searchableText?: (val: any, item: any) => string}[], 
     onAdd: (e: React.FormEvent) => void, 
     onDelete: (id: string) => void,
     formContent: React.ReactNode,
     onEdit: (item: any) => void
-  ) => (
+  ) => {
+    let filteredItems = items;
+    if (searchTerm) {
+      const lowerSearch = searchTerm.toLowerCase();
+      filteredItems = items.filter(item => {
+        return columns.some(c => {
+          if (c.searchableText) {
+            return c.searchableText(item[c.key], item).toLowerCase().includes(lowerSearch);
+          }
+          const val = c.render ? c.render(item[c.key], item) : item[c.key];
+          if (typeof val === 'string' || typeof val === 'number') {
+            return String(val).toLowerCase().includes(lowerSearch);
+          }
+          if (typeof item[c.key] === 'string' || typeof item[c.key] === 'number') {
+            return String(item[c.key]).toLowerCase().includes(lowerSearch);
+          }
+          return false;
+        });
+      });
+    }
+
+    return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {(userRole === 'admin' || title === 'Expenditure') && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit sticky top-6">
@@ -604,7 +626,19 @@ export default function App() {
         </div>
       )}
       <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
-        <h3 className="text-lg font-semibold mb-4 border-b pb-2">Existing {title}s</h3>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
+          <h3 className="text-lg font-semibold">Existing {title}s</h3>
+          <div className="relative">
+            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder={`Search ${title}s...`} 
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
+            />
+          </div>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
@@ -614,7 +648,7 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {items.map(item => (
+              {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
                   {userRole === 'admin' && (
@@ -637,13 +671,13 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {items.length === 0 && <tr><td colSpan={columns.length + (userRole === 'admin' ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + (userRole === 'admin' ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
     </div>
-  );
+  )};
 
   // --- PWA Install Logic ---
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -670,6 +704,22 @@ export default function App() {
   };
 
   // --- Handlers ---
+  const handleAddFy = async (e: any) => {
+    e.preventDefault();
+    const name = e.target.name.value;
+    try {
+      if (editingItem?.type === 'Financial Year') {
+        await updateDoc(doc(db, 'financialYears', editingItem.item.id), { name });
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'financialYears'), { name });
+      }
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem ? OperationType.UPDATE : OperationType.CREATE, 'financialYears');
+    }
+  };
+
   const handleAddRange = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
@@ -923,7 +973,7 @@ export default function App() {
     const downloadPDF = (title: string, data: any[], headers: string[]) => {
       const doc = new jsPDF('landscape');
       doc.text(title, 14, 15);
-      (doc as any).autoTable({
+      autoTable(doc, {
         head: [headers],
         body: data,
         startY: 20,
@@ -1168,15 +1218,15 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
-              {fys.length === 0 && userRole === 'admin' && (
+              {userRole === 'admin' && (
                 <button
                   onClick={async () => {
                     await preloadDatabase();
-                    alert('Database initialized!');
+                    alert('Preloaded data added successfully!');
                   }}
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm"
                 >
-                  Init DB
+                  Load Preloaded Data
                 </button>
               )}
               {isInstallable && (
@@ -1202,14 +1252,17 @@ export default function App() {
         {/* Navigation */}
         <div className="flex flex-wrap gap-2 bg-gray-800 p-4 rounded-lg shadow-sm">
           {[
-            'Dashboard', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
+            'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
             'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 
             ...(userRole === 'admin' ? ['Users'] : [])
           ].map((item) => (
             <button 
               key={item} 
               id={`tab-${item}`}
-              onClick={() => setActiveTab(item)}
+              onClick={() => {
+                setActiveTab(item);
+                setSearchTerm('');
+              }}
               className={`px-4 py-2 text-sm font-medium rounded transition-colors ${activeTab === item ? 'bg-emerald-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
             >
               {item}
@@ -1220,6 +1273,16 @@ export default function App() {
         {/* Tab Content */}
         {activeTab === 'Dashboard' && renderDashboard()}
         
+        {activeTab === 'Financial Years' && renderSimpleManager(
+          'Financial Year', 
+          fys, 
+          [{key: 'name', label: 'Financial Year (e.g. 2025-26)'}], 
+          handleAddFy, 
+          (id) => handleDelete('financialYears', id), 
+          <input name="name" required defaultValue={editingItem?.type === 'Financial Year' ? editingItem.item.name : ''} placeholder="Financial Year (e.g. 2025-26)" className="w-full p-2 border rounded" />,
+          (item) => setEditingItem({ type: 'Financial Year', item })
+        )}
+
         {activeTab === 'Ranges' && renderSimpleManager(
           'Range', 
           ranges, 
@@ -1252,7 +1315,10 @@ export default function App() {
           'Sector', 
           sectors, 
           [
-            {key: 'schemeId', label: 'Scheme', render: (val) => schemes.find(s => s.id === val)?.name},
+            {key: 'schemeId', label: 'Scheme', 
+              searchableText: (val) => schemes.find(s => s.id === val)?.name || '',
+              render: (val) => schemes.find(s => s.id === val)?.name
+            },
             {key: 'name', label: 'Sector Name'}
           ], 
           handleAddSector, 
@@ -1274,7 +1340,17 @@ export default function App() {
           'Activity', 
           activities, 
           [
-            {key: 'parent', label: 'Scheme / Sector', render: (_, item) => {
+            {key: 'parent', label: 'Scheme / Sector', 
+              searchableText: (_, item) => {
+                if (item.sectorId) {
+                  const sec = sectors.find(s => s.id === item.sectorId);
+                  const sch = schemes.find(s => s.id === sec?.schemeId);
+                  return `[${sch?.name}] ${sec?.name}`;
+                }
+                const sch = schemes.find(s => s.id === item.schemeId);
+                return sch?.name || '';
+              },
+              render: (_, item) => {
               if (item.sectorId) {
                 const sec = sectors.find(s => s.id === item.sectorId);
                 const sch = schemes.find(s => s.id === sec?.schemeId);
@@ -1300,7 +1376,13 @@ export default function App() {
           'Sub-Activity', 
           subActivities, 
           [
-            {key: 'activityId', label: 'Activity', render: (val) => {
+            {key: 'activityId', label: 'Activity', 
+              searchableText: (val) => {
+                const act = activities.find(a => a.id === val);
+                const sec = sectors.find(s => s.id === act?.sectorId);
+                return `[${sec?.name}] ${act?.name}`;
+              },
+              render: (val) => {
               const act = activities.find(a => a.id === val);
               const sec = sectors.find(s => s.id === act?.sectorId);
               return `[${sec?.name}] ${act?.name}`;
@@ -1322,20 +1404,41 @@ export default function App() {
           'SOE Head', 
           soes, 
           [
-            {key: 'parent', label: 'Hierarchy', render: (_, item) => {
+            {key: 'parent', label: 'Hierarchy', 
+              searchableText: (_, item) => {
+                let hierarchy = '';
+                if (item.subActivityId) {
+                  const sa = subActivities.find(sa => sa.id === item.subActivityId);
+                  const act = activities.find(a => a.id === sa?.activityId);
+                  const sec = sectors.find(sec => sec.id === act?.sectorId);
+                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                  hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                } else if (item.activityId) {
+                  const act = activities.find(a => a.id === item.activityId);
+                  const sec = sectors.find(sec => sec.id === act?.sectorId);
+                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                  hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                }
+                return hierarchy || 'N/A';
+              },
+              render: (_, item) => {
+              let hierarchy = '';
               if (item.subActivityId) {
-                const sa = subActivities.find(s => s.id === item.subActivityId);
+                const sa = subActivities.find(sa => sa.id === item.subActivityId);
                 const act = activities.find(a => a.id === sa?.activityId);
-                const sec = sectors.find(s => s.id === act?.sectorId);
-                return `${sec?.name} -> ${act?.name} -> ${sa?.name}`;
-              } else {
+                const sec = sectors.find(sec => sec.id === act?.sectorId);
+                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+              } else if (item.activityId) {
                 const act = activities.find(a => a.id === item.activityId);
-                const sec = sectors.find(s => s.id === act?.sectorId);
-                return `${sec?.name} -> ${act?.name}`;
+                const sec = sectors.find(sec => sec.id === act?.sectorId);
+                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
               }
+              return hierarchy || 'N/A';
             }},
             {key: 'name', label: 'SOE Name'},
-            {key: 'budgetLimit', label: 'Budget Limit', render: (val) => `₹${val.toLocaleString()}`}
+            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val) => String(val), render: (val) => `₹${val.toLocaleString()}`}
           ], 
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
@@ -1353,7 +1456,25 @@ export default function App() {
           'Allocation', 
           allocations, 
           [
-            {key: 'soeId', label: 'FY -> SOE', render: (val) => {
+            {key: 'soeId', label: 'FY -> SOE', 
+              searchableText: (val) => {
+                const s = soes.find(s => s.id === val);
+                let hierarchy = '';
+                if (s?.subActivityId) {
+                  const sa = subActivities.find(sa => sa.id === s.subActivityId);
+                  const act = activities.find(a => a.id === sa?.activityId);
+                  const sec = sectors.find(sec => sec.id === act?.sectorId);
+                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                  hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                } else if (s?.activityId) {
+                  const act = activities.find(a => a.id === s.activityId);
+                  const sec = sectors.find(sec => sec.id === act?.sectorId);
+                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                  hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                }
+                return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
+              },
+              render: (val) => {
               const s = soes.find(s => s.id === val);
               let hierarchy = '';
               if (s?.subActivityId) {
@@ -1361,17 +1482,19 @@ export default function App() {
                 const act = activities.find(a => a.id === sa?.activityId);
                 const sec = sectors.find(sec => sec.id === act?.sectorId);
                 const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name} -> ${sa?.name}`;
+                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
               } else if (s?.activityId) {
                 const act = activities.find(a => a.id === s.activityId);
                 const sec = sectors.find(sec => sec.id === act?.sectorId);
                 const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name}`;
+                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
               }
-              return `[${hierarchy}] ${s?.name}`;
+              return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
             }},
             {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
-            {key: 'amount', label: 'Allocated Amount', render: (val, item) => {
+            {key: 'amount', label: 'Allocated Amount', 
+              searchableText: (val) => String(val),
+              render: (val, item) => {
               const soe = soes.find(s => s.id === item.soeId);
               const totalAllocatedForSoe = getSoeAllocated(item.soeId);
               const remaining = (soe?.budgetLimit || 0) - totalAllocatedForSoe;
@@ -1500,7 +1623,28 @@ export default function App() {
               currentExpenses, 
               [
                 {key: 'date', label: 'Date'},
-                {key: 'allocationId', label: 'Hierarchy / Range / SOE', render: (val, item) => {
+                {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
+                  searchableText: (val, item) => {
+                    const al = allocations.find(a => a.id === val);
+                    const r = ranges.find(r => r.id === al?.rangeId);
+                    const s = soes.find(s => s.id === al?.soeId);
+                    let hierarchy = '';
+                    if (s?.subActivityId) {
+                      const sa = subActivities.find(sa => sa.id === s.subActivityId);
+                      const act = activities.find(a => a.id === sa?.activityId);
+                      const sec = sectors.find(sec => sec.id === act?.sectorId);
+                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                      hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                    } else if (s?.activityId) {
+                      const act = activities.find(a => a.id === s.activityId);
+                      const sec = sectors.find(sec => sec.id === act?.sectorId);
+                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                      hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                    }
+                    const actName = item.activityId ? activities.find(a => a.id === item.activityId)?.name : '';
+                    return `${hierarchy} ${r?.name} ${s?.name} ${actName}`;
+                  },
+                  render: (val, item) => {
                   const al = allocations.find(a => a.id === val);
                   const r = ranges.find(r => r.id === al?.rangeId);
                   const s = soes.find(s => s.id === al?.soeId);
@@ -1510,17 +1654,17 @@ export default function App() {
                     const act = activities.find(a => a.id === sa?.activityId);
                     const sec = sectors.find(sec => sec.id === act?.sectorId);
                     const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                    hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name} -> ${sa?.name}`;
+                    hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
                   } else if (s?.activityId) {
                     const act = activities.find(a => a.id === s.activityId);
                     const sec = sectors.find(sec => sec.id === act?.sectorId);
                     const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                    hierarchy = `${sch?.name} -> ${sec ? sec.name + ' -> ' : ''}${act?.name}`;
+                    hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
                   }
                   return (
                     <div>
-                      <div className="text-xs text-gray-500">{hierarchy}</div>
-                      <div className="font-medium">{r?.name} / {s?.name}</div>
+                      <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
+                      <div className="font-medium">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
                       {item.activityId && (
                         <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
                           Activity: {activities.find(a => a.id === item.activityId)?.name}
@@ -1530,7 +1674,24 @@ export default function App() {
                   );
                 }},
                 {key: 'description', label: 'Description'},
-                {key: 'amount', label: 'Amount', render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>}
+                {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
+                {key: 'balance', label: 'Balance', 
+                  searchableText: (_, item) => {
+                    const alloc = allocations.find(a => a.id === item.allocationId);
+                    if (!alloc) return 'N/A';
+                    const spentUpTo = expenses
+                      .filter(e => e.allocationId === item.allocationId && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
+                      .reduce((sum, e) => sum + e.amount, 0);
+                    return String(alloc.amount - spentUpTo);
+                  },
+                  render: (_, item) => {
+                  const alloc = allocations.find(a => a.id === item.allocationId);
+                  if (!alloc) return 'N/A';
+                  const spentUpTo = expenses
+                    .filter(e => e.allocationId === item.allocationId && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
+                    .reduce((sum, e) => sum + e.amount, 0);
+                  return <span className="text-blue-600 font-bold">₹{(alloc.amount - spentUpTo).toLocaleString()}</span>;
+                }}
               ], 
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
@@ -1769,18 +1930,30 @@ function CascadingDropdowns({
       <input type="hidden" name="subActivityId" value={subActivityId} />
 
       {(type === 'Allocation' || type === 'Expenditure') && (
-        <div className="flex gap-2">
-          <select 
-            name={type === 'Allocation' ? 'soeId' : undefined}
-            className="w-full p-2 border rounded" 
-            value={soeId} 
-            onChange={(e) => { setSoeId(e.target.value); setAllocationId(''); }}
-            required
-          >
-            <option value="">Select SOE Head</option>
-            {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-          <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add SOE Head">+</button>
+        <div className="flex flex-col gap-1">
+          <div className="flex gap-2">
+            <select 
+              name={type === 'Allocation' ? 'soeId' : undefined}
+              className="w-full p-2 border rounded" 
+              value={soeId} 
+              onChange={(e) => { setSoeId(e.target.value); setAllocationId(''); }}
+              required
+            >
+              <option value="">Select SOE Head</option>
+              {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+            <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add SOE Head">+</button>
+          </div>
+          {type === 'Allocation' && soeId && (
+            <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+              {(() => {
+                const soe = soes.find((s: any) => s.id === soeId);
+                const totalAllocated = allocations.filter((a: any) => a.soeId === soeId).reduce((sum: number, a: any) => sum + a.amount, 0);
+                const remaining = (soe?.budgetLimit || 0) - totalAllocated;
+                return `Budget Limit: ₹${(soe?.budgetLimit || 0).toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
+              })()}
+            </div>
+          )}
         </div>
       )}
 

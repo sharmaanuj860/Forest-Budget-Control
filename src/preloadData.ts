@@ -1,40 +1,57 @@
-import { collection, addDoc, getDocs } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebase';
 
 export const preloadDatabase = async () => {
-  const fysSnap = await getDocs(collection(db, 'financialYears'));
-  if (!fysSnap.empty) {
-    console.log('Database already initialized.');
-    return;
-  }
-
   console.log('Initializing database...');
 
+  // Helper to check and add
+  const addIfNotExists = async (colName: string, data: any, queryFields: string[]) => {
+    let q = query(collection(db, colName));
+    for (const field of queryFields) {
+      q = query(q, where(field, '==', data[field]));
+    }
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      return await addDoc(collection(db, colName), data);
+    }
+    return snap.docs[0];
+  };
+
   // 1. Financial Years
-  const fy24 = await addDoc(collection(db, 'financialYears'), { name: '2024-25' });
-  await addDoc(collection(db, 'financialYears'), { name: '2025-26' });
-  await addDoc(collection(db, 'financialYears'), { name: '2026-27' });
+  const fy24 = await addIfNotExists('financialYears', { name: '2024-25' }, ['name']);
+  await addIfNotExists('financialYears', { name: '2025-26' }, ['name']);
+  await addIfNotExists('financialYears', { name: '2026-27' }, ['name']);
 
   // 2. Ranges
   const ranges = ['Rajgarh', 'Habban', 'Sarahan', 'Narag'];
   for (const r of ranges) {
-    await addDoc(collection(db, 'ranges'), { name: r });
+    await addIfNotExists('ranges', { name: r }, ['name']);
   }
 
   // Helper to add scheme -> sector -> activity -> subActivity
   const addHierarchy = async (schemeName: string, sectorsData: any) => {
-    const schemeRef = await addDoc(collection(db, 'schemes'), { name: schemeName, fyId: fy24.id });
+    const schemeRef = await addIfNotExists('schemes', { name: schemeName, fyId: fy24.id }, ['name', 'fyId']);
     
     for (const sectorName of Object.keys(sectorsData)) {
-      const sectorRef = await addDoc(collection(db, 'sectors'), { name: sectorName, schemeId: schemeRef.id });
+      const qSector = query(collection(db, 'sectors'), where('name', '==', sectorName), where('schemeId', '==', schemeRef.id));
+      const sectorSnap = await getDocs(qSector);
+      let sectorRef = sectorSnap.empty ? await addDoc(collection(db, 'sectors'), { name: sectorName, schemeId: schemeRef.id }) : sectorSnap.docs[0];
+
       const activitiesData = sectorsData[sectorName];
       
       for (const activityName of Object.keys(activitiesData)) {
-        const activityRef = await addDoc(collection(db, 'activities'), { name: activityName, sectorId: sectorRef.id });
+        const qActivity = query(collection(db, 'activities'), where('name', '==', activityName), where('sectorId', '==', sectorRef.id));
+        const activitySnap = await getDocs(qActivity);
+        let activityRef = activitySnap.empty ? await addDoc(collection(db, 'activities'), { name: activityName, sectorId: sectorRef.id }) : activitySnap.docs[0];
+
         const subActivities = activitiesData[activityName];
         
         for (const subName of subActivities) {
-          await addDoc(collection(db, 'subActivities'), { name: subName, activityId: activityRef.id });
+          const qSub = query(collection(db, 'subActivities'), where('name', '==', subName), where('activityId', '==', activityRef.id));
+          const subSnap = await getDocs(qSub);
+          if (subSnap.empty) {
+            await addDoc(collection(db, 'subActivities'), { name: subName, activityId: activityRef.id });
+          }
         }
       }
     }
@@ -81,8 +98,8 @@ export const preloadDatabase = async () => {
   });
 
   // 6. Empty Schemes
-  await addDoc(collection(db, 'schemes'), { name: 'SNA Sparsh-Fire', fyId: fy24.id });
-  await addDoc(collection(db, 'schemes'), { name: 'Demand No 15 BASP', fyId: fy24.id });
+  await addIfNotExists('schemes', { name: 'SNA Sparsh-Fire', fyId: fy24.id }, ['name', 'fyId']);
+  await addIfNotExists('schemes', { name: 'Demand No 15 BASP', fyId: fy24.id }, ['name', 'fyId']);
 
   console.log('Database initialized successfully!');
 };
