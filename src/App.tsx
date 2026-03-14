@@ -248,44 +248,6 @@ export default function App() {
     }
   };
 
-  const handleQuickLogin = async (id: string, pass: string) => {
-    setLoginEmail(id);
-    setLoginPassword(pass);
-    setLoginError('');
-    try {
-      const emailToUse = `${id}@rajgarhforest.app`;
-      try {
-        await signInWithEmailAndPassword(auth, emailToUse, pass);
-      } catch (err: any) {
-        if (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential') {
-          // Auto-create if not found
-          await createUserWithEmailAndPassword(auth, emailToUse, pass);
-          // Wait for auth state change to set role
-          setTimeout(async () => {
-             const user = auth.currentUser;
-             if (user) {
-                const role = id === 'Admin' ? 'admin' : 'deo';
-                await setDoc(doc(db, 'users', user.uid), {
-                  email: user.email,
-                  role: role
-                }, { merge: true });
-                setUserRole(role);
-             }
-          }, 2000);
-        } else {
-          throw err;
-        }
-      }
-    } catch (error: any) {
-      console.error('Quick login error:', error);
-      if (error.code === 'auth/operation-not-allowed') {
-        setLoginError('CRITICAL: Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
-      } else {
-        setLoginError(error.message || 'Quick login failed.');
-      }
-    }
-  };
-
   const handleForgotPassword = async () => {
     if (!loginEmail) {
       setLoginError('Please enter your ID/Email first to reset password.');
@@ -1155,23 +1117,6 @@ export default function App() {
             >
               {isSignUp ? 'Sign Up' : 'Sign In'}
             </button>
-            
-            <div className="pt-4 border-t border-gray-100 flex gap-3">
-              <button 
-                type="button"
-                onClick={() => handleQuickLogin('Admin', 'Admin@123')}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Quick Login: Admin
-              </button>
-              <button 
-                type="button"
-                onClick={() => handleQuickLogin('DA123', 'DA@78406')}
-                className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-2 rounded-lg text-sm font-medium transition-colors"
-              >
-                Quick Login: DEO
-              </button>
-            </div>
           </form>
         </div>
       </div>
