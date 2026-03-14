@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown } from 'lucide-react';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
@@ -79,6 +79,7 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
+  const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -271,6 +272,36 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
+  // --- Session Expiry ---
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+
+    const resetTimer = () => {
+      clearTimeout(timeoutId);
+      if (user) {
+        timeoutId = setTimeout(() => {
+          handleLogout();
+        }, 15 * 60 * 1000); // 15 minutes
+      }
+    };
+
+    if (user) {
+      resetTimer();
+      window.addEventListener('mousemove', resetTimer);
+      window.addEventListener('keydown', resetTimer);
+      window.addEventListener('click', resetTimer);
+      window.addEventListener('scroll', resetTimer);
+    }
+
+    return () => {
+      clearTimeout(timeoutId);
+      window.removeEventListener('mousemove', resetTimer);
+      window.removeEventListener('keydown', resetTimer);
+      window.removeEventListener('click', resetTimer);
+      window.removeEventListener('scroll', resetTimer);
+    };
+  }, [user]);
+
   // --- Derived Data / Helpers ---
   const currentSchemes = useMemo(() => schemes.filter(s => s.fyId === selectedFyId), [schemes, selectedFyId]);
   const currentSectors = useMemo(() => sectors.filter(sec => currentSchemes.some(s => s.id === sec.schemeId)), [sectors, currentSchemes]);
@@ -443,33 +474,6 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        {/* Top Bar for Mobile/Desktop */}
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-          <div className="flex items-center gap-3">
-            <Landmark className="h-8 w-8 text-emerald-600" />
-            <h2 className="text-xl font-bold text-gray-900">Dashboard Overview</h2>
-          </div>
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            <div className="flex items-center gap-2 bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-100">
-              <span className="text-xs font-bold text-emerald-800 uppercase tracking-wider">FY:</span>
-              <select 
-                value={selectedFyId} 
-                onChange={(e) => setSelectedFyId(e.target.value)}
-                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-sm p-0"
-              >
-                {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
-              </select>
-            </div>
-            <button 
-              onClick={handleLogout}
-              className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-1.5 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors text-sm font-medium"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden xs:inline">Logout</span>
-            </button>
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           <StatCard title="Total SOE Budget" amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
           <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
@@ -697,28 +701,38 @@ export default function App() {
     return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       {(userRole === 'admin' || title === 'Expenditure') && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit sticky top-6">
-          <h3 className="text-lg font-semibold mb-4 border-b pb-2">
-            {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
-          </h3>
-          <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-4">
-            {formContent}
-            <div className="flex gap-2">
-              <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
-                {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
-                {editingItem?.type === title ? 'Update' : 'Add'}
-              </button>
-              {editingItem?.type === title && (
-                <button 
-                  type="button" 
-                  onClick={() => setEditingItem(null)}
-                  className="px-4 py-2 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
-                >
-                  Cancel
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit lg:sticky lg:top-6">
+          <div 
+            className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6 pt-2" 
+            onClick={() => setIsFormExpanded(!isFormExpanded)}
+          >
+            <h3 className="text-lg font-semibold">
+              {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
+            </h3>
+            <button type="button" className="text-gray-500 hover:text-gray-700">
+              {isFormExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            </button>
+          </div>
+          <div className={`${isFormExpanded ? 'block' : 'hidden'}`}>
+            <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-4">
+              {formContent}
+              <div className="flex gap-2">
+                <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
+                  {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {editingItem?.type === title ? 'Update' : 'Add'}
                 </button>
-              )}
-            </div>
-          </form>
+                {editingItem?.type === title && (
+                  <button 
+                    type="button" 
+                    onClick={() => setEditingItem(null)}
+                    className="px-4 py-2 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
         </div>
       )}
       <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
@@ -750,7 +764,10 @@ export default function App() {
                   {(userRole === 'admin' || title === 'Expenditure') && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       <button 
-                        onClick={() => onEdit(item)} 
+                        onClick={() => {
+                          onEdit(item);
+                          setIsFormExpanded(true);
+                        }} 
                         className="text-blue-500 hover:text-blue-700 p-1"
                         title="Edit"
                       >
@@ -1283,7 +1300,14 @@ export default function App() {
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-          <div className="flex items-center gap-3">
+          <div 
+            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+            onClick={() => {
+              setActiveTab('Dashboard');
+              setSearchTerm('');
+              setIsFormExpanded(window.innerWidth > 1024);
+            }}
+          >
             <Landmark className="h-10 w-10 text-emerald-600" />
             <div>
               <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-tight">Forest Budget Control</h1>
@@ -1360,9 +1384,11 @@ export default function App() {
                   setActiveTab(item);
                   setSearchTerm('');
                   setMenuOpen(false);
+                  setIsFormExpanded(window.innerWidth > 1024);
                 }}
-                className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
               >
+                {item === 'Dashboard' && <Home className="w-4 h-4" />}
                 {item}
               </button>
             ))}
@@ -1491,7 +1517,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -1542,7 +1568,7 @@ export default function App() {
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
           <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
             editingItem={editingItem} type="SOE Head"
           >
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
@@ -1651,7 +1677,7 @@ export default function App() {
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
           <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
             editingItem={editingItem} type="Allocation"
           >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
@@ -1816,7 +1842,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges}
+                schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
@@ -1901,7 +1927,7 @@ export default function App() {
 }
 
 function CascadingDropdowns({ 
-  schemes, sectors, activities, subActivities, soes, allocations, ranges,
+  schemes, sectors, activities, subActivities, soes, allocations, ranges, expenses,
   editingItem, type, children 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
@@ -2068,9 +2094,24 @@ function CascadingDropdowns({
             <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
               {(() => {
                 const soe = soes.find((s: any) => s.id === soeId);
-                const totalAllocated = allocations.filter((a: any) => a.soeId === soeId).reduce((sum: number, a: any) => sum + a.amount, 0);
+                const totalAllocated = allocations
+                  .filter((a: any) => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
+                  .reduce((sum: number, a: any) => sum + a.amount, 0);
                 const remaining = (soe?.budgetLimit || 0) - totalAllocated;
                 return `Budget Limit: ₹${(soe?.budgetLimit || 0).toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
+              })()}
+            </div>
+          )}
+          {type === 'Expenditure' && soeId && (
+            <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+              {(() => {
+                const soeAllocations = allocations.filter((a: any) => a.soeId === soeId);
+                const totalAllocated = soeAllocations.reduce((sum: number, a: any) => sum + a.amount, 0);
+                const totalSpent = expenses
+                  .filter((e: any) => soeAllocations.some(a => a.id === e.allocationId) && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                  .reduce((sum: number, e: any) => sum + e.amount, 0);
+                const remaining = totalAllocated - totalSpent;
+                return `Allocated: ₹${totalAllocated.toLocaleString()} | Expenditure: ₹${totalSpent.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
               })()}
             </div>
           )}
