@@ -383,18 +383,58 @@ export default function App() {
       amount: expensesByDate[date]
     }));
 
+    const schemeSummary = currentSchemes.map(sch => {
+      const schSectors = currentSectors.filter(s => s.schemeId === sch.id);
+      const schActivities = currentActivities.filter(a => a.schemeId === sch.id || schSectors.some(sec => sec.id === a.sectorId));
+      const schSoes = currentSoes.filter(s => schActivities.some(a => a.id === s.activityId || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === a.id)));
+      
+      const totalBudgetLimit = schSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
+      const totalAllocated = allocations.filter(a => schSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
+      const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && schSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
+      
+      return {
+        name: sch.name,
+        budget: totalBudgetLimit,
+        allocated: totalAllocated,
+        spent: totalSpent,
+        balance: totalBudgetLimit - totalSpent
+      };
+    });
+
+    const sectorSummary = currentSectors.map(sec => {
+      const secActivities = currentActivities.filter(a => a.sectorId === sec.id);
+      const secSoes = currentSoes.filter(s => secActivities.some(a => a.id === s.activityId || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === a.id)));
+      
+      const totalBudgetLimit = secSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
+      const totalAllocated = allocations.filter(a => secSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
+      const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && secSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
+      
+      return {
+        name: sec.name,
+        budget: totalBudgetLimit,
+        allocated: totalAllocated,
+        spent: totalSpent,
+        balance: totalBudgetLimit - totalSpent
+      };
+    });
+
     const activitySummary = currentActivities.map(act => {
+      const sec = currentSectors.find(s => s.id === act.sectorId);
+      const sch = currentSchemes.find(s => s.id === (sec ? sec.schemeId : act.schemeId));
+
       const actSoes = currentSoes.filter(s => s.activityId === act.id || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === act.id));
       const totalBudgetLimit = actSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
       const totalAllocated = allocations.filter(a => actSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
       const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && actSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
       
       return {
+        scheme: sch?.name || 'N/A',
+        sector: sec?.name || 'N/A',
         name: act.name,
         budget: totalBudgetLimit,
         allocated: totalAllocated,
         spent: totalSpent,
-        remaining: totalBudgetLimit - totalAllocated
+        balance: totalBudgetLimit - totalSpent
       };
     });
 
@@ -425,32 +465,72 @@ export default function App() {
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
-              <Activity className="h-5 w-5 text-gray-500" /> Activity-wise Summary
+              <Activity className="h-5 w-5 text-gray-500" /> Scheme-wise Budget
             </h3>
-            <div className="overflow-y-auto max-h-64">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="bg-gray-50 text-gray-600">
-                    <th className="p-2 border-b">Activity</th>
-                    <th className="p-2 border-b text-right">Budget Limit</th>
-                    <th className="p-2 border-b text-right">Allocated</th>
-                    <th className="p-2 border-b text-right">Spent</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {activitySummary.map((act, idx) => (
-                    <tr key={idx} className="border-b hover:bg-gray-50">
-                      <td className="p-2 font-medium">{act.name}</td>
-                      <td className="p-2 text-right">₹{act.budget.toLocaleString()}</td>
-                      <td className="p-2 text-right text-indigo-600">₹{act.allocated.toLocaleString()}</td>
-                      <td className="p-2 text-right text-red-600">₹{act.spent.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={schemeSummary} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
+                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
+                  <Legend />
+                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-gray-500" /> Sector-wise Budget
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={sectorSummary} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
+                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
+                  <Legend />
+                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+              <Activity className="h-5 w-5 text-gray-500" /> Activity-wise Budget
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={activitySummary} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
+                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
+                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
+                  <Legend />
+                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
               <Activity className="h-5 w-5 text-gray-500" /> Range-wise Budget (Allocated vs Spent)
             </h3>
@@ -469,9 +549,7 @@ export default function App() {
               </ResponsiveContainer>
             </div>
           </div>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
               <TrendingDown className="h-5 w-5 text-gray-500" /> Expenditure Trend
@@ -492,8 +570,10 @@ export default function App() {
               )}
             </div>
           </div>
+        </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
             <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
               <FileText className="h-5 w-5 text-gray-500" /> Latest Expenditures
             </h3>
@@ -606,14 +686,14 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {userRole === 'admin' && <th className="p-3 border-b text-right">Actions</th>}
+                {(userRole === 'admin' || title === 'Expenditure') && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {userRole === 'admin' && (
+                  {(userRole === 'admin' || title === 'Expenditure') && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       <button 
                         onClick={() => onEdit(item)} 
@@ -633,7 +713,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + (userRole === 'admin' ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((userRole === 'admin' || title === 'Expenditure') ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1025,30 +1105,30 @@ export default function App() {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+            <table className="w-full text-left border-collapse border border-gray-300">
               <thead>
-                <tr className="bg-gray-50 border-b border-gray-200">
-                  {headers.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-600">{h}</th>)}
+                <tr className="bg-gray-100 border-b border-gray-300">
+                  {headers.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-700 border border-gray-300">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {comprehensiveReportData.map((row, i) => (
-                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="p-3 text-sm">{row.range}</td>
-                    <td className="p-3 text-sm">{row.scheme}</td>
-                    <td className="p-3 text-sm">{row.sector}</td>
-                    <td className="p-3 text-sm">{row.activity}</td>
-                    <td className="p-3 text-sm">{row.subActivity}</td>
-                    <td className="p-3 text-sm font-medium">{row.soe}</td>
-                    <td className="p-3 text-sm text-right text-gray-500">₹{row.totalBudget.toLocaleString()}</td>
-                    <td className="p-3 text-sm text-right text-emerald-600 font-medium">₹{row.allocated.toLocaleString()}</td>
-                    <td className="p-3 text-sm text-right text-red-600 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                    <td className="p-3 text-sm text-right text-blue-600 font-bold">₹{row.remaining.toLocaleString()}</td>
+                  <tr key={i} className="border-b border-gray-300 hover:bg-gray-50">
+                    <td className="p-3 text-sm border border-gray-300">{row.range}</td>
+                    <td className="p-3 text-sm border border-gray-300">{row.scheme}</td>
+                    <td className="p-3 text-sm border border-gray-300">{row.sector}</td>
+                    <td className="p-3 text-sm border border-gray-300">{row.activity}</td>
+                    <td className="p-3 text-sm border border-gray-300">{row.subActivity}</td>
+                    <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
+                    <td className="p-3 text-sm text-right text-gray-600 border border-gray-300">₹{row.totalBudget.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-emerald-700 font-medium border border-gray-300">₹{row.allocated.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-red-700 font-medium border border-gray-300">₹{row.expenditure.toLocaleString()}</td>
+                    <td className="p-3 text-sm text-right text-blue-700 font-bold border border-gray-300">₹{row.remaining.toLocaleString()}</td>
                   </tr>
                 ))}
                 {comprehensiveReportData.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-gray-500">No data available for the selected Financial Year.</td>
+                    <td colSpan={10} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected Financial Year.</td>
                   </tr>
                 )}
               </tbody>
@@ -1401,7 +1481,7 @@ export default function App() {
           'Allocation', 
           allocations, 
           [
-            {key: 'soeId', label: 'FY -> SOE', 
+            {key: 'soeId', label: 'Hierarchy', 
               searchableText: (val) => {
                 const s = soes.find(s => s.id === val);
                 let hierarchy = '';
@@ -1434,10 +1514,15 @@ export default function App() {
                 const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                 hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
               }
-              return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
+              return (
+                <div className="flex flex-col">
+                  <span className="text-xs text-gray-500">{hierarchy || 'N/A'}</span>
+                  <span className="font-medium text-gray-800">{s?.name || 'N/A'}</span>
+                </div>
+              );
             }},
             {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
-            {key: 'amount', label: 'Allocated Amount', 
+            {key: 'amount', label: 'Allocation Details', 
               searchableText: (val) => String(val),
               render: (val, item) => {
               const soe = soes.find(s => s.id === item.soeId);
@@ -1461,14 +1546,30 @@ export default function App() {
               }).join(', ');
 
               return (
-                <div className="space-y-1">
-                  <div className="text-emerald-600 font-bold">₹{val.toLocaleString()}</div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">Allocated to Range:</span>
+                    <span className="text-emerald-600 font-bold text-base">₹{val.toLocaleString()}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
+                    <div className="flex justify-between mb-1">
+                      <span>SOE Total Budget:</span>
+                      <span className="font-medium">₹{(soe?.budgetLimit || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between mb-1">
+                      <span>Total Allocated (All Ranges):</span>
+                      <span className="font-medium text-blue-600">₹{totalAllocatedForSoe.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1 mt-1">
+                      <span className="font-semibold">SOE Balance:</span>
+                      <span className={`font-bold ${remaining < 0 ? 'text-red-600' : 'text-emerald-600'}`}>₹{remaining.toLocaleString()}</span>
+                    </div>
+                  </div>
                   <div className="text-[10px] text-gray-400 bg-gray-50 p-1 rounded">
                     <div className="font-semibold text-gray-600">Range Summary:</div>
                     <div>{breakdown}</div>
                     <div className="border-t mt-1 pt-1 font-bold">Total: ₹{totalForParentRange.toLocaleString()}</div>
                   </div>
-                  <div className="text-[10px] text-blue-400">SOE Remaining: ₹{remaining.toLocaleString()}</div>
                 </div>
               );
             }}
