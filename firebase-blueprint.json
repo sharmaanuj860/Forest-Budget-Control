@@ -65,11 +65,23 @@
       "type": "object",
       "properties": {
         "name": { "type": "string", "description": "The name of the SOE head" },
-        "budgetLimit": { "type": "number", "description": "The total budget limit" },
+        "schemeId": { "type": "string", "description": "ID of the scheme (optional)" },
+        "sectorId": { "type": "string", "description": "ID of the sector (optional)" },
         "activityId": { "type": "string", "description": "ID of the activity (optional)" },
         "subActivityId": { "type": "string", "description": "ID of the sub-activity (optional)" }
       },
-      "required": ["name", "budgetLimit"]
+      "required": ["name"]
+    },
+    "SOEBudget": {
+      "title": "SOE Budget",
+      "description": "Represents the budget limit for an SOE head in a specific financial year",
+      "type": "object",
+      "properties": {
+        "soeId": { "type": "string", "description": "ID of the SOE head" },
+        "fyId": { "type": "string", "description": "ID of the financial year" },
+        "budgetLimit": { "type": "number", "description": "The total budget limit" }
+      },
+      "required": ["soeId", "fyId", "budgetLimit"]
     },
     "Allocation": {
       "title": "Allocation",
@@ -114,6 +126,7 @@
     "/activities": { "schema": "Activity", "description": "Collection of activities" },
     "/subActivities": { "schema": "SubActivity", "description": "Collection of sub-activities" },
     "/soeHeads": { "schema": "SOEHead", "description": "Collection of SOE heads" },
+    "/soeBudgets": { "schema": "SOEBudget", "description": "Collection of SOE budgets" },
     "/allocations": { "schema": "Allocation", "description": "Collection of budget allocations" },
     "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
     "/users": { "schema": "User", "description": "Collection of application users" }

@@ -21,7 +21,7 @@ type Scheme = { id: string; name: string };
 type Sector = { id: string; schemeId: string; name: string };
 type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
 type SubActivity = { id: string; activityId: string; name: string };
-type SOE = { id: string; activityId?: string; subActivityId?: string; name: string };
+type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; name: string };
 type SOEBudget = { id: string; soeId: string; fyId: string; budgetLimit: number };
 type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string };
 type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string };
@@ -908,12 +908,16 @@ export default function App() {
     e.preventDefault();
     const name = e.target.name.value;
     const budgetLimit = parseFloat(e.target.budgetLimit.value);
+    const schemeId = e.target.schemeId.value || null;
+    const sectorId = e.target.sectorId.value || null;
+    const activityId = e.target.activityId.value || null;
+    const subActivityId = e.target.subActivityId.value || null;
     const targetFyId = selectedFyId || fys[0]?.id;
 
     try {
       let soeId = editingItem?.item?.id;
       if (editingItem?.type === 'SOE Head') {
-        await updateDoc(doc(db, 'soeHeads', soeId), { name });
+        await updateDoc(doc(db, 'soeHeads', soeId), { name, schemeId, sectorId, activityId, subActivityId });
         // Find existing budget for this FY
         const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
         if (existingBudget) {
@@ -924,11 +928,17 @@ export default function App() {
         setEditingItem(null);
       } else {
         // Check if SOE Head already exists globally
-        const existingSoe = soes.find(s => s.name.toLowerCase() === name.toLowerCase());
+        const existingSoe = soes.find(s => 
+          s.name.toLowerCase() === name.toLowerCase() && 
+          (s.schemeId || null) === schemeId && 
+          (s.sectorId || null) === sectorId && 
+          (s.activityId || null) === activityId && 
+          (s.subActivityId || null) === subActivityId
+        );
         if (existingSoe) {
           soeId = existingSoe.id;
         } else {
-          const newSoeRef = await addDoc(collection(db, 'soeHeads'), { name });
+          const newSoeRef = await addDoc(collection(db, 'soeHeads'), { name, schemeId, sectorId, activityId, subActivityId });
           soeId = newSoeRef.id;
         }
         
@@ -1635,16 +1645,28 @@ export default function App() {
           'Sub-Activity', 
           subActivities, 
           [
-            {key: 'activityId', label: 'Activity', 
+            {key: 'activityId', label: 'Hierarchy', 
               searchableText: (val) => {
                 const act = activities.find(a => a.id === val);
                 const sec = sectors.find(s => s.id === act?.sectorId);
-                return `[${sec?.name}] ${act?.name}`;
+                const sch = schemes.find(s => s.id === (act?.schemeId || sec?.schemeId));
+                let text = '';
+                if (sch) text += `[${sch.name}] `;
+                if (sec) text += `${sec.name} > `;
+                if (act) text += act.name;
+                return text;
               },
               render: (val) => {
-              const act = activities.find(a => a.id === val);
-              const sec = sectors.find(s => s.id === act?.sectorId);
-              return `[${sec?.name}] ${act?.name}`;
+                const act = activities.find(a => a.id === val);
+                const sec = sectors.find(s => s.id === act?.sectorId);
+                const sch = schemes.find(s => s.id === (act?.schemeId || sec?.schemeId));
+                return (
+                  <div className="text-xs text-gray-500">
+                    {sch && <div className="font-medium text-gray-700">{sch.name}</div>}
+                    {sec && <div>Sector: {sec.name}</div>}
+                    {act && <div>Activity: {act.name}</div>}
+                  </div>
+                );
             }},
             {key: 'name', label: 'Sub-Activity Name'}
           ], 
@@ -1663,6 +1685,29 @@ export default function App() {
           'SOE Head', 
           soes, 
           [
+            {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => {
+              let hierarchy = '';
+              if (item.subActivityId) {
+                const sa = subActivities.find(sa => sa.id === item.subActivityId);
+                const act = activities.find(a => a.id === sa?.activityId);
+                const sec = sectors.find(sec => sec.id === act?.sectorId);
+                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+              } else if (item.activityId) {
+                const act = activities.find(a => a.id === item.activityId);
+                const sec = sectors.find(sec => sec.id === act?.sectorId);
+                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+              } else if (item.sectorId) {
+                const sec = sectors.find(sec => sec.id === item.sectorId);
+                const sch = schemes.find(sc => sc.id === sec?.schemeId);
+                hierarchy = [sch?.name, sec?.name].filter(Boolean).join(' -> ');
+              } else if (item.schemeId) {
+                const sch = schemes.find(sc => sc.id === item.schemeId);
+                hierarchy = sch?.name || '';
+              }
+              return <span className="text-xs text-gray-500">{hierarchy || 'Global (No Hierarchy)'}</span>;
+            }},
             {key: 'name', label: 'SOE Name'},
             {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val, item) => String(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0), render: (_, item) => `₹${(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0).toLocaleString()}`},
             {key: 'allocated', label: 'Allocated', render: (_, item) => {
@@ -1677,10 +1722,13 @@ export default function App() {
           ], 
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
-          <>
+          <CascadingDropdowns 
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
+            editingItem={editingItem} type="SOE Head"
+          >
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
             <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.budgetLimit || '') : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
-          </>,
+          </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'SOE Head', item })
         )}
 
@@ -2096,6 +2144,11 @@ function CascadingDropdowns({
         currentSchemeId = item.schemeId || '';
       } else if (type === 'Sub-Activity') {
         currentActivityId = item.activityId;
+      } else if (type === 'SOE Head') {
+        currentSubActivityId = item.subActivityId || '';
+        currentActivityId = item.activityId || '';
+        currentSectorId = item.sectorId || '';
+        currentSchemeId = item.schemeId || '';
       }
 
       if (currentSoeId) {
@@ -2134,15 +2187,20 @@ function CascadingDropdowns({
     }
   }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
 
-  const selectedScheme = schemes.find((s: any) => s.id === schemeId);
-  const isCampa = selectedScheme?.name.toUpperCase().includes('CAMPA');
-
   const filteredSectors = sectors.filter((s: any) => s.schemeId === schemeId);
-  const filteredActivities = activities.filter((a: any) => 
-    isCampa ? a.sectorId === sectorId : a.schemeId === schemeId
-  );
+  const filteredActivities = activities.filter((a: any) => {
+    if (sectorId) return a.sectorId === sectorId;
+    if (schemeId) return a.schemeId === schemeId;
+    return true;
+  });
   const filteredSubActivities = subActivities.filter((sa: any) => sa.activityId === activityId);
-  const filteredSoes = soes;
+  const filteredSoes = soes.filter((s: any) => {
+    if (schemeId && s.schemeId && s.schemeId !== schemeId) return false;
+    if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
+    if (activityId && s.activityId && s.activityId !== activityId) return false;
+    if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+    return true;
+  });
   const filteredAllocations = allocations.filter((a: any) => {
     if (a.soeId !== soeId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
@@ -2159,23 +2217,22 @@ function CascadingDropdowns({
           className="w-full p-2 border rounded" 
           value={schemeId} 
           onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-          required={type !== 'Activity'}
+          required={type !== 'Activity' && type !== 'SOE Head'}
         >
-          <option value="">Select Scheme</option>
+          <option value="">Select Scheme {type === 'SOE Head' ? '(Optional)' : ''}</option>
           {schemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
       </div>
 
-      {isCampa && (
+      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-2 border rounded" 
             value={sectorId} 
             onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            required
           >
-            <option value="">Select Sector</option>
+            <option value="">Select Sector (Optional)</option>
             {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
@@ -2190,14 +2247,14 @@ function CascadingDropdowns({
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
             required={type !== 'SOE Head'}
           >
-            <option value="">Select Activity</option>
+            <option value="">Select Activity {type === 'SOE Head' ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Activity">+</button>
         </div>
       )}
 
-      {(type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && filteredSubActivities.length > 0 && (
+      {(type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-2 border rounded" 
@@ -2287,9 +2344,6 @@ function CascadingDropdowns({
 function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[], sectors: any[], editingItem: any }) {
   const [selectedSchemeId, setSelectedSchemeId] = useState(editingItem?.item?.schemeId || (editingItem?.item?.sectorId ? sectors.find((s: any) => s.id === editingItem.item.sectorId)?.schemeId : ''));
   
-  const selectedScheme = schemes.find(s => s.id === selectedSchemeId);
-  const isCampa = selectedScheme?.name.toUpperCase().includes('CAMPA');
-
   return (
     <>
       <div className="flex gap-2">
@@ -2306,17 +2360,15 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
       </div>
       
-      {isCampa && (
-        <div className="flex gap-2">
-          <select name="sectorId" required defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
-            <option value="">Select Sector</option>
-            {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
-              <option key={sec.id} value={sec.id}>{sec.name}</option>
-            ))}
-          </select>
-          <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
-        </div>
-      )}
+      <div className="flex gap-2">
+        <select name="sectorId" defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
+          <option value="">Select Sector (Optional)</option>
+          {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
+            <option key={sec.id} value={sec.id}>{sec.name}</option>
+          ))}
+        </select>
+        <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
+      </div>
       
       <input name="name" required defaultValue={editingItem?.type === 'Activity' ? editingItem.item.name : ''} placeholder="Activity Name" className="w-full p-2 border rounded" />
     </>
