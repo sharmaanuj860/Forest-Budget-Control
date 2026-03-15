@@ -337,13 +337,17 @@ export default function App() {
     return null;
   }, [userRole, ranges]);
 
-  const currentAllocations = useMemo(() => {
+  const baseAllocations = useMemo(() => {
     let filtered = allocations.filter(a => (a.fyId || fys[0]?.id) === selectedFyId);
-    
     if (userRangeId) {
       filtered = filtered.filter(a => a.rangeId === userRangeId);
     }
+    return filtered;
+  }, [allocations, selectedFyId, userRangeId]);
 
+  const currentAllocations = useMemo(() => {
+    let filtered = baseAllocations;
+    
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
     }
@@ -354,7 +358,7 @@ export default function App() {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
     return filtered;
-  }, [allocations, selectedFyId, allocFilters, userRangeId]);
+  }, [baseAllocations, allocFilters]);
   
   const currentExpenses = useMemo(() => {
     let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
@@ -896,25 +900,29 @@ export default function App() {
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || title === 'Expenditure')) && (
+                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) && (
                     <td className="p-3 text-right flex justify-end gap-2">
-                      <button 
-                        onClick={() => {
-                          onEdit(item);
-                          setIsFormExpanded(true);
-                        }} 
-                        className="text-blue-500 hover:text-blue-700 p-1"
-                        title="Edit"
-                      >
-                        <Pencil className="w-4 h-4"/>
-                      </button>
-                      <button 
-                        onClick={() => onDelete(item.id)} 
-                        className="text-red-500 hover:text-red-700 p-1"
-                        title="Delete"
-                      >
-                        <Trash2 className="w-4 h-4"/>
-                      </button>
+                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || title === 'Expenditure')) && (
+                        <>
+                          <button 
+                            onClick={() => {
+                              onEdit(item);
+                              setIsFormExpanded(true);
+                            }} 
+                            className="text-blue-500 hover:text-blue-700 p-1"
+                            title="Edit"
+                          >
+                            <Pencil className="w-4 h-4"/>
+                          </button>
+                          <button 
+                            onClick={() => onDelete(item.id)} 
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4"/>
+                          </button>
+                        </>
+                      )}
                     </td>
                   )}
                 </tr>
@@ -1130,7 +1138,7 @@ export default function App() {
     if (!soe) return;
     const soeBudget = currentSoeBudgets.find(b => b.soeId === soeId)?.budgetLimit || 0;
 
-    const currentAllocated = currentAllocations
+    const currentAllocated = baseAllocations
       .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
       .reduce((sum, a) => sum + a.amount, 0);
 
@@ -1183,10 +1191,10 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Expenditure') {
-        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId, fyId: targetFyId });
+        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId, fyId: targetFyId, rangeId: alloc.rangeId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid, fyId: targetFyId });
+        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid, fyId: targetFyId, rangeId: alloc.rangeId });
       }
       e.target.reset();
     } catch (error) {
@@ -1683,7 +1691,7 @@ export default function App() {
                     <User className="w-4 h-4 text-emerald-600" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-800 leading-none">{user.email?.split('@')[0]}</span>
+                    <span className="text-sm font-bold text-gray-800 leading-none">{user.displayName || user.email?.split('@')[0]}</span>
                     <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">{userRole}</span>
                   </div>
                 </div>
@@ -1867,7 +1875,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -1917,7 +1925,7 @@ export default function App() {
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="SOE Head"
           >
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
@@ -2025,7 +2033,7 @@ export default function App() {
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Allocation"
           >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
@@ -2190,7 +2198,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
@@ -2388,18 +2396,41 @@ function CascadingDropdowns({
     }
   }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
 
-  const filteredSectors = sectors.filter((s: any) => s.schemeId === schemeId);
-  const filteredActivities = activities.filter((a: any) => {
-    if (sectorId) return a.sectorId === sectorId;
-    if (schemeId) return a.schemeId === schemeId;
+  const filteredSchemes = type === 'Expenditure' 
+    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
+    : schemes;
+
+  const filteredSectors = sectors.filter((s: any) => {
+    if (s.schemeId !== schemeId) return false;
+    if (type === 'Expenditure') return allocations.some((a: any) => a.schemeId === schemeId && a.sectorId === s.id);
     return true;
   });
-  const filteredSubActivities = subActivities.filter((sa: any) => sa.activityId === activityId);
+
+  const filteredActivities = activities.filter((a: any) => {
+    if (sectorId && a.sectorId !== sectorId) return false;
+    if (schemeId && a.schemeId !== schemeId) return false;
+    if (type === 'Expenditure') return allocations.some((al: any) => al.schemeId === schemeId && al.activityId === a.id && (!sectorId || al.sectorId === sectorId));
+    return true;
+  });
+
+  const filteredSubActivities = subActivities.filter((sa: any) => {
+    if (sa.activityId !== activityId) return false;
+    if (type === 'Expenditure') return allocations.some((al: any) => al.schemeId === schemeId && al.activityId === activityId && al.subActivityId === sa.id && (!sectorId || al.sectorId === sectorId));
+    return true;
+  });
+
   const filteredSoes = soes.filter((s: any) => {
     if (schemeId && s.schemeId && s.schemeId !== schemeId) return false;
     if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
     if (activityId && s.activityId && s.activityId !== activityId) return false;
     if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+    if (type === 'Expenditure') return allocations.some((al: any) => 
+      al.schemeId === schemeId && 
+      (!sectorId || al.sectorId === sectorId) && 
+      al.activityId === activityId && 
+      (!subActivityId || al.subActivityId === subActivityId) && 
+      al.soeId === s.id
+    );
     return true;
   });
   const filteredAllocations = allocations.filter((a: any) => {
@@ -2421,7 +2452,7 @@ function CascadingDropdowns({
           required={type !== 'Activity' && type !== 'SOE Head'}
         >
           <option value="">Select Scheme {type === 'SOE Head' ? '(Optional)' : ''}</option>
-          {schemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
       </div>
@@ -2506,6 +2537,15 @@ function CascadingDropdowns({
           {type === 'Expenditure' && soeId && (
             <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
               {(() => {
+                if (allocationId) {
+                  const alloc = allocations.find((a: any) => a.id === allocationId);
+                  if (alloc) {
+                    const spent = expenses
+                      .filter((e: any) => e.allocationId === allocationId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                      .reduce((sum: number, e: any) => sum + e.amount, 0);
+                    return `Allocation Budget: ₹${alloc.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(alloc.amount - spent).toLocaleString()}`;
+                  }
+                }
                 const soeAllocations = allocations.filter((a: any) => a.soeId === soeId);
                 const totalAllocated = soeAllocations.reduce((sum: number, a: any) => sum + a.amount, 0);
                 const totalSpent = expenses

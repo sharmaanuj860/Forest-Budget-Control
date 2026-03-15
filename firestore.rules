@@ -27,6 +27,13 @@ service cloud.firestore {
       return isAdmin() || isDEO();
     }
 
+    function canWriteExpenditure(data) {
+      let userRole = get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+      let rangeId = ('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId;
+      let rangeName = get(/databases/$(database)/documents/ranges/$(rangeId)).data.name;
+      return canWrite() || userRole == rangeName;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -84,7 +91,9 @@ service cloud.firestore {
 
     match /expenditures/{id} {
       allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data);
+      allow update: if isAuthenticated() && canWriteExpenditure(resource.data) && canWriteExpenditure(request.resource.data);
+      allow delete: if isAuthenticated() && canWriteExpenditure(resource.data);
     }
   }
 }
