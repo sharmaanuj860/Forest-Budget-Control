@@ -243,7 +243,6 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -254,17 +253,13 @@ export default function App() {
       if (!emailToUse.includes('@')) {
         emailToUse = `${emailToUse}@rajgarhforest.app`;
       }
-      if (isSignUp) {
-        await createUserWithEmailAndPassword(auth, emailToUse, loginPassword);
-      } else {
-        await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
-      }
+      await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
     } catch (error: any) {
       console.error('Auth error:', error);
       if (error.code === 'auth/operation-not-allowed') {
         setLoginError('Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
-        setLoginError('User not found or invalid credentials. If this is a new account, please click "Sign Up" below.');
+        setLoginError('User not found or invalid credentials.');
       } else {
         setLoginError(error.message || 'Authentication failed. Please check your credentials.');
       }
@@ -272,23 +267,6 @@ export default function App() {
     }
   };
 
-  const handleForgotPassword = async () => {
-    if (!loginEmail) {
-      setLoginError('Please enter your ID/Email first to reset password.');
-      return;
-    }
-    try {
-      let emailToUse = loginEmail;
-      if (!emailToUse.includes('@')) {
-        emailToUse = `${emailToUse}@rajgarhforest.app`;
-      }
-      await sendPasswordResetEmail(auth, emailToUse);
-      alert('Password reset email sent! Check your inbox (or contact admin if using a dummy ID).');
-    } catch (error: any) {
-      console.error('Reset error:', error);
-      setLoginError(error.message || 'Failed to send reset email.');
-    }
-  };
 
   const handleLogout = () => signOut(auth);
 
@@ -1589,27 +1567,13 @@ export default function App() {
             </div>
             
             <div className="flex justify-between items-center">
-              <button 
-                type="button" 
-                onClick={() => setIsSignUp(!isSignUp)}
-                className="text-sm text-emerald-600 hover:underline"
-              >
-                {isSignUp ? 'Already have an account? Sign In' : 'Need an account? Sign Up'}
-              </button>
-              <button 
-                type="button" 
-                onClick={handleForgotPassword}
-                className="text-sm text-emerald-600 hover:underline"
-              >
-                Forgot Password?
-              </button>
             </div>
 
             <button 
               type="submit"
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white py-3 rounded-xl font-semibold flex items-center justify-center gap-3 transition-all transform hover:scale-[1.02]"
             >
-              {isSignUp ? 'Sign Up' : 'Sign In'}
+              Sign In
             </button>
           </form>
         </div>
@@ -1936,7 +1900,7 @@ export default function App() {
 
         {activeTab === 'Allocations' && renderSimpleManager(
           'Allocation', 
-          allocations, 
+          currentAllocations, 
           [
             {key: 'soeId', label: 'Hierarchy & SOE', 
               searchableText: (val, item) => {
