@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -25,7 +25,7 @@ type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: stri
 type SOEBudget = { id: string; soeId: string; fyId: string; budgetLimit: number };
 type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string };
 type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string };
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
 
 enum OperationType {
   CREATE = 'create',
@@ -88,7 +88,7 @@ export default function App() {
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
 
   // --- State ---
@@ -106,7 +106,7 @@ export default function App() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo'>('deo');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -130,8 +130,10 @@ export default function App() {
     testConnection();
 
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
       if (currentUser) {
+        setLoading(true);
+        setUser(currentUser);
+        setActiveTab('Dashboard');
         const email = currentUser.email?.toLowerCase();
         
         // Hardcode roles for specific emails to bypass DB requirement
@@ -174,6 +176,7 @@ export default function App() {
           handleFirestoreError(error, OperationType.GET, 'users');
         }
       } else {
+        setUser(null);
         setUserRole(null);
       }
       setLoading(false);
@@ -245,6 +248,7 @@ export default function App() {
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setLoginError('');
+    setLoading(true);
     try {
       let emailToUse = loginEmail;
       if (!emailToUse.includes('@')) {
@@ -264,6 +268,7 @@ export default function App() {
       } else {
         setLoginError(error.message || 'Authentication failed. Please check your credentials.');
       }
+      setLoading(false);
     }
   };
 
@@ -325,9 +330,20 @@ export default function App() {
   const currentSoes = soes;
   const currentSoeBudgets = useMemo(() => soeBudgets.filter(b => (b.fyId || fys[0]?.id) === selectedFyId), [soeBudgets, selectedFyId, fys]);
   
+  const userRangeId = useMemo(() => {
+    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh'].includes(userRole)) {
+      return ranges.find(r => r.name === userRole)?.id;
+    }
+    return null;
+  }, [userRole, ranges]);
+
   const currentAllocations = useMemo(() => {
     let filtered = allocations.filter(a => (a.fyId || fys[0]?.id) === selectedFyId);
     
+    if (userRangeId) {
+      filtered = filtered.filter(a => a.rangeId === userRangeId);
+    }
+
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
     }
@@ -338,11 +354,16 @@ export default function App() {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
     return filtered;
-  }, [allocations, selectedFyId, allocFilters]);
+  }, [allocations, selectedFyId, allocFilters, userRangeId]);
   
   const currentExpenses = useMemo(() => {
     let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
     
+    if (userRangeId) {
+      const userAllocIds = currentAllocations.map(a => a.id);
+      filtered = filtered.filter(e => userAllocIds.includes(e.allocationId));
+    }
+
     if (expDateRange.start) filtered = filtered.filter(e => e.date >= expDateRange.start);
     if (expDateRange.end) filtered = filtered.filter(e => e.date <= expDateRange.end);
     
@@ -368,17 +389,20 @@ export default function App() {
     }
 
     return filtered;
-  }, [expenses, currentAllocations, expDateRange, expFilters, allocations]);
+  }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId, selectedFyId]);
 
   const getSoeAllocated = (soeId: string) => currentAllocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
-  const totalBudget = currentSoeBudgets.reduce((sum, s) => sum + s.budgetLimit, 0);
   const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
   const totalSpent = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const remainingBalance = totalBudget - totalSpent;
+  const totalBudget = userRangeId ? totalAllocated : currentSoeBudgets.reduce((sum, s) => sum + s.budgetLimit, 0);
+  const remainingBalance = userRangeId ? totalAllocated - totalSpent : totalBudget - totalSpent;
 
-  const chartData = [
+  const chartData = userRangeId ? [
+    { name: 'Allocated (Unspent)', value: Math.max(0, totalAllocated - totalSpent), color: '#007bff' },
+    { name: 'Spent', value: totalSpent, color: '#dc3545' }
+  ] : [
     { name: 'Allocated (Unspent)', value: Math.max(0, totalAllocated - totalSpent), color: '#007bff' },
     { name: 'Spent', value: totalSpent, color: '#dc3545' },
     { name: 'Unallocated', value: Math.max(0, totalBudget - totalAllocated), color: '#28a745' }
@@ -434,8 +458,31 @@ export default function App() {
       const totalAllocated = schAllocations.reduce((sum, a) => sum + a.amount, 0);
       const totalSpent = currentExpenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
+      const schemeSoes = currentSoes.filter(s => {
+        if (s.schemeId === sch.id) return true;
+        if (s.sectorId) return currentSectors.find(sec => sec.id === s.sectorId)?.schemeId === sch.id;
+        if (s.activityId) {
+          const act = currentActivities.find(a => a.id === s.activityId);
+          return act?.schemeId === sch.id || currentSectors.find(sec => sec.id === act?.sectorId)?.schemeId === sch.id;
+        }
+        if (s.subActivityId) {
+          const sa = currentSubActivities.find(sa => sa.id === s.subActivityId);
+          const act = currentActivities.find(a => a.id === sa?.activityId);
+          return act?.schemeId === sch.id || currentSectors.find(sec => sec.id === act?.sectorId)?.schemeId === sch.id;
+        }
+        return false;
+      });
+
+      const totalSoeBudget = schemeSoes.reduce((sum, s) => {
+        const b = currentSoeBudgets.find(b => b.soeId === s.id);
+        return sum + (b?.budgetLimit || 0);
+      }, 0);
+
+      const displayBudget = userRangeId ? totalAllocated : totalSoeBudget;
+
       return {
         name: sch.name,
+        budget: displayBudget,
         allocated: totalAllocated,
         spent: totalSpent,
         balance: totalAllocated - totalSpent
@@ -480,9 +527,10 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <StatCard title="Total SOE Budget" amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
+        <div className={`grid grid-cols-1 md:grid-cols-2 ${userRangeId ? 'lg:grid-cols-4' : 'lg:grid-cols-5'} gap-6`}>
+          <StatCard title={userRangeId ? "Total Allocation" : "Total SOE Budget"} amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
           <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
+          {!userRangeId && <StatCard title="To Be Allocated" amount={Math.max(0, totalBudget - totalAllocated)} icon={<IndianRupee />} color="text-orange-500" />}
           <StatCard title="Total Expenditure" amount={totalSpent} icon={<TrendingDown />} color="text-red-600" />
           <StatCard title="Remaining Balance" amount={remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
         </div>
@@ -608,6 +656,41 @@ export default function App() {
                   <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+              <Table className="h-5 w-5 text-gray-500" /> Scheme-wise Budget
+            </h3>
+            <div className="overflow-x-auto h-64">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead className="sticky top-0 bg-white shadow-sm">
+                  <tr className="bg-gray-50 text-gray-600 font-semibold">
+                    <th className="p-3 border-b">Scheme</th>
+                    {!userRangeId && <th className="p-3 border-b text-right">SOE Budget</th>}
+                    <th className="p-3 border-b text-right">Allocation</th>
+                    <th className="p-3 border-b text-right">Expenditure</th>
+                    <th className="p-3 border-b text-right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {schemeSummary.map((sch, idx) => (
+                    <tr key={idx} className="border-b hover:bg-gray-50">
+                      <td className="p-3 font-medium text-gray-800">{sch.name}</td>
+                      {!userRangeId && <td className="p-3 text-right">₹{sch.budget.toLocaleString()}</td>}
+                      <td className="p-3 text-right text-blue-600">₹{sch.allocated.toLocaleString()}</td>
+                      <td className="p-3 text-right text-red-600">₹{sch.spent.toLocaleString()}</td>
+                      <td className="p-3 text-right text-emerald-600 font-medium">₹{sch.balance.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {schemeSummary.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="p-4 text-center text-gray-500">No scheme data available</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
 
@@ -1080,6 +1163,12 @@ export default function App() {
     const activityId = e.target.activityId?.value || null;
     const targetFyId = selectedFyId || fys[0]?.id;
 
+    const today = new Date().toISOString().split('T')[0];
+    if (date > today) {
+      alert("Cannot add expenditure for a future date.");
+      return;
+    }
+
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
 
@@ -1122,7 +1211,7 @@ export default function App() {
     }
   };
 
-  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo') => {
+  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: newRole });
     } catch (error) {
@@ -1218,11 +1307,15 @@ export default function App() {
           />
           <select 
             value={newUserRole}
-            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo')}
+            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
             className="p-2 border rounded"
           >
             <option value="admin">Admin</option>
             <option value="deo">DEO</option>
+            <option value="Sarahan">Sarahan</option>
+            <option value="Narag">Narag</option>
+            <option value="Habban">Habban</option>
+            <option value="Rajgarh">Rajgarh</option>
           </select>
           <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700">
             Create User
@@ -1248,11 +1341,15 @@ export default function App() {
                 <td className="p-3">
                   <select 
                     value={u.role} 
-                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo')}
+                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
                     className="p-1 border rounded text-sm"
                   >
                     <option value="admin">Admin</option>
                     <option value="deo">DEO</option>
+                    <option value="Sarahan">Sarahan</option>
+                    <option value="Narag">Narag</option>
+                    <option value="Habban">Habban</option>
+                    <option value="Rajgarh">Rajgarh</option>
                   </select>
                 </td>
                 <td className="p-3 text-right flex justify-end gap-2">
@@ -1345,7 +1442,7 @@ export default function App() {
       let sec = sectors.find(s => s.id === a.sectorId);
       let sch = schemes.find(s => s.id === a.schemeId);
 
-      const totalBudget = currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0;
+      const totalBudget = userRangeId ? a.amount : (currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0);
       const allocated = a.amount;
       const expenditure = currentExpenses.filter(e => e.allocationId === a.id).reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
@@ -1364,11 +1461,14 @@ export default function App() {
       };
     });
 
-    const headers = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Total Budget', 'Allocated', 'Expenditure', 'Remaining'];
-    const tableData = comprehensiveReportData.map(row => [
-      row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, 
-      row.totalBudget, row.allocated, row.expenditure, row.remaining
-    ]);
+    const headers = userRangeId 
+      ? ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Allocated', 'Expenditure', 'Remaining']
+      : ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Total Budget', 'Allocated', 'Expenditure', 'Remaining'];
+    
+    const tableData = comprehensiveReportData.map(row => userRangeId 
+      ? [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.allocated, row.expenditure, row.remaining]
+      : [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.totalBudget, row.allocated, row.expenditure, row.remaining]
+    );
 
     return (
       <div className="space-y-6">
@@ -1415,7 +1515,7 @@ export default function App() {
                     <td className="p-3 text-sm border border-gray-300">{row.activity}</td>
                     <td className="p-3 text-sm border border-gray-300">{row.subActivity}</td>
                     <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
-                    <td className="p-3 text-sm text-right text-gray-600 border border-gray-300">₹{row.totalBudget.toLocaleString()}</td>
+                    {!userRangeId && <td className="p-3 text-sm text-right text-gray-600 border border-gray-300">₹{row.totalBudget.toLocaleString()}</td>}
                     <td className="p-3 text-sm text-right text-emerald-700 font-medium border border-gray-300">₹{row.allocated.toLocaleString()}</td>
                     <td className="p-3 text-sm text-right text-red-700 font-medium border border-gray-300">₹{row.expenditure.toLocaleString()}</td>
                     <td className="p-3 text-sm text-right text-blue-700 font-bold border border-gray-300">₹{row.remaining.toLocaleString()}</td>
@@ -1423,7 +1523,7 @@ export default function App() {
                 ))}
                 {comprehensiveReportData.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected Financial Year.</td>
+                    <td colSpan={userRangeId ? 9 : 10} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected Financial Year.</td>
                   </tr>
                 )}
               </tbody>
@@ -1434,7 +1534,17 @@ export default function App() {
     );
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50">Loading...</div>;
+  if (loading) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-emerald-50">
+        <div className="animate-pulse flex flex-col items-center">
+          <TreePine className="h-20 w-20 text-emerald-600 mb-4" />
+          <h2 className="text-xl font-semibold text-emerald-800">Forest Budget Control</h2>
+          <p className="text-emerald-600/70 mt-2">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!user) {
     return (
@@ -1567,13 +1677,25 @@ export default function App() {
                   Install
                 </button>
               )}
-              <button 
-                onClick={handleLogout}
-                className="flex items-center gap-2 text-gray-600 hover:text-red-600 px-3 py-2 rounded-lg border border-gray-200 bg-white shadow-sm transition-colors text-sm"
-              >
-                <LogOut className="w-4 h-4" />
-                Logout
-              </button>
+              <div className="flex items-center gap-3 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 ml-2">
+                <div className="flex items-center gap-2">
+                  <div className="bg-emerald-100 p-1.5 rounded-full">
+                    <User className="w-4 h-4 text-emerald-600" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm font-bold text-gray-800 leading-none">{user.email?.split('@')[0]}</span>
+                    <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">{userRole}</span>
+                  </div>
+                </div>
+                <div className="w-px h-6 bg-gray-300 mx-1"></div>
+                <button 
+                  onClick={handleLogout}
+                  className="flex items-center gap-1 text-gray-500 hover:text-red-600 transition-colors text-sm font-medium"
+                  title="Logout"
+                >
+                  <LogOut className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1591,11 +1713,12 @@ export default function App() {
           </div>
           
           <div className={`${menuOpen ? 'flex' : 'hidden'} lg:flex flex-col lg:flex-row flex-wrap gap-1 p-2`}>
-            {[
+            {(userRole === 'admin' ? [
               'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
-              'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 
-              ...(userRole === 'admin' ? ['Users'] : [])
-            ].map((item) => (
+              'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 'Users'
+            ] : [
+              'Dashboard', 'Allocations', 'Expenditures', 'Ledger', 'Reports'
+            ]).map((item) => (
               <button 
                 key={item} 
                 id={`tab-${item}`}
@@ -2075,7 +2198,14 @@ export default function App() {
                 <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Expenditure', item }),
-              (item) => userRole === 'admin' || item.createdBy === user?.uid
+              (item) => {
+                if (userRole === 'admin' || userRole === 'deo') return true;
+                if (userRangeId) {
+                  const alloc = allocations.find(a => a.id === item.allocationId);
+                  return alloc?.rangeId === userRangeId;
+                }
+                return item.createdBy === user?.uid;
+              }
             )}
           </div>
         )}
