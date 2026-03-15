@@ -18,11 +18,10 @@ export const preloadDatabase = async (selectedFyId?: string) => {
   };
 
   // 1. Financial Years
-  const fy24 = await addIfNotExists('financialYears', { name: '2024-25' }, ['name']);
+  await addIfNotExists('financialYears', { name: '2024-25' }, ['name']);
   await addIfNotExists('financialYears', { name: '2025-26' }, ['name']);
   await addIfNotExists('financialYears', { name: '2026-27' }, ['name']);
-
-  const targetFyId = selectedFyId || fy24.id;
+  await addIfNotExists('financialYears', { name: '2027-28' }, ['name']);
 
   // 2. Ranges
   const ranges = ['Rajgarh', 'Habban', 'Sarahan', 'Narag'];
@@ -32,7 +31,7 @@ export const preloadDatabase = async (selectedFyId?: string) => {
 
   // Helper to add scheme -> sector -> activity -> subActivity
   const addHierarchy = async (schemeName: string, sectorsData: any) => {
-    const schemeRef = await addIfNotExists('schemes', { name: schemeName, fyId: targetFyId }, ['name', 'fyId']);
+    const schemeRef = await addIfNotExists('schemes', { name: schemeName }, ['name']);
     
     for (const sectorName of Object.keys(sectorsData)) {
       const qSector = query(collection(db, 'sectors'), where('name', '==', sectorName), where('schemeId', '==', schemeRef.id));
@@ -100,8 +99,8 @@ export const preloadDatabase = async (selectedFyId?: string) => {
   });
 
   // 6. Empty Schemes
-  await addIfNotExists('schemes', { name: 'SNA Sparsh-Fire', fyId: targetFyId }, ['name', 'fyId']);
-  await addIfNotExists('schemes', { name: 'Demand No 15 BASP', fyId: targetFyId }, ['name', 'fyId']);
+  await addIfNotExists('schemes', { name: 'SNA Sparsh-Fire' }, ['name']);
+  await addIfNotExists('schemes', { name: 'Demand No 15 BASP' }, ['name']);
 
   console.log('Database initialized successfully!');
 };

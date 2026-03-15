@@ -17,13 +17,14 @@ import { preloadDatabase } from './preloadData';
 // --- Types ---
 type FinancialYear = { id: string; name: string };
 type Range = { id: string; name: string };
-type Scheme = { id: string; name: string; fyId: string };
+type Scheme = { id: string; name: string };
 type Sector = { id: string; schemeId: string; name: string };
 type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
 type SubActivity = { id: string; activityId: string; name: string };
-type SOE = { id: string; activityId?: string; subActivityId?: string; name: string; budgetLimit: number };
-type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string };
-type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string };
+type SOE = { id: string; activityId?: string; subActivityId?: string; name: string };
+type SOEBudget = { id: string; soeId: string; fyId: string; budgetLimit: number };
+type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string };
+type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' };
 
 enum OperationType {
@@ -97,6 +98,7 @@ export default function App() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [subActivities, setSubActivities] = useState<SubActivity[]>([]);
   const [soes, setSoes] = useState<SOE[]>([]);
+  const [soeBudgets, setSoeBudgets] = useState<SOEBudget[]>([]);
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -211,6 +213,10 @@ export default function App() {
       setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
 
+    const unsubSoeBudgets = onSnapshot(collection(db, 'soeBudgets'), (snap) => {
+      setSoeBudgets(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOEBudget)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeBudgets'));
+
     const unsubAllocations = onSnapshot(collection(db, 'allocations'), (snap) => {
       setAllocations(snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
@@ -225,7 +231,7 @@ export default function App() {
 
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
-      unsubSubActivities(); unsubSoes(); unsubAllocations(); unsubExpenses(); unsubUsers();
+      unsubSubActivities(); unsubSoes(); unsubSoeBudgets(); unsubAllocations(); unsubExpenses(); unsubUsers();
     };
   }, [user, userRole]);
 
@@ -310,24 +316,15 @@ export default function App() {
   }, [user]);
 
   // --- Derived Data / Helpers ---
-  const currentSchemes = useMemo(() => schemes.filter(s => s.fyId === selectedFyId), [schemes, selectedFyId]);
-  const currentSectors = useMemo(() => sectors.filter(sec => currentSchemes.some(s => s.id === sec.schemeId)), [sectors, currentSchemes]);
-  const currentActivities = useMemo(() => activities.filter(a => {
-    if (a.sectorId) return currentSectors.some(sec => sec.id === a.sectorId);
-    if (a.schemeId) return currentSchemes.some(s => s.id === a.schemeId);
-    return false;
-  }), [activities, currentSectors, currentSchemes]);
-  const currentSubActivities = useMemo(() => subActivities.filter(sa => currentActivities.some(a => a.id === sa.activityId)), [subActivities, currentActivities]);
-  const currentSoes = soes; // SOEs are now global
+  const currentSchemes = schemes;
+  const currentSectors = sectors;
+  const currentActivities = activities;
+  const currentSubActivities = subActivities;
+  const currentSoes = soes;
+  const currentSoeBudgets = useMemo(() => soeBudgets.filter(b => (b.fyId || fys[0]?.id) === selectedFyId), [soeBudgets, selectedFyId, fys]);
   
   const currentAllocations = useMemo(() => {
-    let filtered = allocations.filter(a => {
-      // Filter allocations to only those belonging to the current financial year's schemes
-      if (a.schemeId) {
-        return currentSchemes.some(s => s.id === a.schemeId);
-      }
-      return true; // If no schemeId (legacy), keep it for now or handle appropriately
-    });
+    let filtered = allocations.filter(a => (a.fyId || fys[0]?.id) === selectedFyId);
     
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
@@ -339,10 +336,10 @@ export default function App() {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
     return filtered;
-  }, [allocations, currentSchemes, allocFilters]);
+  }, [allocations, selectedFyId, allocFilters]);
   
   const currentExpenses = useMemo(() => {
-    let filtered = expenses.filter(e => currentAllocations.some(a => a.id === e.allocationId));
+    let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
     
     if (expDateRange.start) filtered = filtered.filter(e => e.date >= expDateRange.start);
     if (expDateRange.end) filtered = filtered.filter(e => e.date <= expDateRange.end);
@@ -371,10 +368,10 @@ export default function App() {
     return filtered;
   }, [expenses, currentAllocations, expDateRange, expFilters, allocations]);
 
-  const getSoeAllocated = (soeId: string) => allocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
-  const getAllocSpent = (allocId: string) => expenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
+  const getSoeAllocated = (soeId: string) => currentAllocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
+  const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
-  const totalBudget = currentSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
+  const totalBudget = currentSoeBudgets.reduce((sum, s) => sum + s.budgetLimit, 0);
   const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
   const totalSpent = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
   const remainingBalance = totalAllocated - totalSpent;
@@ -843,13 +840,12 @@ export default function App() {
   const handleAddScheme = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const fyId = e.target.fyId.value;
     try {
       if (editingItem?.type === 'Scheme') {
-        await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, fyId });
+        await updateDoc(doc(db, 'schemes', editingItem.item.id), { name });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'schemes'), { name, fyId });
+        await addDoc(collection(db, 'schemes'), { name });
       }
       e.target.reset();
     } catch (error) {
@@ -890,7 +886,7 @@ export default function App() {
         await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'activities'), { id: Date.now().toString(), sectorId, schemeId, name });
+        await addDoc(collection(db, 'activities'), { sectorId, schemeId, name });
       }
       e.target.reset();
     } catch (error) {
@@ -919,13 +915,37 @@ export default function App() {
     e.preventDefault();
     const name = e.target.name.value;
     const budgetLimit = parseFloat(e.target.budgetLimit.value);
+    const targetFyId = selectedFyId || fys[0]?.id;
 
     try {
+      let soeId = editingItem?.item?.id;
       if (editingItem?.type === 'SOE Head') {
-        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit });
+        await updateDoc(doc(db, 'soeHeads', soeId), { name });
+        // Find existing budget for this FY
+        const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
+        if (existingBudget) {
+          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { budgetLimit });
+        } else {
+          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, budgetLimit });
+        }
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'soeHeads'), { name, budgetLimit });
+        // Check if SOE Head already exists globally
+        const existingSoe = soes.find(s => s.name.toLowerCase() === name.toLowerCase());
+        if (existingSoe) {
+          soeId = existingSoe.id;
+        } else {
+          const newSoeRef = await addDoc(collection(db, 'soeHeads'), { name });
+          soeId = newSoeRef.id;
+        }
+        
+        // Add or update budget for this FY
+        const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
+        if (existingBudget) {
+          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { budgetLimit });
+        } else {
+          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, budgetLimit });
+        }
       }
       e.target.reset();
     } catch (error) {
@@ -942,6 +962,7 @@ export default function App() {
     const sectorId = e.target.sectorId.value || null;
     const activityId = e.target.activityId.value || null;
     const subActivityId = e.target.subActivityId.value || null;
+    const targetFyId = selectedFyId || fys[0]?.id;
     
     if (isNaN(amount) || amount <= 0) {
       alert("Please enter a valid positive amount.");
@@ -950,12 +971,13 @@ export default function App() {
     
     const soe = soes.find(s => s.id === soeId);
     if (!soe) return;
+    const soeBudget = currentSoeBudgets.find(b => b.soeId === soeId)?.budgetLimit || 0;
 
-    const currentAllocated = allocations
+    const currentAllocated = currentAllocations
       .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
       .reduce((sum, a) => sum + a.amount, 0);
 
-    const remainingBudget = soe.budgetLimit - currentAllocated;
+    const remainingBudget = soeBudget - currentAllocated;
 
     if (amount > remainingBudget) {
       alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining SOE budget of ₹${remainingBudget.toLocaleString()}.`);
@@ -964,10 +986,10 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Allocation') {
-        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId });
+        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId });
+        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
       }
       e.target.reset();
     } catch (error) {
@@ -982,6 +1004,7 @@ export default function App() {
     const date = e.target.date.value;
     const description = e.target.description.value;
     const activityId = e.target.activityId?.value || null;
+    const targetFyId = selectedFyId || fys[0]?.id;
 
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
@@ -997,10 +1020,10 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Expenditure') {
-        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId });
+        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId, fyId: targetFyId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid });
+        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid, fyId: targetFyId });
       }
       e.target.reset();
     } catch (error) {
@@ -1012,6 +1035,13 @@ export default function App() {
     if (window.confirm('Are you sure you want to delete this entry?')) {
       try {
         await deleteDoc(doc(db, collectionName, id));
+        if (collectionName === 'soeHeads') {
+          // Also delete associated budgets
+          const budgetsToDelete = soeBudgets.filter(b => b.soeId === id);
+          for (const b of budgetsToDelete) {
+            await deleteDoc(doc(db, 'soeBudgets', b.id));
+          }
+        }
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, collectionName);
       }
@@ -1039,16 +1069,23 @@ export default function App() {
   const handleCreateNewUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newUserEmail || !newUserPassword) return;
+    
+    let emailToUse = newUserEmail.trim();
+    // If user enters an 8-digit number or any ID without @, append the default domain
+    if (!emailToUse.includes('@')) {
+      emailToUse = `${emailToUse}@rajgarhforest.app`;
+    }
+
     try {
       // Initialize a secondary app to create user without logging out the admin
       const secondaryApp = initializeApp(firebaseConfig, "Secondary");
       const secondaryAuth = getAuth(secondaryApp);
       
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, newUserEmail, newUserPassword);
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, emailToUse, newUserPassword);
       
       // Add user to firestore
       await setDoc(doc(db, 'users', userCredential.user.uid), {
-        email: newUserEmail,
+        email: emailToUse,
         role: newUserRole
       });
       
@@ -1060,7 +1097,11 @@ export default function App() {
       setNewUserRole('deo');
       alert('User created successfully!');
     } catch (error: any) {
-      alert(`Error creating user: ${error.message}`);
+      if (error.code === 'auth/email-already-in-use') {
+        alert(`Error: This User ID / Email already exists in the system. If you deleted them previously, they still exist in the authentication database. You cannot recreate them with the same ID.`);
+      } else {
+        alert(`Error creating user: ${error.message}`);
+      }
     }
   };
 
@@ -1085,8 +1126,8 @@ export default function App() {
         <h4 className="text-md font-medium mb-3">Create New User</h4>
         <form onSubmit={handleCreateNewUser} className="flex flex-col md:flex-row gap-3">
           <input 
-            type="email" 
-            placeholder="Email" 
+            type="text" 
+            placeholder="User ID (e.g. 12345678) or Email" 
             value={newUserEmail}
             onChange={(e) => setNewUserEmail(e.target.value)}
             className="p-2 border rounded flex-1"
@@ -1211,7 +1252,7 @@ export default function App() {
       const soeData = currentSoes.map(s => {
         const allocated = getSoeAllocated(s.id);
         const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
-        return [s.id, s.name, s.budgetLimit, allocated, spent, s.budgetLimit - allocated];
+        return [s.id, s.name, currentSoeBudgets.find(b => b.soeId === s.id)?.budgetLimit || 0, allocated, spent, (currentSoeBudgets.find(b => b.soeId === s.id)?.budgetLimit || 0) - allocated];
       });
       const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
       const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
@@ -1230,7 +1271,7 @@ export default function App() {
       let sec = sectors.find(s => s.id === a.sectorId);
       let sch = schemes.find(s => s.id === a.schemeId);
 
-      const totalBudget = soe?.budgetLimit || 0;
+      const totalBudget = currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0;
       const allocated = a.amount;
       const expenditure = currentExpenses.filter(e => e.allocationId === a.id).reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
@@ -1526,15 +1567,11 @@ export default function App() {
           'Scheme', 
           schemes, 
           [
-            {key: 'fyId', label: 'FY', render: (val) => fys.find(f => f.id === val)?.name},
             {key: 'name', label: 'Scheme Name'}
           ], 
           handleAddScheme, 
           (id) => handleDelete('schemes', id), 
           <>
-            <select name="fyId" required defaultValue={editingItem?.type === 'Scheme' ? editingItem.item.fyId : selectedFyId} className="w-full p-2 border rounded">
-              {fys.map(fy => <option key={fy.id} value={fy.id}>FY {fy.name}</option>)}
-            </select>
             <input name="name" required defaultValue={editingItem?.type === 'Scheme' ? editingItem.item.name : ''} placeholder="Scheme Name" className="w-full p-2 border rounded" />
           </>,
           (item) => setEditingItem({ type: 'Scheme', item })
@@ -1556,7 +1593,7 @@ export default function App() {
             <div className="flex gap-2">
               <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-2 border rounded">
                 <option value="">Select Scheme</option>
-                {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
               <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
             </div>
@@ -1594,8 +1631,8 @@ export default function App() {
           handleAddActivity, 
           (id) => handleDelete('activities', id), 
           <ActivityFormContent 
-            schemes={schemes} 
-            sectors={sectors} 
+            schemes={currentSchemes} 
+            sectors={currentSectors} 
             editingItem={editingItem} 
           />,
           (item) => setEditingItem({ type: 'Activity', item })
@@ -1621,7 +1658,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={allocations} ranges={ranges} expenses={expenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -1634,21 +1671,22 @@ export default function App() {
           soes, 
           [
             {key: 'name', label: 'SOE Name'},
-            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val) => String(val), render: (val) => `₹${val.toLocaleString()}`},
+            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val, item) => String(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0), render: (_, item) => `₹${(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0).toLocaleString()}`},
             {key: 'allocated', label: 'Allocated', render: (_, item) => {
-                const allocated = allocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
+                const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
                 return `₹${allocated.toLocaleString()}`;
             }},
             {key: 'remaining', label: 'Remaining', render: (_, item) => {
-                const allocated = allocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
-                return `₹${(item.budgetLimit - allocated).toLocaleString()}`;
+                const limit = currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0;
+                const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
+                return `₹${(limit - allocated).toLocaleString()}`;
             }}
           ], 
           handleAddSoe, 
           (id) => handleDelete('soeHeads', id), 
           <>
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
-            <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.budgetLimit : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
+            <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.budgetLimit || '') : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
           </>,
           (item) => setEditingItem({ type: 'SOE Head', item })
         )}
@@ -1703,7 +1741,7 @@ export default function App() {
               render: (val, item) => {
               const soe = soes.find(s => s.id === item.soeId);
               const totalAllocatedForSoe = getSoeAllocated(item.soeId);
-              const remaining = (soe?.budgetLimit || 0) - totalAllocatedForSoe;
+              const remaining = (currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0) - totalAllocatedForSoe;
               
               const parentId = item.subActivityId || item.activityId;
               const isSub = !!item.subActivityId;
@@ -1729,7 +1767,7 @@ export default function App() {
                   <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
                     <div className="flex justify-between mb-1">
                       <span>SOE Total Budget:</span>
-                      <span className="font-medium">₹{(soe?.budgetLimit || 0).toLocaleString()}</span>
+                      <span className="font-medium">₹{(currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between mb-1">
                       <span>Total Allocated (All Ranges):</span>
@@ -1752,7 +1790,7 @@ export default function App() {
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
           <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={allocations} ranges={ranges} expenses={expenses}
             editingItem={editingItem} type="Allocation"
           >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
@@ -1806,7 +1844,7 @@ export default function App() {
                     className="w-full p-2 border rounded text-sm"
                   >
                     <option value="">All Schemes</option>
-                    {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1818,7 +1856,7 @@ export default function App() {
                     className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
                   >
                     <option value="">All Sectors</option>
-                    {sectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {currentSectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1830,7 +1868,7 @@ export default function App() {
                     className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
                   >
                     <option value="">All Activities</option>
-                    {activities.filter(a => {
+                    {currentActivities.filter(a => {
                       if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
                       if (expFilters.schemeId) return a.schemeId === expFilters.schemeId;
                       return true;
@@ -1917,7 +1955,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
@@ -2029,7 +2067,7 @@ export default function App() {
 }
 
 function CascadingDropdowns({ 
-  schemes, sectors, activities, subActivities, soes, allocations, ranges, expenses,
+  schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, ranges, expenses,
   editingItem, type, children 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
@@ -2208,8 +2246,9 @@ function CascadingDropdowns({
                 const totalAllocated = allocations
                   .filter((a: any) => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
                   .reduce((sum: number, a: any) => sum + a.amount, 0);
-                const remaining = (soe?.budgetLimit || 0) - totalAllocated;
-                return `Budget Limit: ₹${(soe?.budgetLimit || 0).toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
+                const limit = soeBudgets.find((b: any) => b.soeId === soe?.id)?.budgetLimit || 0;
+                const remaining = limit - totalAllocated;
+                return `Budget Limit: ₹${limit.toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
               })()}
             </div>
           )}
