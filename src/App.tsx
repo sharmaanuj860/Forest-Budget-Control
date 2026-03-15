@@ -1447,11 +1447,56 @@ export default function App() {
       };
     });
 
+    const sortedData = [...comprehensiveReportData].sort((a, b) => {
+      if (a.scheme !== b.scheme) return a.scheme.localeCompare(b.scheme);
+      if (a.sector !== b.sector) return a.sector.localeCompare(b.sector);
+      if (a.activity !== b.activity) return a.activity.localeCompare(b.activity);
+      return a.subActivity.localeCompare(b.subActivity);
+    });
+
+    const groupedData = [];
+    let currentScheme = null;
+    let schemeTotal = { allocated: 0, expenditure: 0, remaining: 0, totalBudget: 0 };
+
+    sortedData.forEach(row => {
+      if (currentScheme !== null && currentScheme !== row.scheme) {
+        groupedData.push({ 
+          range: '', 
+          scheme: `${currentScheme} Total`, 
+          sector: '', 
+          activity: '', 
+          subActivity: '', 
+          soe: '', 
+          ...schemeTotal, 
+          isTotal: true 
+        });
+        schemeTotal = { allocated: 0, expenditure: 0, remaining: 0, totalBudget: 0 };
+      }
+      currentScheme = row.scheme;
+      groupedData.push(row);
+      schemeTotal.allocated += row.allocated;
+      schemeTotal.expenditure += row.expenditure;
+      schemeTotal.remaining += row.remaining;
+      schemeTotal.totalBudget += row.totalBudget;
+    });
+    if (currentScheme !== null) {
+      groupedData.push({ 
+        range: '', 
+        scheme: `${currentScheme} Total`, 
+        sector: '', 
+        activity: '', 
+        subActivity: '', 
+        soe: '', 
+        ...schemeTotal, 
+        isTotal: true 
+      });
+    }
+
     const headers = userRangeId 
       ? ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Allocated', 'Expenditure', 'Remaining']
       : ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Total Budget', 'Allocated', 'Expenditure', 'Remaining'];
     
-    const tableData = comprehensiveReportData.map(row => userRangeId 
+    const tableData = groupedData.map(row => userRangeId 
       ? [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.allocated, row.expenditure, row.remaining]
       : [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.totalBudget, row.allocated, row.expenditure, row.remaining]
     );
@@ -1493,8 +1538,8 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {comprehensiveReportData.map((row, i) => (
-                  <tr key={i} className="border-b border-gray-300 hover:bg-gray-50">
+                {groupedData.map((row, i) => (
+                  <tr key={i} className={`border-b border-gray-300 ${row.isTotal ? 'bg-gray-100 font-bold' : 'hover:bg-gray-50'}`}>
                     <td className="p-3 text-sm border border-gray-300">{row.range}</td>
                     <td className="p-3 text-sm border border-gray-300">{row.scheme}</td>
                     <td className="p-3 text-sm border border-gray-300">{row.sector}</td>
@@ -1507,7 +1552,7 @@ export default function App() {
                     <td className="p-3 text-sm text-right text-blue-700 font-bold border border-gray-300">₹{row.remaining.toLocaleString()}</td>
                   </tr>
                 ))}
-                {comprehensiveReportData.length === 0 && (
+                {groupedData.length === 0 && (
                   <tr>
                     <td colSpan={userRangeId ? 9 : 10} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected Financial Year.</td>
                   </tr>
