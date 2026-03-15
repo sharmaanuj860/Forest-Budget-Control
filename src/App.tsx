@@ -84,6 +84,8 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
+  const [rangeSearch, setRangeSearch] = useState('');
+  const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | null>(null);
@@ -374,7 +376,7 @@ export default function App() {
   const totalBudget = currentSoeBudgets.reduce((sum, s) => sum + s.budgetLimit, 0);
   const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
   const totalSpent = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const remainingBalance = totalAllocated - totalSpent;
+  const remainingBalance = totalBudget - totalSpent;
 
   const chartData = [
     { name: 'Allocated (Unspent)', value: Math.max(0, totalAllocated - totalSpent), color: '#007bff' },
@@ -384,16 +386,36 @@ export default function App() {
 
   // --- Render Functions for Tabs ---
   const renderDashboard = () => {
-    const rangeStatus = ranges.map(r => {
-      const rAllocs = currentAllocations.filter(a => a.rangeId === r.id);
-      const rAllocTotal = rAllocs.reduce((sum, a) => sum + a.amount, 0);
-      const rSpentTotal = rAllocs.reduce((sum, a) => sum + getAllocSpent(a.id), 0);
-      return { 
-        name: r.name, 
-        allocated: rAllocTotal, 
-        spent: rSpentTotal,
-        remaining: rAllocTotal - rSpentTotal
-      };
+    const rangeAllocationMap: Record<string, any> = {};
+    currentAllocations.forEach(alloc => {
+      const key = `${alloc.rangeId}-${alloc.schemeId}-${alloc.sectorId}-${alloc.activityId}`;
+      const spent = currentExpenses.filter(e => e.allocationId === alloc.id).reduce((sum, e) => sum + e.amount, 0);
+      
+      if (rangeAllocationMap[key]) {
+        const existing = rangeAllocationMap[key];
+        existing.allocated += alloc.amount;
+        existing.spent += spent;
+        existing.balance = existing.allocated - existing.spent;
+      } else {
+        const r = ranges.find(r => r.id === alloc.rangeId);
+        const sch = currentSchemes.find(s => s.id === alloc.schemeId);
+        const sec = currentSectors.find(s => s.id === alloc.sectorId);
+        const act = currentActivities.find(a => a.id === alloc.activityId);
+        
+        rangeAllocationMap[key] = {
+          range: r?.name || 'N/A',
+          scheme: sch?.name || 'N/A',
+          sector: sec?.name || 'N/A',
+          activity: act?.name || 'N/A',
+          allocated: alloc.amount,
+          spent: spent,
+          balance: alloc.amount - spent
+        };
+      }
+    });
+    
+    const rangeAllocationSummary = Object.values(rangeAllocationMap).sort((a, b) => {
+      return a.range.localeCompare(b.range) || a.scheme.localeCompare(b.scheme) || a.sector.localeCompare(b.sector) || a.activity.localeCompare(b.activity);
     });
 
     // Group expenses by date for trend chart
@@ -589,24 +611,73 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
-              <Activity className="h-5 w-5 text-gray-500" /> Range-wise Budget (Allocated vs Spent)
-            </h3>
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={rangeStatus} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} />
-                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
-                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
-                  <Legend />
-                  <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="remaining" name="Remaining" fill="#28a745" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-2">
+              <h3 className="text-lg font-semibold flex items-center gap-2">
+                <Table className="h-5 w-5 text-gray-500" /> Range-wise Allocation Summary
+              </h3>
+              <div className="relative w-full md:w-64">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search range..." 
+                  value={rangeSearch}
+                  onChange={(e) => setRangeSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+              </div>
             </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-sm">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-600 font-semibold">
+                    <th className="p-3 border-b">Range</th>
+                    <th className="p-3 border-b">Scheme</th>
+                    <th className="p-3 border-b">Sector</th>
+                    <th className="p-3 border-b">Activity</th>
+                    <th className="p-3 border-b text-right">Allocated</th>
+                    <th className="p-3 border-b text-right">Spent</th>
+                    <th className="p-3 border-b text-right">Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rangeAllocationSummary
+                    .filter(r => 
+                      r.range.toLowerCase().includes(rangeSearch.toLowerCase()) ||
+                      r.scheme.toLowerCase().includes(rangeSearch.toLowerCase()) ||
+                      r.sector.toLowerCase().includes(rangeSearch.toLowerCase()) ||
+                      r.activity.toLowerCase().includes(rangeSearch.toLowerCase())
+                    )
+                    .slice(0, showAllRange ? undefined : 5)
+                    .map((r, idx) => (
+                      <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
+                        <td className="p-3 font-medium text-gray-800">{r.range}</td>
+                        <td className="p-3 text-xs text-gray-500">{r.scheme}</td>
+                        <td className="p-3 text-xs text-gray-500">{r.sector}</td>
+                        <td className="p-3 text-xs text-gray-500">{r.activity}</td>
+                        <td className="p-3 text-right font-mono text-blue-600">₹{r.allocated.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono text-red-600">₹{r.spent.toLocaleString()}</td>
+                        <td className="p-3 text-right font-mono font-bold text-emerald-600">₹{r.balance.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  {rangeAllocationSummary.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-4 text-center text-gray-500">No allocations found.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {rangeAllocationSummary.length > 5 && (
+              <div className="mt-4 text-center">
+                <button 
+                  onClick={() => setShowAllRange(!showAllRange)}
+                  className="text-emerald-600 hover:text-emerald-700 font-medium text-sm"
+                >
+                  {showAllRange ? 'Show Less' : `View All (${rangeAllocationSummary.length})`}
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
