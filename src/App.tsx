@@ -703,7 +703,7 @@ export default function App() {
                     const soe = soes.find(s => s.id === alloc?.soeId);
                     return (
                       <tr key={exp.id} className="border-b last:border-0 hover:bg-gray-50">
-                        <td className="p-3">{exp.date}</td>
+                        <td className="p-3">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
                         <td className="p-3 font-medium">{range?.name}</td>
                         <td className="p-3 text-gray-600">{soe?.name}</td>
                         <td className="p-3 text-right font-bold text-red-600">₹{exp.amount.toLocaleString()}</td>
@@ -1315,7 +1315,7 @@ export default function App() {
       // 2. Expenses
       const expHeaders = ['ID', 'Date', 'Amount', 'Description', 'Allocation ID'];
       const expData = currentExpenses.map(e => [
-        e.id, e.date, e.amount, e.description, e.allocationId
+        e.id, e.date ? e.date.split('-').reverse().join('/') : '', e.amount, e.description, e.allocationId
       ]);
       const expWs = XLSX.utils.aoa_to_sheet([expHeaders, ...expData]);
       const expCsv = XLSX.utils.sheet_to_csv(expWs);
@@ -1993,7 +1993,7 @@ export default function App() {
               'Expenditure', 
               currentExpenses, 
               [
-                {key: 'date', label: 'Date'},
+                {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
                 {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
                   searchableText: (val, item) => {
                     const al = allocations.find(a => a.id === val);
@@ -2071,7 +2071,7 @@ export default function App() {
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
-                <input name="date" type="date" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
+                <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
                 <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Expenditure', item }),
@@ -2142,7 +2142,7 @@ export default function App() {
                           currentBalance -= exp.amount;
                           return (
                             <tr key={`exp-${exp.id}`} className="border-b hover:bg-gray-50">
-                              <td className="p-3">{exp.date}</td>
+                              <td className="p-3">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
                               <td className="p-3">{r?.name}</td>
                               <td className="p-3">
                                 <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
