@@ -9,6 +9,7 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 export { 
+  firebaseConfig,
   signInWithPopup, 
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,

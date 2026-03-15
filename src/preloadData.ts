@@ -1,7 +1,7 @@
 import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from './firebase';
 
-export const preloadDatabase = async () => {
+export const preloadDatabase = async (selectedFyId?: string) => {
   console.log('Initializing database...');
 
   // Helper to check and add
@@ -22,6 +22,8 @@ export const preloadDatabase = async () => {
   await addIfNotExists('financialYears', { name: '2025-26' }, ['name']);
   await addIfNotExists('financialYears', { name: '2026-27' }, ['name']);
 
+  const targetFyId = selectedFyId || fy24.id;
+
   // 2. Ranges
   const ranges = ['Rajgarh', 'Habban', 'Sarahan', 'Narag'];
   for (const r of ranges) {
@@ -30,7 +32,7 @@ export const preloadDatabase = async () => {
 
   // Helper to add scheme -> sector -> activity -> subActivity
   const addHierarchy = async (schemeName: string, sectorsData: any) => {
-    const schemeRef = await addIfNotExists('schemes', { name: schemeName, fyId: fy24.id }, ['name', 'fyId']);
+    const schemeRef = await addIfNotExists('schemes', { name: schemeName, fyId: targetFyId }, ['name', 'fyId']);
     
     for (const sectorName of Object.keys(sectorsData)) {
       const qSector = query(collection(db, 'sectors'), where('name', '==', sectorName), where('schemeId', '==', schemeRef.id));
@@ -98,8 +100,8 @@ export const preloadDatabase = async () => {
   });
 
   // 6. Empty Schemes
-  await addIfNotExists('schemes', { name: 'SNA Sparsh-Fire', fyId: fy24.id }, ['name', 'fyId']);
-  await addIfNotExists('schemes', { name: 'Demand No 15 BASP', fyId: fy24.id }, ['name', 'fyId']);
+  await addIfNotExists('schemes', { name: 'SNA Sparsh-Fire', fyId: targetFyId }, ['name', 'fyId']);
+  await addIfNotExists('schemes', { name: 'Demand No 15 BASP', fyId: targetFyId }, ['name', 'fyId']);
 
   console.log('Database initialized successfully!');
 };

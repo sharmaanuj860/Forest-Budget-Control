@@ -1,13 +1,17 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
 import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { preloadDatabase } from './preloadData';
 
 // --- Types ---
@@ -18,7 +22,7 @@ type Sector = { id: string; schemeId: string; name: string };
 type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
 type SubActivity = { id: string; activityId: string; name: string };
 type SOE = { id: string; activityId?: string; subActivityId?: string; name: string; budgetLimit: number };
-type Allocation = { id: string; soeId: string; rangeId: string; amount: number };
+type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string };
 type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' };
 
@@ -96,6 +100,9 @@ export default function App() {
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserPassword, setNewUserPassword] = useState('');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo'>('deo');
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -311,34 +318,28 @@ export default function App() {
     return false;
   }), [activities, currentSectors, currentSchemes]);
   const currentSubActivities = useMemo(() => subActivities.filter(sa => currentActivities.some(a => a.id === sa.activityId)), [subActivities, currentActivities]);
-  const currentSoes = useMemo(() => soes.filter(s => 
-    (s.activityId && currentActivities.some(a => a.id === s.activityId)) || 
-    (s.subActivityId && currentSubActivities.some(sa => sa.id === s.subActivityId))
-  ), [soes, currentActivities, currentSubActivities]);
+  const currentSoes = soes; // SOEs are now global
   
   const currentAllocations = useMemo(() => {
-    let filtered = allocations.filter(a => currentSoes.some(s => s.id === a.soeId));
+    let filtered = allocations.filter(a => {
+      // Filter allocations to only those belonging to the current financial year's schemes
+      if (a.schemeId) {
+        return currentSchemes.some(s => s.id === a.schemeId);
+      }
+      return true; // If no schemeId (legacy), keep it for now or handle appropriately
+    });
+    
     if (allocFilters.schemeId) {
-      filtered = filtered.filter(a => {
-        const soe = soes.find(s => s.id === a.soeId);
-        const act = activities.find(act => act.id === soe?.activityId || act.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-        const sec = sectors.find(s => s.id === act?.sectorId);
-        const schId = sec ? sec.schemeId : act?.schemeId;
-        return schId === allocFilters.schemeId;
-      });
+      filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
     }
     if (allocFilters.activityId) {
-      filtered = filtered.filter(a => {
-        const soe = soes.find(s => s.id === a.soeId);
-        const actId = soe?.activityId || subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId;
-        return actId === allocFilters.activityId;
-      });
+      filtered = filtered.filter(a => a.activityId === allocFilters.activityId);
     }
     if (allocFilters.rangeId) {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
     return filtered;
-  }, [allocations, currentSoes, allocFilters, soes, activities, subActivities, sectors]);
+  }, [allocations, currentSchemes, allocFilters]);
   
   const currentExpenses = useMemo(() => {
     let filtered = expenses.filter(e => currentAllocations.some(a => a.id === e.allocationId));
@@ -349,34 +350,26 @@ export default function App() {
     if (expFilters.schemeId) {
       filtered = filtered.filter(e => {
         const alloc = allocations.find(a => a.id === e.allocationId);
-        const soe = soes.find(s => s.id === alloc?.soeId);
-        const act = activities.find(a => a.id === soe?.activityId || a.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-        const sec = sectors.find(s => s.id === act?.sectorId);
-        const schId = sec ? sec.schemeId : act?.schemeId;
-        return schId === expFilters.schemeId;
+        return alloc?.schemeId === expFilters.schemeId;
       });
     }
     
     if (expFilters.sectorId) {
       filtered = filtered.filter(e => {
         const alloc = allocations.find(a => a.id === e.allocationId);
-        const soe = soes.find(s => s.id === alloc?.soeId);
-        const act = activities.find(a => a.id === soe?.activityId || a.id === subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId);
-        return act?.sectorId === expFilters.sectorId;
+        return alloc?.sectorId === expFilters.sectorId;
       });
     }
     
     if (expFilters.activityId) {
       filtered = filtered.filter(e => {
         const alloc = allocations.find(a => a.id === e.allocationId);
-        const soe = soes.find(s => s.id === alloc?.soeId);
-        const actId = soe?.activityId || subActivities.find(sa => sa.id === soe?.subActivityId)?.activityId;
-        return actId === expFilters.activityId;
+        return alloc?.activityId === expFilters.activityId;
       });
     }
 
     return filtered;
-  }, [expenses, currentAllocations, expDateRange, expFilters, allocations, soes, activities, subActivities, sectors]);
+  }, [expenses, currentAllocations, expDateRange, expFilters, allocations]);
 
   const getSoeAllocated = (soeId: string) => allocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
   const getAllocSpent = (allocId: string) => expenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
@@ -418,37 +411,30 @@ export default function App() {
     }));
 
     const schemeSummary = currentSchemes.map(sch => {
-      const schSectors = currentSectors.filter(s => s.schemeId === sch.id);
-      const schActivities = currentActivities.filter(a => a.schemeId === sch.id || schSectors.some(sec => sec.id === a.sectorId));
-      const schSoes = currentSoes.filter(s => schActivities.some(a => a.id === s.activityId || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === a.id)));
-      
-      const totalBudgetLimit = schSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
-      const totalAllocated = allocations.filter(a => schSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && schSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
+      const schAllocations = allocations.filter(a => a.schemeId === sch.id);
+      const totalAllocated = schAllocations.reduce((sum, a) => sum + a.amount, 0);
+      const totalSpent = expenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         name: sch.name,
-        budget: totalBudgetLimit,
+        budget: totalAllocated, // Budget limit is now at SOE level, so we show allocated as budget for scheme
         allocated: totalAllocated,
         spent: totalSpent,
-        balance: totalBudgetLimit - totalSpent
+        balance: totalAllocated - totalSpent
       };
     });
 
     const sectorSummary = currentSectors.map(sec => {
-      const secActivities = currentActivities.filter(a => a.sectorId === sec.id);
-      const secSoes = currentSoes.filter(s => secActivities.some(a => a.id === s.activityId || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === a.id)));
-      
-      const totalBudgetLimit = secSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
-      const totalAllocated = allocations.filter(a => secSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && secSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
+      const secAllocations = allocations.filter(a => a.sectorId === sec.id);
+      const totalAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
+      const totalSpent = expenses.filter(e => secAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         name: sec.name,
-        budget: totalBudgetLimit,
+        budget: totalAllocated,
         allocated: totalAllocated,
         spent: totalSpent,
-        balance: totalBudgetLimit - totalSpent
+        balance: totalAllocated - totalSpent
       };
     });
 
@@ -456,20 +442,24 @@ export default function App() {
       const sec = currentSectors.find(s => s.id === act.sectorId);
       const sch = currentSchemes.find(s => s.id === (sec ? sec.schemeId : act.schemeId));
 
-      const actSoes = currentSoes.filter(s => s.activityId === act.id || (s.subActivityId && subActivities.find(sa => sa.id === s.subActivityId)?.activityId === act.id));
-      const totalBudgetLimit = actSoes.reduce((sum, s) => sum + s.budgetLimit, 0);
-      const totalAllocated = allocations.filter(a => actSoes.some(s => s.id === a.soeId)).reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => allocations.some(a => a.id === e.allocationId && actSoes.some(s => s.id === a.soeId))).reduce((sum, e) => sum + e.amount, 0);
+      const actAllocations = allocations.filter(a => a.activityId === act.id);
+      const totalAllocated = actAllocations.reduce((sum, a) => sum + a.amount, 0);
+      const totalSpent = expenses.filter(e => actAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         scheme: sch?.name || 'N/A',
         sector: sec?.name || 'N/A',
         name: act.name,
-        budget: totalBudgetLimit,
+        budget: totalAllocated,
         allocated: totalAllocated,
         spent: totalSpent,
-        balance: totalBudgetLimit - totalSpent
+        balance: totalAllocated - totalSpent
       };
+    }).sort((a, b) => {
+      const aHasEntry = a.budget > 0 || a.spent > 0 ? 1 : 0;
+      const bHasEntry = b.budget > 0 || b.spent > 0 ? 1 : 0;
+      if (aHasEntry !== bHasEntry) return bHasEntry - aHasEntry;
+      return a.scheme.localeCompare(b.scheme) || a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name);
     });
 
     return (
@@ -676,7 +666,8 @@ export default function App() {
     onAdd: (e: React.FormEvent) => void, 
     onDelete: (id: string) => void,
     formContent: React.ReactNode,
-    onEdit: (item: any) => void
+    onEdit: (item: any) => void,
+    canEditDelete?: (item: any) => boolean
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -754,14 +745,14 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(userRole === 'admin' || title === 'Expenditure') && <th className="p-3 border-b text-right">Actions</th>}
+                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(userRole === 'admin' || title === 'Expenditure') && (
+                  {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || title === 'Expenditure')) && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       <button 
                         onClick={() => {
@@ -784,7 +775,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((userRole === 'admin' || title === 'Expenditure') ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -928,20 +919,13 @@ export default function App() {
     e.preventDefault();
     const name = e.target.name.value;
     const budgetLimit = parseFloat(e.target.budgetLimit.value);
-    const subActivityId = e.target.subActivityId.value || null;
-    const activityId = subActivityId ? null : (e.target.activityId.value || null);
-    
-    if (!activityId && !subActivityId) {
-      alert("Please select either an Activity or a Sub-Activity");
-      return;
-    }
 
     try {
       if (editingItem?.type === 'SOE Head') {
-        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit, activityId, subActivityId });
+        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { name, budgetLimit });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'soeHeads'), { activityId, subActivityId, name, budgetLimit });
+        await addDoc(collection(db, 'soeHeads'), { name, budgetLimit });
       }
       e.target.reset();
     } catch (error) {
@@ -954,6 +938,10 @@ export default function App() {
     const soeId = e.target.soeId.value;
     const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
+    const schemeId = e.target.schemeId.value || null;
+    const sectorId = e.target.sectorId.value || null;
+    const activityId = e.target.activityId.value || null;
+    const subActivityId = e.target.subActivityId.value || null;
     
     if (isNaN(amount) || amount <= 0) {
       alert("Please enter a valid positive amount.");
@@ -976,10 +964,10 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Allocation') {
-        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount });
+        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount });
+        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId });
       }
       e.target.reset();
     } catch (error) {
@@ -1012,7 +1000,7 @@ export default function App() {
         await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId });
+        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid });
       }
       e.target.reset();
     } catch (error) {
@@ -1048,15 +1036,90 @@ export default function App() {
     }
   };
 
+  const handleCreateNewUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUserEmail || !newUserPassword) return;
+    try {
+      // Initialize a secondary app to create user without logging out the admin
+      const secondaryApp = initializeApp(firebaseConfig, "Secondary");
+      const secondaryAuth = getAuth(secondaryApp);
+      
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, newUserEmail, newUserPassword);
+      
+      // Add user to firestore
+      await setDoc(doc(db, 'users', userCredential.user.uid), {
+        email: newUserEmail,
+        role: newUserRole
+      });
+      
+      // Sign out the secondary app
+      await secondaryAuth.signOut();
+      
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewUserRole('deo');
+      alert('User created successfully!');
+    } catch (error: any) {
+      alert(`Error creating user: ${error.message}`);
+    }
+  };
+
+  const handleResetPassword = async (email: string) => {
+    if (window.confirm(`Send password reset email to ${email}?`)) {
+      try {
+        await sendPasswordResetEmail(auth, email);
+        alert('Password reset email sent!');
+      } catch (error: any) {
+        alert(`Error sending reset email: ${error.message}`);
+      }
+    }
+  };
+
   const renderUserManagement = () => (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
       <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
         <Shield className="h-5 w-5 text-emerald-600" /> User Access Management
       </h3>
+      
+      <div className="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
+        <h4 className="text-md font-medium mb-3">Create New User</h4>
+        <form onSubmit={handleCreateNewUser} className="flex flex-col md:flex-row gap-3">
+          <input 
+            type="email" 
+            placeholder="Email" 
+            value={newUserEmail}
+            onChange={(e) => setNewUserEmail(e.target.value)}
+            className="p-2 border rounded flex-1"
+            required
+          />
+          <input 
+            type="password" 
+            placeholder="Password" 
+            value={newUserPassword}
+            onChange={(e) => setNewUserPassword(e.target.value)}
+            className="p-2 border rounded flex-1"
+            required
+            minLength={6}
+          />
+          <select 
+            value={newUserRole}
+            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo')}
+            className="p-2 border rounded"
+          >
+            <option value="admin">Admin</option>
+            <option value="deo">DEO</option>
+          </select>
+          <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700">
+            Create User
+          </button>
+        </form>
+      </div>
+
       <div className="overflow-x-auto">
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-gray-50 text-gray-600 text-sm">
+              <th className="p-3 border-b">User ID</th>
               <th className="p-3 border-b">Email</th>
               <th className="p-3 border-b">Role</th>
               <th className="p-3 border-b text-right">Actions</th>
@@ -1065,6 +1128,7 @@ export default function App() {
           <tbody>
             {users.map(u => (
               <tr key={u.id} className="border-b hover:bg-gray-50">
+                <td className="p-3 font-mono text-xs text-gray-500">{u.id}</td>
                 <td className="p-3">{u.email}</td>
                 <td className="p-3">
                   <select 
@@ -1076,8 +1140,11 @@ export default function App() {
                     <option value="deo">DEO</option>
                   </select>
                 </td>
-                <td className="p-3 text-right">
-                  <button onClick={() => handleDeleteUser(u.id)} className="text-red-500 hover:text-red-700">
+                <td className="p-3 text-right flex justify-end gap-2">
+                  <button onClick={() => handleResetPassword(u.email)} className="text-blue-500 hover:text-blue-700 text-sm border border-blue-200 px-2 py-1 rounded">
+                    Reset Password
+                  </button>
+                  <button onClick={() => handleDeleteUser(u.id)} className="text-red-500 hover:text-red-700 p-1">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </td>
@@ -1111,28 +1178,57 @@ export default function App() {
       XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
     };
 
+    const downloadZip = async () => {
+      const zip = new JSZip();
+      
+      // 1. Allocations
+      const allocHeaders = ['ID', 'SOE', 'Range', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
+      const allocData = currentAllocations.map(a => [
+        a.id,
+        soes.find(s => s.id === a.soeId)?.name || 'N/A',
+        ranges.find(r => r.id === a.rangeId)?.name || 'N/A',
+        a.amount,
+        schemes.find(s => s.id === a.schemeId)?.name || 'N/A',
+        sectors.find(s => s.id === a.sectorId)?.name || 'N/A',
+        activities.find(ac => ac.id === a.activityId)?.name || 'N/A',
+        subActivities.find(sa => sa.id === a.subActivityId)?.name || 'N/A'
+      ]);
+      const allocWs = XLSX.utils.aoa_to_sheet([allocHeaders, ...allocData]);
+      const allocCsv = XLSX.utils.sheet_to_csv(allocWs);
+      zip.file("allocations.csv", allocCsv);
+
+      // 2. Expenses
+      const expHeaders = ['ID', 'Date', 'Amount', 'Description', 'Allocation ID'];
+      const expData = currentExpenses.map(e => [
+        e.id, e.date, e.amount, e.description, e.allocationId
+      ]);
+      const expWs = XLSX.utils.aoa_to_sheet([expHeaders, ...expData]);
+      const expCsv = XLSX.utils.sheet_to_csv(expWs);
+      zip.file("expenses.csv", expCsv);
+
+      // 3. SOE Summary
+      const soeHeaders = ['SOE ID', 'Name', 'Budget Limit', 'Allocated', 'Spent', 'Remaining'];
+      const soeData = currentSoes.map(s => {
+        const allocated = getSoeAllocated(s.id);
+        const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
+        return [s.id, s.name, s.budgetLimit, allocated, spent, s.budgetLimit - allocated];
+      });
+      const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
+      const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
+      zip.file("soe_summary.csv", soeCsv);
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, `financial_data_fy_${fys.find(f => f.id === selectedFyId)?.name || 'export'}.zip`);
+    };
+
     const comprehensiveReportData = currentAllocations.map(a => {
       const soe = soes.find(s => s.id === a.soeId);
       const range = ranges.find(r => r.id === a.rangeId);
       
-      let sa = null;
-      let act = null;
-      let sec = null;
-      let sch = null;
-
-      if (soe?.subActivityId) {
-        sa = subActivities.find(s => s.id === soe.subActivityId);
-        act = activities.find(ac => ac.id === sa?.activityId);
-      } else if (soe?.activityId) {
-        act = activities.find(ac => ac.id === soe.activityId);
-      }
-
-      if (act?.sectorId) {
-        sec = sectors.find(s => s.id === act.sectorId);
-        sch = schemes.find(s => s.id === sec?.schemeId);
-      } else if (act?.schemeId) {
-        sch = schemes.find(s => s.id === act.schemeId);
-      }
+      let sa = subActivities.find(s => s.id === a.subActivityId);
+      let act = activities.find(ac => ac.id === a.activityId);
+      let sec = sectors.find(s => s.id === a.sectorId);
+      let sch = schemes.find(s => s.id === a.schemeId);
 
       const totalBudget = soe?.budgetLimit || 0;
       const allocated = a.amount;
@@ -1179,6 +1275,12 @@ export default function App() {
               >
                 <Download className="w-4 h-4" /> Export Excel
               </button>
+              <button 
+                onClick={downloadZip}
+                className="bg-blue-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+              >
+                <Download className="w-4 h-4" /> Export All Data (ZIP)
+              </button>
             </div>
           </div>
 
@@ -1223,7 +1325,8 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
         <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md w-full text-center space-y-6">
-          <Landmark className="h-16 w-16 text-emerald-600 mx-auto" />
+          <img src="/logo.png" alt="Forest Budget Logo" className="h-16 w-auto mx-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+          <Landmark className="h-16 w-16 text-emerald-600 mx-auto hidden" />
           <h1 className="text-3xl font-bold text-gray-900">Forest Budget Control</h1>
           <p className="text-gray-500">Please sign in to access the financial management system.</p>
           
@@ -1308,7 +1411,8 @@ export default function App() {
               setIsFormExpanded(window.innerWidth > 1024);
             }}
           >
-            <Landmark className="h-10 w-10 text-emerald-600" />
+            <img src="/logo.png" alt="Forest Budget Logo" className="h-10 w-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+            <Landmark className="h-10 w-10 text-emerald-600 hidden" />
             <div>
               <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-tight">Forest Budget Control</h1>
               <p className="text-xs md:text-sm text-gray-500">Financial Management System</p>
@@ -1328,10 +1432,10 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
-              {userRole === 'admin' && schemes.length === 0 && (
+              {userRole === 'admin' && currentSchemes.length === 0 && (
                 <button
                   onClick={async () => {
-                    await preloadDatabase();
+                    await preloadDatabase(selectedFyId);
                     alert('Preloaded data added successfully!');
                   }}
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm"
@@ -1529,8 +1633,33 @@ export default function App() {
           'SOE Head', 
           soes, 
           [
-            {key: 'parent', label: 'Hierarchy', 
-              searchableText: (_, item) => {
+            {key: 'name', label: 'SOE Name'},
+            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val) => String(val), render: (val) => `₹${val.toLocaleString()}`},
+            {key: 'allocated', label: 'Allocated', render: (_, item) => {
+                const allocated = allocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
+                return `₹${allocated.toLocaleString()}`;
+            }},
+            {key: 'remaining', label: 'Remaining', render: (_, item) => {
+                const allocated = allocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
+                return `₹${(item.budgetLimit - allocated).toLocaleString()}`;
+            }}
+          ], 
+          handleAddSoe, 
+          (id) => handleDelete('soeHeads', id), 
+          <>
+            <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
+            <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.budgetLimit : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
+          </>,
+          (item) => setEditingItem({ type: 'SOE Head', item })
+        )}
+
+        {activeTab === 'Allocations' && renderSimpleManager(
+          'Allocation', 
+          allocations, 
+          [
+            {key: 'soeId', label: 'Hierarchy & SOE', 
+              searchableText: (val, item) => {
+                const s = soes.find(s => s.id === val);
                 let hierarchy = '';
                 if (item.subActivityId) {
                   const sa = subActivities.find(sa => sa.id === item.subActivityId);
@@ -1544,9 +1673,10 @@ export default function App() {
                   const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                   hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
                 }
-                return hierarchy || 'N/A';
+                return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
               },
-              render: (_, item) => {
+              render: (val, item) => {
+              const s = soes.find(s => s.id === val);
               let hierarchy = '';
               if (item.subActivityId) {
                 const sa = subActivities.find(sa => sa.id === item.subActivityId);
@@ -1556,60 +1686,6 @@ export default function App() {
                 hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
               } else if (item.activityId) {
                 const act = activities.find(a => a.id === item.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-              }
-              return hierarchy || 'N/A';
-            }},
-            {key: 'name', label: 'SOE Name'},
-            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val) => String(val), render: (val) => `₹${val.toLocaleString()}`}
-          ], 
-          handleAddSoe, 
-          (id) => handleDelete('soeHeads', id), 
-          <CascadingDropdowns 
-            schemes={schemes} sectors={sectors} activities={activities} subActivities={subActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
-            editingItem={editingItem} type="SOE Head"
-          >
-            <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
-            <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.budgetLimit : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
-          </CascadingDropdowns>,
-          (item) => setEditingItem({ type: 'SOE Head', item })
-        )}
-
-        {activeTab === 'Allocations' && renderSimpleManager(
-          'Allocation', 
-          allocations, 
-          [
-            {key: 'soeId', label: 'Hierarchy', 
-              searchableText: (val) => {
-                const s = soes.find(s => s.id === val);
-                let hierarchy = '';
-                if (s?.subActivityId) {
-                  const sa = subActivities.find(sa => sa.id === s.subActivityId);
-                  const act = activities.find(a => a.id === sa?.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                } else if (s?.activityId) {
-                  const act = activities.find(a => a.id === s.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-                }
-                return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
-              },
-              render: (val) => {
-              const s = soes.find(s => s.id === val);
-              let hierarchy = '';
-              if (s?.subActivityId) {
-                const sa = subActivities.find(sa => sa.id === s.subActivityId);
-                const act = activities.find(a => a.id === sa?.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-              } else if (s?.activityId) {
-                const act = activities.find(a => a.id === s.activityId);
                 const sec = sectors.find(sec => sec.id === act?.sectorId);
                 const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                 hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
@@ -1629,13 +1705,12 @@ export default function App() {
               const totalAllocatedForSoe = getSoeAllocated(item.soeId);
               const remaining = (soe?.budgetLimit || 0) - totalAllocatedForSoe;
               
-              const parentId = soe?.subActivityId || soe?.activityId;
-              const isSub = !!soe?.subActivityId;
+              const parentId = item.subActivityId || item.activityId;
+              const isSub = !!item.subActivityId;
               
               const relatedAllocs = allocations.filter(a => {
-                const aSoe = soes.find(s => s.id === a.soeId);
-                const aParentId = aSoe?.subActivityId || aSoe?.activityId;
-                const aIsSub = !!aSoe?.subActivityId;
+                const aParentId = a.subActivityId || a.activityId;
+                const aIsSub = !!a.subActivityId;
                 return a.rangeId === item.rangeId && aParentId === parentId && aIsSub === isSub;
               });
               
@@ -1775,14 +1850,14 @@ export default function App() {
                     const r = ranges.find(r => r.id === al?.rangeId);
                     const s = soes.find(s => s.id === al?.soeId);
                     let hierarchy = '';
-                    if (s?.subActivityId) {
-                      const sa = subActivities.find(sa => sa.id === s.subActivityId);
+                    if (al?.subActivityId) {
+                      const sa = subActivities.find(sa => sa.id === al.subActivityId);
                       const act = activities.find(a => a.id === sa?.activityId);
                       const sec = sectors.find(sec => sec.id === act?.sectorId);
                       const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                       hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                    } else if (s?.activityId) {
-                      const act = activities.find(a => a.id === s.activityId);
+                    } else if (al?.activityId) {
+                      const act = activities.find(a => a.id === al.activityId);
                       const sec = sectors.find(sec => sec.id === act?.sectorId);
                       const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                       hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
@@ -1795,14 +1870,14 @@ export default function App() {
                   const r = ranges.find(r => r.id === al?.rangeId);
                   const s = soes.find(s => s.id === al?.soeId);
                   let hierarchy = '';
-                  if (s?.subActivityId) {
-                    const sa = subActivities.find(sa => sa.id === s.subActivityId);
+                  if (al?.subActivityId) {
+                    const sa = subActivities.find(sa => sa.id === al.subActivityId);
                     const act = activities.find(a => a.id === sa?.activityId);
                     const sec = sectors.find(sec => sec.id === act?.sectorId);
                     const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                     hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                  } else if (s?.activityId) {
-                    const act = activities.find(a => a.id === s.activityId);
+                  } else if (al?.activityId) {
+                    const act = activities.find(a => a.id === al.activityId);
                     const sec = sectors.find(sec => sec.id === act?.sectorId);
                     const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                     hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
@@ -1849,7 +1924,8 @@ export default function App() {
                 <input name="date" type="date" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
                 <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
               </CascadingDropdowns>,
-              (item) => setEditingItem({ type: 'Expenditure', item })
+              (item) => setEditingItem({ type: 'Expenditure', item }),
+              (item) => userRole === 'admin' || item.createdBy === user?.uid
             )}
           </div>
         )}
@@ -1866,7 +1942,7 @@ export default function App() {
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
                     <th className="p-3 border-b">Range</th>
-                    <th className="p-3 border-b">SOE</th>
+                    <th className="p-3 border-b">Hierarchy & SOE</th>
                     <th className="p-3 border-b">Description</th>
                     <th className="p-3 border-b text-right">Credit (Allocated)</th>
                     <th className="p-3 border-b text-right">Debit (Expense)</th>
@@ -1877,6 +1953,21 @@ export default function App() {
                   {currentAllocations.map(alloc => {
                     const r = ranges.find(r => r.id === alloc.rangeId);
                     const s = soes.find(s => s.id === alloc.soeId);
+                    
+                    let hierarchy = '';
+                    if (alloc.subActivityId) {
+                      const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+                      const act = activities.find(a => a.id === sa?.activityId);
+                      const sec = sectors.find(sec => sec.id === act?.sectorId);
+                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                      hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                    } else if (alloc.activityId) {
+                      const act = activities.find(a => a.id === alloc.activityId);
+                      const sec = sectors.find(sec => sec.id === act?.sectorId);
+                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                      hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                    }
+                    
                     const allocExpenses = expenses.filter(e => e.allocationId === alloc.id).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
                     
                     let currentBalance = alloc.amount;
@@ -1887,7 +1978,10 @@ export default function App() {
                         <tr className="bg-blue-50/30 border-b">
                           <td className="p-3 text-gray-400">-</td>
                           <td className="p-3 font-medium">{r?.name}</td>
-                          <td className="p-3 font-medium">{s?.name}</td>
+                          <td className="p-3 font-medium">
+                            <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
+                            <div>{s?.name}</div>
+                          </td>
                           <td className="p-3 italic text-gray-600">Initial Allocation</td>
                           <td className="p-3 text-right text-emerald-600 font-bold">₹{alloc.amount.toLocaleString()}</td>
                           <td className="p-3 text-right">-</td>
@@ -1900,7 +1994,15 @@ export default function App() {
                             <tr key={`exp-${exp.id}`} className="border-b hover:bg-gray-50">
                               <td className="p-3">{exp.date}</td>
                               <td className="p-3">{r?.name}</td>
-                              <td className="p-3">{s?.name}</td>
+                              <td className="p-3">
+                                <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
+                                <div>{s?.name}</div>
+                                {exp.activityId && (
+                                  <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
+                                    Activity: {activities.find(a => a.id === exp.activityId)?.name}
+                                  </div>
+                                )}
+                              </td>
                               <td className="p-3">{exp.description}</td>
                               <td className="p-3 text-right">-</td>
                               <td className="p-3 text-right text-red-600">₹{exp.amount.toLocaleString()}</td>
@@ -1951,20 +2053,22 @@ function CascadingDropdowns({
         const alloc = allocations.find((a: any) => a.id === item.allocationId);
         setAllocationId(item.allocationId);
         currentSoeId = alloc?.soeId || '';
+        currentSubActivityId = alloc?.subActivityId || '';
+        currentActivityId = alloc?.activityId || '';
+        currentSectorId = alloc?.sectorId || '';
+        currentSchemeId = alloc?.schemeId || '';
       } else if (type === 'Allocation') {
         currentSoeId = item.soeId;
-      } else if (type === 'SOE Head') {
         currentSubActivityId = item.subActivityId || '';
         currentActivityId = item.activityId || '';
+        currentSectorId = item.sectorId || '';
+        currentSchemeId = item.schemeId || '';
       } else if (type === 'Sub-Activity') {
         currentActivityId = item.activityId;
       }
 
       if (currentSoeId) {
         setSoeId(currentSoeId);
-        const soe = soes.find((s: any) => s.id === currentSoeId);
-        currentSubActivityId = soe?.subActivityId || '';
-        currentActivityId = soe?.activityId || '';
       }
 
       if (currentSubActivityId) {
@@ -2007,10 +2111,15 @@ function CascadingDropdowns({
     isCampa ? a.sectorId === sectorId : a.schemeId === schemeId
   );
   const filteredSubActivities = subActivities.filter((sa: any) => sa.activityId === activityId);
-  const filteredSoes = soes.filter((s: any) => 
-    subActivityId ? s.subActivityId === subActivityId : s.activityId === activityId
-  );
-  const filteredAllocations = allocations.filter((a: any) => a.soeId === soeId);
+  const filteredSoes = soes;
+  const filteredAllocations = allocations.filter((a: any) => {
+    if (a.soeId !== soeId) return false;
+    if (schemeId && a.schemeId !== schemeId) return false;
+    if (sectorId && a.sectorId !== sectorId) return false;
+    if (activityId && a.activityId !== activityId) return false;
+    if (subActivityId && a.subActivityId !== subActivityId) return false;
+    return true;
+  });
 
   return (
     <>
@@ -2072,6 +2181,8 @@ function CascadingDropdowns({
       )}
       
       {/* Hidden inputs to ensure correct fields are submitted */}
+      <input type="hidden" name="schemeId" value={schemeId} />
+      <input type="hidden" name="sectorId" value={sectorId} />
       <input type="hidden" name="activityId" value={activityId} />
       <input type="hidden" name="subActivityId" value={subActivityId} />
 
