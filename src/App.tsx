@@ -408,13 +408,12 @@ export default function App() {
     }));
 
     const schemeSummary = currentSchemes.map(sch => {
-      const schAllocations = allocations.filter(a => a.schemeId === sch.id);
+      const schAllocations = currentAllocations.filter(a => a.schemeId === sch.id);
       const totalAllocated = schAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = currentExpenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         name: sch.name,
-        budget: totalAllocated, // Budget limit is now at SOE level, so we show allocated as budget for scheme
         allocated: totalAllocated,
         spent: totalSpent,
         balance: totalAllocated - totalSpent
@@ -422,13 +421,12 @@ export default function App() {
     });
 
     const sectorSummary = currentSectors.map(sec => {
-      const secAllocations = allocations.filter(a => a.sectorId === sec.id);
+      const secAllocations = currentAllocations.filter(a => a.sectorId === sec.id);
       const totalAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => secAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = currentExpenses.filter(e => secAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         name: sec.name,
-        budget: totalAllocated,
         allocated: totalAllocated,
         spent: totalSpent,
         balance: totalAllocated - totalSpent
@@ -439,22 +437,21 @@ export default function App() {
       const sec = currentSectors.find(s => s.id === act.sectorId);
       const sch = currentSchemes.find(s => s.id === (sec ? sec.schemeId : act.schemeId));
 
-      const actAllocations = allocations.filter(a => a.activityId === act.id);
+      const actAllocations = currentAllocations.filter(a => a.activityId === act.id);
       const totalAllocated = actAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = expenses.filter(e => actAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = currentExpenses.filter(e => actAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         scheme: sch?.name || 'N/A',
         sector: sec?.name || 'N/A',
         name: act.name,
-        budget: totalAllocated,
         allocated: totalAllocated,
         spent: totalSpent,
         balance: totalAllocated - totalSpent
       };
     }).sort((a, b) => {
-      const aHasEntry = a.budget > 0 || a.spent > 0 ? 1 : 0;
-      const bHasEntry = b.budget > 0 || b.spent > 0 ? 1 : 0;
+      const aHasEntry = a.allocated > 0 || a.spent > 0 ? 1 : 0;
+      const bHasEntry = b.allocated > 0 || b.spent > 0 ? 1 : 0;
       if (aHasEntry !== bHasEntry) return bHasEntry - aHasEntry;
       return a.scheme.localeCompare(b.scheme) || a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name);
     });
@@ -496,7 +493,6 @@ export default function App() {
                   <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                   <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
                   <Legend />
-                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
@@ -529,7 +525,6 @@ export default function App() {
                   <th className="p-3 border-b">Scheme</th>
                   <th className="p-3 border-b">Sector</th>
                   <th className="p-3 border-b">Activity</th>
-                  <th className="p-3 border-b text-right">Received</th>
                   <th className="p-3 border-b text-right">Allocated</th>
                   <th className="p-3 border-b text-right">Spent</th>
                   <th className="p-3 border-b text-right">Balance</th>
@@ -548,7 +543,6 @@ export default function App() {
                       <td className="p-3 text-xs text-gray-500">{act.scheme}</td>
                       <td className="p-3 text-xs text-gray-500">{act.sector}</td>
                       <td className="p-3 font-medium text-gray-800">{act.name}</td>
-                      <td className="p-3 text-right font-mono">₹{act.budget.toLocaleString()}</td>
                       <td className="p-3 text-right font-mono text-blue-600">₹{act.allocated.toLocaleString()}</td>
                       <td className="p-3 text-right font-mono text-red-600">₹{act.spent.toLocaleString()}</td>
                       <td className="p-3 text-right font-mono font-bold text-emerald-600">₹{act.balance.toLocaleString()}</td>
@@ -556,7 +550,7 @@ export default function App() {
                   ))}
                 {activitySummary.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-gray-400 italic">No budget data found for this Financial Year.</td>
+                    <td colSpan={6} className="p-8 text-center text-gray-400 italic">No budget data found for this Financial Year.</td>
                   </tr>
                 )}
               </tbody>
@@ -587,7 +581,6 @@ export default function App() {
                   <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                   <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} cursor={{fill: '#f3f4f6'}} />
                   <Legend />
-                  <Bar dataKey="budget" name="Received" fill="#6c757d" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="allocated" name="Allocated" fill="#007bff" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="spent" name="Spent" fill="#dc3545" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="balance" name="Balance" fill="#28a745" radius={[4, 4, 0, 0]} />
@@ -1658,7 +1651,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={allocations} ranges={ranges} expenses={expenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -1746,7 +1739,7 @@ export default function App() {
               const parentId = item.subActivityId || item.activityId;
               const isSub = !!item.subActivityId;
               
-              const relatedAllocs = allocations.filter(a => {
+              const relatedAllocs = currentAllocations.filter(a => {
                 const aParentId = a.subActivityId || a.activityId;
                 const aIsSub = !!a.subActivityId;
                 return a.rangeId === item.rangeId && aParentId === parentId && aIsSub === isSub;
@@ -1790,7 +1783,7 @@ export default function App() {
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={allocations} ranges={ranges} expenses={expenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Allocation"
           >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
@@ -1955,7 +1948,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} allocations={allocations} ranges={ranges} expenses={expenses}
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={currentAllocations} ranges={ranges} expenses={currentExpenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />

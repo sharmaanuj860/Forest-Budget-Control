@@ -33,7 +33,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       allow update, delete: if isAdmin();
     }
 
@@ -68,6 +68,11 @@ service cloud.firestore {
     }
 
     match /soeHeads/{id} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if canWrite();
+    }
+
+    match /soeBudgets/{id} {
       allow read: if isAuthenticated();
       allow create, update, delete: if canWrite();
     }
