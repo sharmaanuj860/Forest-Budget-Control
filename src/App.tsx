@@ -5,7 +5,7 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -24,7 +24,7 @@ type SubActivity = { id: string; activityId: string; name: string };
 type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; name: string };
 type SOEBudget = { id: string; soeId: string; fyId: string; approvedBudgetAmount: number; receivedInTryAmount: number };
 type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string; remarks?: string };
-type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean };
+type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean; approvalId?: number };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
 
 enum OperationType {
@@ -179,6 +179,11 @@ export default function App() {
         } else if (email === 'da123@rajgarhforest.app') {
            setUserRole('deo');
            setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'deo' }, { merge: true }).catch(() => {});
+           setLoading(false);
+           return;
+        } else if (email === 'da789@rajgarhforest.app') {
+           setUserRole('approver');
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'approver' }, { merge: true }).catch(() => {});
            setLoading(false);
            return;
         }
@@ -956,6 +961,7 @@ export default function App() {
                     <th className="p-3 border-b">Date</th>
                     <th className="p-3 border-b">Range</th>
                     <th className="p-3 border-b">SOE</th>
+                    <th className="p-3 border-b text-right">Approval ID</th>
                     <th className="p-3 border-b text-right">Amount</th>
                   </tr>
                 </thead>
@@ -969,6 +975,7 @@ export default function App() {
                         <td className="p-3">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
                         <td className="p-3 font-medium">{range?.name}</td>
                         <td className="p-3 text-gray-600">{soe?.name}</td>
+                        <td className="p-3 text-right font-mono text-xs">{exp.approvalId ? `#${exp.approvalId}` : '-'}</td>
                         <td className="p-3 text-right font-bold text-red-600">₹{exp.amount.toLocaleString()}</td>
                       </tr>
                     );
@@ -1232,14 +1239,14 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && <th className="p-3 border-b text-right">Actions</th>}
+                {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
+                  {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       {customActions && customActions(item)}
                       {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
@@ -1267,7 +1274,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1522,9 +1529,33 @@ export default function App() {
 
   const handleUpdateExpenseStatus = async (expenseId: string, status: 'approved' | 'rejected' | 'pending', isLocked: boolean) => {
     try {
-      await updateDoc(doc(db, 'expenditures', expenseId), { status, isLocked });
+      if (status === 'approved') {
+        await runTransaction(db, async (transaction) => {
+          const counterDocRef = doc(db, 'appSettings', 'counters');
+          const counterDoc = await transaction.get(counterDocRef);
+          
+          let nextId = 100;
+          if (counterDoc.exists()) {
+            nextId = (counterDoc.data().lastApprovalId || 99) + 1;
+          }
+          
+          transaction.set(counterDocRef, { lastApprovalId: nextId }, { merge: true });
+          transaction.update(doc(db, 'expenditures', expenseId), { 
+            status, 
+            isLocked, 
+            approvalId: nextId 
+          });
+        });
+      } else {
+        await updateDoc(doc(db, 'expenditures', expenseId), { 
+          status, 
+          isLocked,
+          ...(status === 'pending' ? { approvalId: null } : {})
+        });
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
+      alert(`Error updating status: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -1824,9 +1855,9 @@ export default function App() {
       zip.file("allocations.csv", allocCsv);
 
       // 2. Expenses
-      const expHeaders = ['ID', 'Date', 'Amount', 'Description', 'Allocation ID'];
+      const expHeaders = ['ID', 'Date', 'Amount', 'Description', 'Allocation ID', 'Approval ID'];
       const expData = currentExpenses.map(e => [
-        e.id, e.date ? e.date.split('-').reverse().join('/') : '', e.amount, e.description, e.allocationId
+        e.id, e.date ? e.date.split('-').reverse().join('/') : '', e.amount, e.description, e.allocationId, e.approvalId ? `#${e.approvalId}` : '-'
       ]);
       const expWs = XLSX.utils.aoa_to_sheet([expHeaders, ...expData]);
       const expCsv = XLSX.utils.sheet_to_csv(expWs);
@@ -3059,6 +3090,7 @@ export default function App() {
                     </span>
                   );
                 }},
+                {key: 'approvalId', label: 'Approval ID', render: (val) => val ? `#${val}` : '-'},
                 {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
                 {key: 'balance', label: 'Balance', 
                   searchableText: (_, item) => {
@@ -3148,6 +3180,7 @@ export default function App() {
                     <th className="p-3 border-b">Range</th>
                     <th className="p-3 border-b">Hierarchy & SOE</th>
                     <th className="p-3 border-b">Description</th>
+                    <th className="p-3 border-b">Approval ID</th>
                     <th className="p-3 border-b text-right">Credit (Allocated)</th>
                     <th className="p-3 border-b text-right">Debit (Expense)</th>
                     <th className="p-3 border-b text-right">Balance</th>
@@ -3187,6 +3220,7 @@ export default function App() {
                             <div>{s?.name}</div>
                           </td>
                           <td className="p-3 italic text-gray-600">Initial Allocation</td>
+                          <td className="p-3 text-gray-400">-</td>
                           <td className="p-3 text-right text-emerald-600 font-bold">₹{alloc.amount.toLocaleString()}</td>
                           <td className="p-3 text-right">-</td>
                           <td className="p-3 text-right text-blue-600 font-bold">₹{currentBalance.toLocaleString()}</td>
@@ -3208,6 +3242,7 @@ export default function App() {
                                 )}
                               </td>
                               <td className="p-3">{exp.description}</td>
+                              <td className="p-3 font-mono text-xs">{exp.approvalId ? `#${exp.approvalId}` : '-'}</td>
                               <td className="p-3 text-right">-</td>
                               <td className="p-3 text-right text-red-600">₹{exp.amount.toLocaleString()}</td>
                               <td className="p-3 text-right text-blue-600 font-bold">₹{currentBalance.toLocaleString()}</td>
