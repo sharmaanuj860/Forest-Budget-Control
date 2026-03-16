@@ -85,8 +85,10 @@ export default function App() {
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
   const [rangeSearch, setRangeSearch] = useState('');
+  const [soeSearchTerm, setSoeSearchTerm] = useState('');
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
+  const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
@@ -115,6 +117,7 @@ export default function App() {
 
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
   const [showReportFilters, setShowReportFilters] = useState(false);
+  const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '' });
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
@@ -393,6 +396,87 @@ export default function App() {
     { name: 'Unallocated', value: Math.max(0, totalBudget - totalAllocated), color: '#28a745' }
   ];
 
+  const soeAbstractData = useMemo(() => {
+    return currentSoeBudgets.map(budgetEntry => {
+      const soe = currentSoes.find(s => s.id === budgetEntry.soeId);
+      if (!soe) return null;
+
+      const budget = budgetEntry.budgetLimit;
+      const allocated = allocations.filter(a => 
+        a.soeId === soe.id && 
+        (a.fyId || fys[0]?.id) === selectedFyId
+      ).reduce((sum, a) => sum + a.amount, 0);
+      
+      const toBeAllocated = budget - allocated;
+      
+      const relevantAllocations = allocations.filter(a => 
+        a.soeId === soe.id && 
+        (a.fyId || fys[0]?.id) === selectedFyId
+      );
+      const spent = expenses.filter(e => 
+        relevantAllocations.some(a => a.id === e.allocationId) &&
+        (e.fyId || fys[0]?.id) === selectedFyId
+      ).reduce((sum, e) => sum + e.amount, 0);
+
+      const remainingToSpend = allocated - spent;
+
+      let hierarchy = '';
+      if (soe.subActivityId) {
+        const sa = subActivities.find(sa => sa.id === soe.subActivityId);
+        const act = activities.find(a => a.id === sa?.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+      } else if (soe.activityId) {
+        const act = activities.find(a => a.id === soe.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+      } else if (soe.sectorId) {
+        const sec = sectors.find(sec => sec.id === soe.sectorId);
+        const sch = schemes.find(sc => sc.id === sec?.schemeId);
+        hierarchy = [sch?.name, sec?.name].filter(Boolean).join(' > ');
+      } else if (soe.schemeId) {
+        const sch = schemes.find(sc => sc.id === soe.schemeId);
+        hierarchy = sch?.name || '';
+      }
+
+      return {
+        id: soe.id,
+        soeName: soe.name,
+        hierarchy,
+        totalBudget: budget,
+        allocated,
+        toBeAllocated,
+        spent,
+        remainingToSpend,
+        schemeId: soe.schemeId,
+        sectorId: soe.sectorId,
+        activityId: soe.activityId,
+        subActivityId: soe.subActivityId
+      };
+    }).filter((item): item is NonNullable<typeof item> => item !== null).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+  }, [currentSoeBudgets, currentSoes, allocations, expenses, selectedFyId, fys, subActivities, activities, sectors, schemes]);
+
+  const soeAbstractForAllocations = useMemo(() => {
+    return soeAbstractData.filter(item => {
+      // Apply dynamic filtering based on form selection
+      if (allocationFormFilters.soeId && item.id !== allocationFormFilters.soeId) return false;
+      if (allocationFormFilters.subActivityId && item.subActivityId !== allocationFormFilters.subActivityId) return false;
+      if (allocationFormFilters.activityId && item.activityId !== allocationFormFilters.activityId) return false;
+      if (allocationFormFilters.sectorId && item.sectorId !== allocationFormFilters.sectorId) return false;
+      if (allocationFormFilters.schemeId && item.schemeId !== allocationFormFilters.schemeId) return false;
+      
+      if (soeSearchTerm) {
+        const lowerSearch = soeSearchTerm.toLowerCase();
+        return item.soeName.toLowerCase().includes(lowerSearch) || 
+               item.hierarchy.toLowerCase().includes(lowerSearch);
+      }
+      
+      return true;
+    });
+  }, [soeAbstractData, allocationFormFilters, soeSearchTerm]);
+
   // --- Render Functions for Tabs ---
   const renderDashboard = () => {
     const rangeAllocationMap: Record<string, any> = {};
@@ -510,6 +594,14 @@ export default function App() {
       return a.scheme.localeCompare(b.scheme) || a.sector.localeCompare(b.sector) || a.name.localeCompare(b.name);
     });
 
+    const soeDashboardSummary = soeAbstractData.filter(item => {
+      if (dashboardSearch) {
+        const lowerSearch = dashboardSearch.toLowerCase();
+        return item.soeName.toLowerCase().includes(lowerSearch) || item.hierarchy.toLowerCase().includes(lowerSearch);
+      }
+      return true;
+    });
+
     return (
       <div className="space-y-6">
         <div className={`grid grid-cols-1 md:grid-cols-2 ${userRangeId ? 'lg:grid-cols-4' : 'lg:grid-cols-5'} gap-6`}>
@@ -621,6 +713,49 @@ export default function App() {
               </button>
             </div>
           )}
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+            <Activity className="h-5 w-5 text-emerald-600" /> Live SOE Budget Tracker
+          </h3>
+          <div className="overflow-x-auto max-h-96">
+            <table className="w-full text-left border-collapse text-sm">
+              <thead className="sticky top-0 bg-white shadow-sm">
+                <tr className="bg-gray-50 text-gray-600 font-semibold">
+                  <th className="p-3 border-b">Hierarchy (Scheme &gt; Sector &gt; Activity)</th>
+                  <th className="p-3 border-b">SOE Head</th>
+                  <th className="p-3 border-b text-right">Total SOE Budget</th>
+                  <th className="p-3 border-b text-right">Allocated</th>
+                  <th className="p-3 border-b text-right">To Be Allocated</th>
+                  <th className="p-3 border-b text-right">Spent</th>
+                  <th className="p-3 border-b text-right">Remaining to Spend</th>
+                </tr>
+              </thead>
+              <tbody>
+                {soeDashboardSummary.map((item, idx) => (
+                  <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
+                    <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
+                    <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
+                    <td className="p-3 text-right text-gray-700">₹{item.totalBudget.toLocaleString()}</td>
+                    <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
+                    <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      ₹{item.toBeAllocated.toLocaleString()}
+                    </td>
+                    <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
+                    <td className={`p-3 text-right font-bold ${item.remainingToSpend > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      ₹{item.remainingToSpend.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+                {soeDashboardSummary.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="p-4 text-center text-gray-500">No SOE data matching current selection.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -788,6 +923,76 @@ export default function App() {
     );
   };
 
+  const renderSoeAbstractTable = () => (
+    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+      <div 
+        className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6"
+        onClick={() => setIsSoeTrackerExpanded(!isSoeTrackerExpanded)}
+      >
+        <h3 className="text-lg font-semibold flex items-center gap-2">
+          <Activity className="h-5 w-5 text-emerald-600" /> Live SOE Budget Tracker
+        </h3>
+        <div className="flex items-center gap-4">
+          {isSoeTrackerExpanded && (
+            <div className="relative" onClick={(e) => e.stopPropagation()}>
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+              <input
+                type="text"
+                placeholder="Search tracker..."
+                className="pl-9 pr-4 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                value={soeSearchTerm}
+                onChange={(e) => setSoeSearchTerm(e.target.value)}
+              />
+            </div>
+          )}
+          <button type="button" className="text-gray-500 hover:text-gray-700">
+            {isSoeTrackerExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          </button>
+        </div>
+      </div>
+      
+      {isSoeTrackerExpanded && (
+        <div className="overflow-x-auto max-h-80">
+          <table className="w-full text-left border-collapse text-sm">
+            <thead className="sticky top-0 bg-white shadow-sm">
+              <tr className="bg-gray-50 text-gray-600 font-semibold">
+                <th className="p-3 border-b">Hierarchy</th>
+                <th className="p-3 border-b">SOE Head</th>
+                <th className="p-3 border-b text-right">Total SOE Budget</th>
+                <th className="p-3 border-b text-right">Allocated</th>
+                <th className="p-3 border-b text-right">To Be Allocated</th>
+                <th className="p-3 border-b text-right">Spent</th>
+                <th className="p-3 border-b text-right">Remaining to Spend</th>
+              </tr>
+            </thead>
+            <tbody>
+              {soeAbstractForAllocations.map((item) => (
+                <tr key={item.id} className="border-b hover:bg-gray-50 transition-colors">
+                  <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
+                  <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
+                  <td className="p-3 text-right text-gray-700">₹{item.totalBudget.toLocaleString()}</td>
+                  <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
+                  <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    ₹{item.toBeAllocated.toLocaleString()}
+                  </td>
+                  <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
+                  <td className={`p-3 text-right font-bold ${item.remainingToSpend > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    ₹{item.remainingToSpend.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+              {soeAbstractForAllocations.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-4 text-center text-gray-500">No SOE data matching current selection.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
   const renderSimpleManager = (
     title: string, 
     items: any[], 
@@ -796,7 +1001,8 @@ export default function App() {
     onDelete: (id: string) => void,
     formContent: React.ReactNode,
     onEdit: (item: any) => void,
-    canEditDelete?: (item: any) => boolean
+    canEditDelete?: (item: any) => boolean,
+    extraContent?: React.ReactNode
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -855,9 +1061,11 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`bg-white p-6 rounded-xl shadow-sm border border-gray-100 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
-          <h3 className="text-lg font-semibold">Existing {title}s</h3>
+      <div className={`space-y-6 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+        {extraContent}
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
+            <h3 className="text-lg font-semibold">Existing {title}s</h3>
           <div className="relative">
             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
             <input 
@@ -914,7 +1122,9 @@ export default function App() {
         </div>
       </div>
     </div>
-  )};
+    </div>
+    );
+  };
 
   // --- PWA Install Logic ---
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -1593,46 +1803,28 @@ export default function App() {
     }
 
     // --- SOE Abstract Summary Calculation ---
-    const abstractGroups: Record<string, any> = {};
-    // Use comprehensiveReportData to ignore range-level distributions, but apply UI filters
-    comprehensiveReportData.filter(row => {
-      return (
-        (!reportFilters.scheme || row.scheme === reportFilters.scheme) &&
-        (!reportFilters.sector || row.sector === reportFilters.sector) &&
-        (!reportFilters.activity || row.activity === reportFilters.activity) &&
-        (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity)
-      );
-    }).forEach(row => {
-      const key = `${row.scheme} > ${row.sector} > ${row.activity} | ${row.soeId}`;
-      if (!abstractGroups[key]) {
-        abstractGroups[key] = {
-          hierarchy: `${row.scheme} > ${row.sector} > ${row.activity}`,
-          soeName: row.soe,
-          totalSoeBudget: row.totalBudget,
-          allocated: 0,
-          expenditure: 0,
-          soeId: row.soeId
-        };
-      }
-      abstractGroups[key].allocated += row.allocated;
-      abstractGroups[key].expenditure += row.expenditure;
-    });
+    const abstractRows = soeAbstractData.filter(row => {
+      // Apply UI filters
+      const scheme = row.hierarchy.split(' > ')[0];
+      const sector = row.hierarchy.split(' > ')[1];
+      const activity = row.hierarchy.split(' > ')[2];
+      const subActivity = row.hierarchy.split(' > ')[3];
 
-    const abstractRows = Object.values(abstractGroups).map(g => {
-      // For the abstract summary, "Allocated" should be the total across all ranges (which we just summed)
-      // "To be Allocated" is Total Budget - Total Allocated
-      const toBeAllocated = g.totalSoeBudget - g.allocated;
-      const remaining = g.totalSoeBudget - g.expenditure;
-      return {
-        ...g,
-        toBeAllocated,
-        remaining
-      };
-    }).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+      return (
+        (!reportFilters.scheme || scheme === reportFilters.scheme) &&
+        (!reportFilters.sector || sector === reportFilters.sector) &&
+        (!reportFilters.activity || activity === reportFilters.activity) &&
+        (!reportFilters.subActivity || subActivity === reportFilters.subActivity)
+      );
+    }).map(r => ({
+      ...r,
+      expenditure: r.spent, // Rename for report consistency
+      remaining: r.remainingToSpend // Rename for report consistency
+    })).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
 
     const abstractHeaders = ['Hierarchy', 'Name of SOE', 'Total SOE Budget', 'Allocated', 'To be Allocated', 'Expenditure', 'Remaining'];
     const abstractTableData = abstractRows.map(r => [
-      r.hierarchy, r.soeName, r.totalSoeBudget, r.allocated, r.toBeAllocated, r.expenditure, r.remaining
+      r.hierarchy, r.soeName, r.totalBudget, r.allocated, r.toBeAllocated, r.expenditure, r.remaining
     ]);
 
     const isAdmin = userRole === 'admin';
@@ -1651,10 +1843,10 @@ export default function App() {
       return cols;
     });
 
-    const uniqueSchemes = Array.from(new Set(comprehensiveReportData.map(r => r.scheme))).sort();
-    const uniqueSectors = Array.from(new Set(comprehensiveReportData.map(r => r.sector))).sort();
-    const uniqueActivities = Array.from(new Set(comprehensiveReportData.map(r => r.activity))).sort();
-    const uniqueSubActivities = Array.from(new Set(comprehensiveReportData.map(r => r.subActivity))).sort();
+    const uniqueSchemes = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[0]))).filter(Boolean).sort();
+    const uniqueSectors = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[1]))).filter(Boolean).sort();
+    const uniqueActivities = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[2]))).filter(Boolean).sort();
+    const uniqueSubActivities = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[3]))).filter(Boolean).sort();
 
     return (
       <div className="space-y-6">
@@ -1766,7 +1958,7 @@ export default function App() {
                     <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
                       <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
                       <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.totalSoeBudget.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.totalBudget.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
@@ -2315,6 +2507,7 @@ export default function App() {
           <CascadingDropdowns 
             schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Allocation"
+            onSelectionChange={setAllocationFormFilters}
           >
             <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
               <option value="">Select Range</option>
@@ -2322,7 +2515,9 @@ export default function App() {
             </select>
             <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
           </CascadingDropdowns>,
-          (item) => setEditingItem({ type: 'Allocation', item })
+          (item) => setEditingItem({ type: 'Allocation', item }),
+          undefined,
+          renderSoeAbstractTable()
         )}
 
         {activeTab === 'Expenditures' && (
@@ -2598,7 +2793,7 @@ export default function App() {
 
 function CascadingDropdowns({ 
   schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, ranges, expenses,
-  editingItem, type, children 
+  editingItem, type, children, onSelectionChange 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -2606,6 +2801,13 @@ function CascadingDropdowns({
   const [subActivityId, setSubActivityId] = useState('');
   const [soeId, setSoeId] = useState('');
   const [allocationId, setAllocationId] = useState('');
+
+  // Notify parent of selection changes
+  useEffect(() => {
+    if (onSelectionChange) {
+      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId });
+    }
+  }, [schemeId, sectorId, activityId, subActivityId, soeId, onSelectionChange]);
 
   // Initialize state based on editingItem
   useEffect(() => {
