@@ -1176,7 +1176,7 @@ export default function App() {
 
     return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {(userRole === 'admin' || userRole === 'deo' || title === 'Expenditure') && (
+      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit lg:sticky lg:top-6">
           <div 
             className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6 pt-2" 
@@ -1211,7 +1211,7 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
         {extraContent}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
@@ -1232,17 +1232,17 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
+                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && (
+                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       {customActions && customActions(item)}
-                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && (
+                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
                         <>
                           <button 
                             onClick={() => {
@@ -1267,7 +1267,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -3091,7 +3091,7 @@ export default function App() {
               (item) => setEditingItem({ type: 'Expenditure', item }),
               (item) => {
                 if (item.isLocked) return false;
-                if (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') return true;
+                if (userRole === 'admin' || userRole === 'deo') return true;
                 if (userRangeId) {
                   const alloc = allocations.find(a => a.id === item.allocationId);
                   return alloc?.rangeId === userRangeId;
