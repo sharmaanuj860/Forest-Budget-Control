@@ -1358,28 +1358,45 @@ export default function App() {
   );
 
   const renderReports = () => {
-    const downloadPDF = (title: string, data: any[], headers: string[]) => {
+    const downloadPDF = (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
       const doc = new jsPDF('landscape');
+      doc.setFontSize(16);
       doc.text(title, 14, 15);
+      
+      doc.setFontSize(12);
+      doc.text("SOE Abstract Summary", 14, 25);
       autoTable(doc, {
-        head: [headers],
-        body: data,
-        startY: 20,
+        head: [abstractHeaders],
+        body: abstractData,
+        startY: 30,
         styles: { fontSize: 7 },
-        headStyles: { fillColor: [5, 150, 105] },
-        didParseCell: (data) => {
-          // Apply bold styling to total rows in PDF if possible
-          // autoTable doesn't easily support row-level styling based on content here without more complex logic
-        }
+        headStyles: { fillColor: [5, 150, 105] }
+      });
+
+      const finalY = (doc as any).lastAutoTable.finalY || 30;
+      doc.setFontSize(12);
+      doc.text("Detailed Range-wise Report", 14, finalY + 15);
+      autoTable(doc, {
+        head: [detailedHeaders],
+        body: detailedData,
+        startY: finalY + 20,
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [5, 150, 105] }
       });
       doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
     };
 
-    const downloadExcel = (title: string, data: any[], headers: string[]) => {
-      const wsData = [headers, ...data];
-      const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const downloadExcel = (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
       const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Report");
+      
+      const abstractWsData = [["SOE Abstract Summary"], abstractHeaders, ...abstractData];
+      const abstractWs = XLSX.utils.aoa_to_sheet(abstractWsData);
+      XLSX.utils.book_append_sheet(wb, abstractWs, "Abstract Summary");
+
+      const detailedWsData = [["Detailed Range-wise Report"], detailedHeaders, ...detailedData];
+      const detailedWs = XLSX.utils.aoa_to_sheet(detailedWsData);
+      XLSX.utils.book_append_sheet(wb, detailedWs, "Detailed Report");
+
       XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
     };
 
@@ -1455,6 +1472,12 @@ export default function App() {
       };
     });
 
+    // Calculate total allocated per SOE Head across all ranges to get accurate "To be Allocated"
+    const totalAllocatedBySoe: Record<string, number> = {};
+    comprehensiveReportData.forEach(a => {
+      totalAllocatedBySoe[a.soeId] = (totalAllocatedBySoe[a.soeId] || 0) + a.allocated;
+    });
+
     // Filtering
     const filteredData = comprehensiveReportData.filter(row => {
       return (
@@ -1512,7 +1535,8 @@ export default function App() {
     let currentSubActivity = null;
 
     sortedData.forEach((row, idx) => {
-      const toBeAllocated = row.totalBudget - row.allocated;
+      const totalAllocatedForThisSoe = totalAllocatedBySoe[row.soeId] || 0;
+      const toBeAllocated = row.totalBudget - totalAllocatedForThisSoe;
       const rowWithCalc = { ...row, toBeAllocated };
 
       if (idx > 0) {
@@ -1568,14 +1592,57 @@ export default function App() {
       groupedData.push({ ...grandTotals, range: '', scheme: '', sector: '', activity: '', subActivity: '', soe: 'Grand Total', isTotal: true, level: 'grand' });
     }
 
+    // --- SOE Abstract Summary Calculation ---
+    const abstractGroups: Record<string, any> = {};
+    // Use comprehensiveReportData to ignore range-level distributions, but apply UI filters
+    comprehensiveReportData.filter(row => {
+      return (
+        (!reportFilters.scheme || row.scheme === reportFilters.scheme) &&
+        (!reportFilters.sector || row.sector === reportFilters.sector) &&
+        (!reportFilters.activity || row.activity === reportFilters.activity) &&
+        (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity)
+      );
+    }).forEach(row => {
+      const key = `${row.scheme} > ${row.sector} > ${row.activity} | ${row.soeId}`;
+      if (!abstractGroups[key]) {
+        abstractGroups[key] = {
+          hierarchy: `${row.scheme} > ${row.sector} > ${row.activity}`,
+          soeName: row.soe,
+          totalSoeBudget: row.totalBudget,
+          allocated: 0,
+          expenditure: 0,
+          soeId: row.soeId
+        };
+      }
+      abstractGroups[key].allocated += row.allocated;
+      abstractGroups[key].expenditure += row.expenditure;
+    });
+
+    const abstractRows = Object.values(abstractGroups).map(g => {
+      // For the abstract summary, "Allocated" should be the total across all ranges (which we just summed)
+      // "To be Allocated" is Total Budget - Total Allocated
+      const toBeAllocated = g.totalSoeBudget - g.allocated;
+      const remaining = g.totalSoeBudget - g.expenditure;
+      return {
+        ...g,
+        toBeAllocated,
+        remaining
+      };
+    }).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+
+    const abstractHeaders = ['Hierarchy', 'Name of SOE', 'Total SOE Budget', 'Allocated', 'To be Allocated', 'Expenditure', 'Remaining'];
+    const abstractTableData = abstractRows.map(r => [
+      r.hierarchy, r.soeName, r.totalSoeBudget, r.allocated, r.toBeAllocated, r.expenditure, r.remaining
+    ]);
+
     const isAdmin = userRole === 'admin';
-    const headers = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
-    if (!userRangeId) headers.push('Total Budget');
-    headers.push('Allocated');
-    if (isAdmin) headers.push('To be Allocated');
-    headers.push('Expenditure', 'Remaining');
+    const detailedHeaders = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
+    if (!userRangeId) detailedHeaders.push('Total Budget');
+    detailedHeaders.push('Allocated');
+    if (isAdmin) detailedHeaders.push('To be Allocated');
+    detailedHeaders.push('Expenditure', 'Remaining');
     
-    const tableData = groupedData.map(row => {
+    const detailedTableData = groupedData.map(row => {
       const cols = [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe];
       if (!userRangeId) cols.push(row.totalBudget);
       cols.push(row.allocated);
@@ -1605,13 +1672,13 @@ export default function App() {
                 {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
               <button 
-                onClick={() => downloadPDF('Comprehensive Budget Report', tableData, headers)}
+                onClick={() => downloadPDF('Comprehensive Budget Report', abstractTableData, abstractHeaders, detailedTableData, detailedHeaders)}
                 className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export PDF
               </button>
               <button 
-                onClick={() => downloadExcel('Comprehensive Budget Report', tableData, headers)}
+                onClick={() => downloadExcel('Comprehensive Budget Report', abstractTableData, abstractHeaders, detailedTableData, detailedHeaders)}
                 className="bg-emerald-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export Excel
@@ -1682,11 +1749,51 @@ export default function App() {
             </div>
           )}
 
+          {/* SOE Abstract Summary Table */}
+          <div className="mb-10">
+            <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
+            </h4>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse border border-gray-300">
+                <thead>
+                  <tr className="bg-emerald-50 border-b border-gray-300">
+                    {abstractHeaders.map(h => <th key={h} className="p-3 text-xs font-bold text-emerald-900 border border-gray-300 uppercase tracking-wider">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {abstractRows.map((row, i) => (
+                    <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
+                      <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
+                      <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.totalSoeBudget.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {abstractRows.length === 0 && (
+                    <tr>
+                      <td colSpan={7} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <h4 className="text-md font-bold text-gray-800 mb-2 flex items-center gap-2">
+              <Table className="w-4 h-4 text-emerald-600" /> Detailed Range-wise Report
+            </h4>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse border border-gray-300">
               <thead>
                 <tr className="bg-gray-100 border-b border-gray-300">
-                  {headers.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-700 border border-gray-300">{h}</th>)}
+                  {detailedHeaders.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-700 border border-gray-300">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
@@ -1718,7 +1825,7 @@ export default function App() {
                 })}
                 {groupedData.length === 0 && (
                   <tr>
-                    <td colSpan={headers.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
+                    <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
                   </tr>
                 )}
               </tbody>
