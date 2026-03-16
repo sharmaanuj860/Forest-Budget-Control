@@ -1441,6 +1441,7 @@ export default function App() {
       const remaining = allocated - expenditure;
 
       return {
+        soeId: a.soeId,
         range: range?.name || 'N/A',
         scheme: sch?.name || 'N/A',
         sector: sec?.name || 'N/A',
@@ -1472,35 +1473,43 @@ export default function App() {
     });
 
     const groupedData = [];
-    let grandTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
     
+    // Helper to calculate totals for a group of rows
+    const calculateTotals = (rows: any[]) => {
+      const distinctSoes: Record<string, number> = {};
+      let totalAllocated = 0;
+      let totalExpenditure = 0;
+
+      rows.forEach(r => {
+        if (!(r.soeId in distinctSoes)) {
+          distinctSoes[r.soeId] = r.totalBudget;
+        }
+        totalAllocated += r.allocated;
+        totalExpenditure += r.expenditure;
+      });
+
+      const totalBudget = Object.values(distinctSoes).reduce((sum, b) => sum + b, 0);
+      const toBeAllocated = totalBudget - totalAllocated;
+      const remaining = totalBudget - totalExpenditure;
+
+      return {
+        totalBudget,
+        allocated: totalAllocated,
+        toBeAllocated,
+        expenditure: totalExpenditure,
+        remaining
+      };
+    };
+
+    let currentSchemeRows = [];
+    let currentSectorRows = [];
+    let currentActivityRows = [];
+    let currentSubActivityRows = [];
+
     let currentScheme = null;
-    let schemeTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
-    
     let currentSector = null;
-    let sectorTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
-    
     let currentActivity = null;
-    let activityTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
-    
     let currentSubActivity = null;
-    let subActivityTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
-
-    const addTotals = (target, source) => {
-      target.totalBudget += source.totalBudget;
-      target.allocated += source.allocated;
-      target.toBeAllocated += source.toBeAllocated;
-      target.expenditure += source.expenditure;
-      target.remaining += source.remaining;
-    };
-
-    const resetTotal = (t) => {
-      t.totalBudget = 0;
-      t.allocated = 0;
-      t.toBeAllocated = 0;
-      t.expenditure = 0;
-      t.remaining = 0;
-    };
 
     sortedData.forEach((row, idx) => {
       const toBeAllocated = row.totalBudget - row.allocated;
@@ -1508,20 +1517,24 @@ export default function App() {
 
       if (idx > 0) {
         if (row.subActivity !== currentSubActivity || row.activity !== currentActivity || row.sector !== currentSector || row.scheme !== currentScheme) {
-          groupedData.push({ ...subActivityTotal, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
-          resetTotal(subActivityTotal);
+          const totals = calculateTotals(currentSubActivityRows);
+          groupedData.push({ ...totals, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
+          currentSubActivityRows = [];
         }
         if (row.activity !== currentActivity || row.sector !== currentSector || row.scheme !== currentScheme) {
-          groupedData.push({ ...activityTotal, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
-          resetTotal(activityTotal);
+          const totals = calculateTotals(currentActivityRows);
+          groupedData.push({ ...totals, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
+          currentActivityRows = [];
         }
         if (row.sector !== currentSector || row.scheme !== currentScheme) {
-          groupedData.push({ ...sectorTotal, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
-          resetTotal(sectorTotal);
+          const totals = calculateTotals(currentSectorRows);
+          groupedData.push({ ...totals, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
+          currentSectorRows = [];
         }
         if (row.scheme !== currentScheme) {
-          groupedData.push({ ...schemeTotal, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
-          resetTotal(schemeTotal);
+          const totals = calculateTotals(currentSchemeRows);
+          groupedData.push({ ...totals, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
+          currentSchemeRows = [];
         }
       }
 
@@ -1532,19 +1545,27 @@ export default function App() {
 
       groupedData.push(rowWithCalc);
       
-      addTotals(subActivityTotal, rowWithCalc);
-      addTotals(activityTotal, rowWithCalc);
-      addTotals(sectorTotal, rowWithCalc);
-      addTotals(schemeTotal, rowWithCalc);
-      addTotals(grandTotal, rowWithCalc);
+      currentSubActivityRows.push(rowWithCalc);
+      currentActivityRows.push(rowWithCalc);
+      currentSectorRows.push(rowWithCalc);
+      currentSchemeRows.push(rowWithCalc);
     });
 
     if (sortedData.length > 0) {
-      groupedData.push({ ...subActivityTotal, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
-      groupedData.push({ ...activityTotal, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
-      groupedData.push({ ...sectorTotal, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
-      groupedData.push({ ...schemeTotal, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
-      groupedData.push({ ...grandTotal, range: '', scheme: '', sector: '', activity: '', subActivity: '', soe: 'Grand Total', isTotal: true, level: 'grand' });
+      const saTotals = calculateTotals(currentSubActivityRows);
+      groupedData.push({ ...saTotals, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
+      
+      const actTotals = calculateTotals(currentActivityRows);
+      groupedData.push({ ...actTotals, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
+      
+      const secTotals = calculateTotals(currentSectorRows);
+      groupedData.push({ ...secTotals, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
+      
+      const schTotals = calculateTotals(currentSchemeRows);
+      groupedData.push({ ...schTotals, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
+      
+      const grandTotals = calculateTotals(sortedData);
+      groupedData.push({ ...grandTotals, range: '', scheme: '', sector: '', activity: '', subActivity: '', soe: 'Grand Total', isTotal: true, level: 'grand' });
     }
 
     const isAdmin = userRole === 'admin';
