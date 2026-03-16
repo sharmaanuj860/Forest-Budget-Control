@@ -143,6 +143,7 @@ export default function App() {
 
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
   const [showReportFilters, setShowReportFilters] = useState(false);
+  const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '' });
 
   // --- Editing State ---
@@ -970,6 +971,89 @@ export default function App() {
     );
   };
 
+  const renderMyRangeSummaryTable = () => {
+    // Group currentAllocations by SOE Head
+    const summaryMap: Record<string, { hierarchy: string, soeName: string, allocated: number, spent: number, remaining: number }> = {};
+    
+    currentAllocations.forEach(alloc => {
+      const soe = soes.find(s => s.id === alloc.soeId);
+      if (!soe) return;
+      
+      let hierarchy = '';
+      if (alloc.subActivityId) {
+        const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+        const act = activities.find(a => a.id === sa?.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+      } else if (alloc.activityId) {
+        const act = activities.find(a => a.id === alloc.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+      }
+
+      const spent = currentExpenses.filter(e => e.allocationId === alloc.id).reduce((sum, e) => sum + e.amount, 0);
+
+      if (summaryMap[soe.id]) {
+        summaryMap[soe.id].allocated += alloc.amount;
+        summaryMap[soe.id].spent += spent;
+        summaryMap[soe.id].remaining = summaryMap[soe.id].allocated - summaryMap[soe.id].spent;
+      } else {
+        summaryMap[soe.id] = {
+          hierarchy,
+          soeName: soe.name,
+          allocated: alloc.amount,
+          spent,
+          remaining: alloc.amount - spent
+        };
+      }
+    });
+
+    const summaryData = Object.values(summaryMap).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
+        <div className="flex justify-between items-center mb-4 border-b pb-2">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            <Activity className="h-5 w-5 text-emerald-600" /> My Range Summary
+          </h3>
+        </div>
+        <div className="overflow-x-auto max-h-80">
+          <table className="w-full text-left border-collapse text-sm">
+            <thead className="sticky top-0 bg-white shadow-sm">
+              <tr className="bg-gray-50 text-gray-600 font-semibold">
+                <th className="p-3 border-b">Hierarchy</th>
+                <th className="p-3 border-b">SOE Head</th>
+                <th className="p-3 border-b text-right">Allocated to Me</th>
+                <th className="p-3 border-b text-right">My Expenditure</th>
+                <th className="p-3 border-b text-right">My Remaining Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {summaryData.map((item, idx) => (
+                <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
+                  <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
+                  <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
+                  <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
+                  <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
+                  <td className={`p-3 text-right font-bold ${item.remaining > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    ₹{item.remaining.toLocaleString()}
+                  </td>
+                </tr>
+              ))}
+              {summaryData.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-4 text-center text-gray-500">No allocations found for your range.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   const renderSoeAbstractTable = () => (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
       <div 
@@ -1079,7 +1163,7 @@ export default function App() {
 
     return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      {(userRole === 'admin' || title === 'Expenditure') && (
+      {(userRole === 'admin' || userRole === 'deo' || title === 'Expenditure') && (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit lg:sticky lg:top-6">
           <div 
             className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6 pt-2" 
@@ -1114,7 +1198,7 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${(userRole === 'admin' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || title === 'Expenditure') ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
         {extraContent}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
@@ -1135,16 +1219,16 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
+                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) && (
+                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && (
                     <td className="p-3 text-right flex justify-end gap-2">
-                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || title === 'Expenditure')) && (
+                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && (
                         <>
                           <button 
                             onClick={() => {
@@ -1169,7 +1253,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1642,17 +1726,21 @@ export default function App() {
       doc.setFontSize(16);
       doc.text(title, 14, 15);
       
-      doc.setFontSize(12);
-      doc.text("SOE Abstract Summary", 14, 25);
-      autoTable(doc, {
-        head: [abstractHeaders],
-        body: abstractData,
-        startY: 30,
-        styles: { fontSize: 7 },
-        headStyles: { fillColor: [5, 150, 105] }
-      });
+      let finalY = 15;
 
-      const finalY = (doc as any).lastAutoTable.finalY || 30;
+      if (abstractData.length > 0) {
+        doc.setFontSize(12);
+        doc.text("SOE Abstract Summary", 14, 25);
+        autoTable(doc, {
+          head: [abstractHeaders],
+          body: abstractData,
+          startY: 30,
+          styles: { fontSize: 7 },
+          headStyles: { fillColor: [5, 150, 105] }
+        });
+        finalY = (doc as any).lastAutoTable.finalY || 30;
+      }
+
       doc.setFontSize(12);
       doc.text("Detailed Range-wise Report", 14, finalY + 15);
       autoTable(doc, {
@@ -1668,9 +1756,11 @@ export default function App() {
     const downloadExcel = (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
       const wb = XLSX.utils.book_new();
       
-      const abstractWsData = [["SOE Abstract Summary"], abstractHeaders, ...abstractData];
-      const abstractWs = XLSX.utils.aoa_to_sheet(abstractWsData);
-      XLSX.utils.book_append_sheet(wb, abstractWs, "Abstract Summary");
+      if (abstractData.length > 0) {
+        const abstractWsData = [["SOE Abstract Summary"], abstractHeaders, ...abstractData];
+        const abstractWs = XLSX.utils.aoa_to_sheet(abstractWsData);
+        XLSX.utils.book_append_sheet(wb, abstractWs, "Abstract Summary");
+      }
 
       const detailedWsData = [["Detailed Range-wise Report"], detailedHeaders, ...detailedData];
       const detailedWs = XLSX.utils.aoa_to_sheet(detailedWsData);
@@ -1707,19 +1797,21 @@ export default function App() {
       const expCsv = XLSX.utils.sheet_to_csv(expWs);
       zip.file("expenses.csv", expCsv);
 
-      // 3. SOE Summary
-      const soeHeaders = ['SOE ID', 'Name', 'Budget Limit', 'Allocated', 'Spent', 'Remaining'];
-      const soeData = currentSoes.map(s => {
-        const allocated = getSoeAllocated(s.id);
-        const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
-        const budget = currentSoeBudgets.find(b => b.soeId === s.id);
-        const approved = budget?.approvedBudgetAmount || 0;
-        const received = budget?.receivedInTryAmount || 0;
-        return [s.id, s.name, approved, received, allocated, spent, approved - allocated];
-      });
-      const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
-      const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
-      zip.file("soe_summary.csv", soeCsv);
+      // 3. SOE Summary (Admin/DEO only)
+      if (userRole === 'admin' || userRole === 'deo') {
+        const soeHeaders = ['SOE ID', 'Name', 'Approved Budget', 'Received in TRY', 'Allocated', 'Spent', 'Remaining'];
+        const soeData = currentSoes.map(s => {
+          const allocated = getSoeAllocated(s.id);
+          const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
+          const budget = currentSoeBudgets.find(b => b.soeId === s.id);
+          const approved = budget?.approvedBudgetAmount || 0;
+          const received = budget?.receivedInTryAmount || 0;
+          return [s.id, s.name, approved, received, allocated, spent, approved - allocated];
+        });
+        const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
+        const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
+        zip.file("soe_summary.csv", soeCsv);
+      }
 
       const content = await zip.generateAsync({ type: "blob" });
       saveAs(content, `financial_data_fy_${fys.find(f => f.id === selectedFyId)?.name || 'export'}.zip`);
@@ -1937,13 +2029,13 @@ export default function App() {
                 {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
               <button 
-                onClick={() => downloadPDF('Comprehensive Budget Report', abstractTableData, abstractHeaders, detailedTableData, detailedHeaders)}
+                onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
                 className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export PDF
               </button>
               <button 
-                onClick={() => downloadExcel('Comprehensive Budget Report', abstractTableData, abstractHeaders, detailedTableData, detailedHeaders)}
+                onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
                 className="bg-emerald-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export Excel
@@ -2015,40 +2107,53 @@ export default function App() {
           )}
 
           {/* SOE Abstract Summary Table */}
-          <div className="mb-10">
-            <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
-              <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
-            </h4>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse border border-gray-300">
-                <thead>
-                  <tr className="bg-emerald-50 border-b border-gray-300">
-                    {abstractHeaders.map(h => <th key={h} className="p-3 text-xs font-bold text-emerald-900 border border-gray-300 uppercase tracking-wider">{h}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {abstractRows.map((row, i) => (
-                    <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
-                      <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
-                      <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {abstractRows.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+          {(userRole === 'admin' || userRole === 'deo') && (
+            <div className="mb-10">
+              <div 
+                className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
+                onClick={() => setShowSoeAbstract(!showSoeAbstract)}
+              >
+                <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+                  <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
+                </h4>
+                <button type="button" className="text-gray-500 hover:text-gray-700">
+                  {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                </button>
+              </div>
+              
+              {showSoeAbstract && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-gray-300">
+                    <thead>
+                      <tr className="bg-emerald-50 border-b border-gray-300">
+                        {abstractHeaders.map(h => <th key={h} className="p-3 text-xs font-bold text-emerald-900 border border-gray-300 uppercase tracking-wider">{h}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {abstractRows.map((row, i) => (
+                        <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
+                          <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
+                          <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                          <td className="p-3 text-xs border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
+                        </tr>
+                      ))}
+                      {abstractRows.length === 0 && (
+                        <tr>
+                          <td colSpan={9} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
           <div className="mb-4">
             <h4 className="text-md font-bold text-gray-800 mb-2 flex items-center gap-2">
@@ -2098,6 +2203,173 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          
+          {renderSchemeWiseLedger()}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSchemeWiseLedger = () => {
+    if (userRole !== 'admin' && userRole !== 'deo') return null;
+
+    // Group allocations and expenditures by Hierarchy + SOE Head
+    const ledgerGroups: Record<string, { hierarchy: string, soeName: string, totalAllocation: number, items: any[] }> = {};
+
+    const filteredAllocations = currentAllocations.filter(alloc => {
+      const sch = schemes.find(s => s.id === alloc.schemeId);
+      const sec = sectors.find(s => s.id === alloc.sectorId);
+      const act = activities.find(a => a.id === alloc.activityId);
+      const sa = subActivities.find(s => s.id === alloc.subActivityId);
+      
+      return (
+        (!reportFilters.scheme || sch?.name === reportFilters.scheme) &&
+        (!reportFilters.sector || sec?.name === reportFilters.sector) &&
+        (!reportFilters.activity || act?.name === reportFilters.activity) &&
+        (!reportFilters.subActivity || sa?.name === reportFilters.subActivity)
+      );
+    });
+
+    filteredAllocations.forEach(alloc => {
+      const soe = soes.find(s => s.id === alloc.soeId);
+      if (!soe) return;
+
+      let hierarchy = '';
+      if (alloc.subActivityId) {
+        const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+        const act = activities.find(a => a.id === sa?.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+      } else if (alloc.activityId) {
+        const act = activities.find(a => a.id === alloc.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+      }
+
+      const key = `${hierarchy}-${soe.name}`;
+
+      if (!ledgerGroups[key]) {
+        ledgerGroups[key] = {
+          hierarchy,
+          soeName: soe.name,
+          totalAllocation: 0,
+          items: []
+        };
+      }
+
+      ledgerGroups[key].totalAllocation += alloc.amount;
+    });
+
+    // Now add expenditures
+    currentExpenses.forEach(exp => {
+      const alloc = filteredAllocations.find(a => a.id === exp.allocationId);
+      if (!alloc) return;
+      const soe = soes.find(s => s.id === alloc.soeId);
+      if (!soe) return;
+
+      let hierarchy = '';
+      if (alloc.subActivityId) {
+        const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+        const act = activities.find(a => a.id === sa?.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+      } else if (alloc.activityId) {
+        const act = activities.find(a => a.id === alloc.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+      }
+
+      const key = `${hierarchy}-${soe.name}`;
+
+      if (ledgerGroups[key]) {
+        ledgerGroups[key].items.push({
+          date: exp.date,
+          expenditure: exp.amount
+        });
+      }
+    });
+
+    // Sort groups
+    const sortedGroups = Object.values(ledgerGroups).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+
+    return (
+      <div className="mt-10">
+        <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
+          <FileText className="w-4 h-4 text-emerald-600" /> Scheme Wise Allocation and Expenditure Details
+        </h4>
+        <div className="space-y-8">
+          {sortedGroups.map((group, gIdx) => {
+            // Sort items by date
+            const sortedItems = group.items.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            
+            let runningBalance = group.totalAllocation;
+            let totalExp = 0;
+
+            return (
+              <div key={gIdx} className="border border-gray-300 rounded-lg overflow-hidden">
+                <div className="bg-gray-100 p-3 border-b border-gray-300 flex justify-between items-center">
+                  <div className="font-bold text-gray-800">
+                    <span className="text-emerald-700">{group.soeName}</span> <span className="text-gray-500 font-normal text-sm">[{group.hierarchy}]</span>
+                  </div>
+                  <div className="font-bold text-blue-700">
+                    Total Allocation: ₹{group.totalAllocation.toLocaleString()}
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-sm">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200 text-gray-600">
+                        <th className="p-2 border-r border-gray-200">S.No</th>
+                        <th className="p-2 border-r border-gray-200">Date</th>
+                        <th className="p-2 border-r border-gray-200 text-right">Allocation</th>
+                        <th className="p-2 border-r border-gray-200 text-right">Expenditure</th>
+                        <th className="p-2 text-right">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {/* Row 1: Initialization */}
+                      <tr className="border-b border-gray-200">
+                        <td className="p-2 border-r border-gray-200 text-center">1</td>
+                        <td className="p-2 border-r border-gray-200 text-gray-500 italic">Allocation Date</td>
+                        <td className="p-2 border-r border-gray-200 text-right font-medium text-emerald-600">₹{group.totalAllocation.toLocaleString()}</td>
+                        <td className="p-2 border-r border-gray-200 text-right text-gray-400">-</td>
+                        <td className="p-2 text-right font-bold text-blue-600">₹{runningBalance.toLocaleString()}</td>
+                      </tr>
+                      {/* Row 2+: Expenditures */}
+                      {sortedItems.map((item, i) => {
+                        runningBalance -= item.expenditure;
+                        totalExp += item.expenditure;
+                        return (
+                          <tr key={i} className="border-b border-gray-200 hover:bg-gray-50">
+                            <td className="p-2 border-r border-gray-200 text-center">{i + 2}</td>
+                            <td className="p-2 border-r border-gray-200">{item.date ? item.date.split('-').reverse().join('/') : ''}</td>
+                            <td className="p-2 border-r border-gray-200 text-right text-gray-400">-</td>
+                            <td className="p-2 border-r border-gray-200 text-right font-medium text-red-600">₹{item.expenditure.toLocaleString()}</td>
+                            <td className="p-2 text-right font-bold text-blue-600">₹{runningBalance.toLocaleString()}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-gray-100 font-bold border-t-2 border-gray-300">
+                        <td colSpan={2} className="p-2 border-r border-gray-200 text-right">Total</td>
+                        <td className="p-2 border-r border-gray-200 text-right text-emerald-700">₹{group.totalAllocation.toLocaleString()}</td>
+                        <td className="p-2 border-r border-gray-200 text-right text-red-700">₹{totalExp.toLocaleString()}</td>
+                        <td className="p-2 text-right text-blue-700">₹{runningBalance.toLocaleString()}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })}
+          {sortedGroups.length === 0 && (
+            <div className="p-8 text-center text-gray-500 border border-gray-300 rounded-lg bg-gray-50">No allocation data available for ledger.</div>
+          )}
         </div>
       </div>
     );
@@ -2590,7 +2862,7 @@ export default function App() {
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Allocation', item }),
           undefined,
-          renderSoeAbstractTable()
+          (userRole === 'admin' || userRole === 'deo') ? renderSoeAbstractTable() : renderMyRangeSummaryTable()
         )}
 
         {activeTab === 'Expenditures' && (
