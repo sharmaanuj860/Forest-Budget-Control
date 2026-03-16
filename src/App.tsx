@@ -113,6 +113,9 @@ export default function App() {
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '' });
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
 
+  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
+  const [showReportFilters, setShowReportFilters] = useState(false);
+
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
 
@@ -1362,8 +1365,12 @@ export default function App() {
         head: [headers],
         body: data,
         startY: 20,
-        styles: { fontSize: 8 },
-        headStyles: { fillColor: [5, 150, 105] }
+        styles: { fontSize: 7 },
+        headStyles: { fillColor: [5, 150, 105] },
+        didParseCell: (data) => {
+          // Apply bold styling to total rows in PDF if possible
+          // autoTable doesn't easily support row-level styling based on content here without more complex logic
+        }
       });
       doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
     };
@@ -1447,7 +1454,17 @@ export default function App() {
       };
     });
 
-    const sortedData = [...comprehensiveReportData].sort((a, b) => {
+    // Filtering
+    const filteredData = comprehensiveReportData.filter(row => {
+      return (
+        (!reportFilters.scheme || row.scheme === reportFilters.scheme) &&
+        (!reportFilters.sector || row.sector === reportFilters.sector) &&
+        (!reportFilters.activity || row.activity === reportFilters.activity) &&
+        (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity)
+      );
+    });
+
+    const sortedData = [...filteredData].sort((a, b) => {
       if (a.scheme !== b.scheme) return a.scheme.localeCompare(b.scheme);
       if (a.sector !== b.sector) return a.sector.localeCompare(b.sector);
       if (a.activity !== b.activity) return a.activity.localeCompare(b.activity);
@@ -1455,51 +1472,101 @@ export default function App() {
     });
 
     const groupedData = [];
+    let grandTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
+    
     let currentScheme = null;
-    let schemeTotal = { allocated: 0, expenditure: 0, remaining: 0, totalBudget: 0 };
+    let schemeTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
+    
+    let currentSector = null;
+    let sectorTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
+    
+    let currentActivity = null;
+    let activityTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
+    
+    let currentSubActivity = null;
+    let subActivityTotal = { totalBudget: 0, allocated: 0, toBeAllocated: 0, expenditure: 0, remaining: 0 };
 
-    sortedData.forEach(row => {
-      if (currentScheme !== null && currentScheme !== row.scheme) {
-        groupedData.push({ 
-          range: '', 
-          scheme: `${currentScheme} Total`, 
-          sector: '', 
-          activity: '', 
-          subActivity: '', 
-          soe: '', 
-          ...schemeTotal, 
-          isTotal: true 
-        });
-        schemeTotal = { allocated: 0, expenditure: 0, remaining: 0, totalBudget: 0 };
+    const addTotals = (target, source) => {
+      target.totalBudget += source.totalBudget;
+      target.allocated += source.allocated;
+      target.toBeAllocated += source.toBeAllocated;
+      target.expenditure += source.expenditure;
+      target.remaining += source.remaining;
+    };
+
+    const resetTotal = (t) => {
+      t.totalBudget = 0;
+      t.allocated = 0;
+      t.toBeAllocated = 0;
+      t.expenditure = 0;
+      t.remaining = 0;
+    };
+
+    sortedData.forEach((row, idx) => {
+      const toBeAllocated = row.totalBudget - row.allocated;
+      const rowWithCalc = { ...row, toBeAllocated };
+
+      if (idx > 0) {
+        if (row.subActivity !== currentSubActivity || row.activity !== currentActivity || row.sector !== currentSector || row.scheme !== currentScheme) {
+          groupedData.push({ ...subActivityTotal, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
+          resetTotal(subActivityTotal);
+        }
+        if (row.activity !== currentActivity || row.sector !== currentSector || row.scheme !== currentScheme) {
+          groupedData.push({ ...activityTotal, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
+          resetTotal(activityTotal);
+        }
+        if (row.sector !== currentSector || row.scheme !== currentScheme) {
+          groupedData.push({ ...sectorTotal, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
+          resetTotal(sectorTotal);
+        }
+        if (row.scheme !== currentScheme) {
+          groupedData.push({ ...schemeTotal, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
+          resetTotal(schemeTotal);
+        }
       }
+
       currentScheme = row.scheme;
-      groupedData.push(row);
-      schemeTotal.allocated += row.allocated;
-      schemeTotal.expenditure += row.expenditure;
-      schemeTotal.remaining += row.remaining;
-      schemeTotal.totalBudget += row.totalBudget;
+      currentSector = row.sector;
+      currentActivity = row.activity;
+      currentSubActivity = row.subActivity;
+
+      groupedData.push(rowWithCalc);
+      
+      addTotals(subActivityTotal, rowWithCalc);
+      addTotals(activityTotal, rowWithCalc);
+      addTotals(sectorTotal, rowWithCalc);
+      addTotals(schemeTotal, rowWithCalc);
+      addTotals(grandTotal, rowWithCalc);
     });
-    if (currentScheme !== null) {
-      groupedData.push({ 
-        range: '', 
-        scheme: `${currentScheme} Total`, 
-        sector: '', 
-        activity: '', 
-        subActivity: '', 
-        soe: '', 
-        ...schemeTotal, 
-        isTotal: true 
-      });
+
+    if (sortedData.length > 0) {
+      groupedData.push({ ...subActivityTotal, range: '', scheme: '', sector: '', activity: '', subActivity: `Total for ${currentSubActivity}`, soe: '', isTotal: true, level: 'subActivity' });
+      groupedData.push({ ...activityTotal, range: '', scheme: '', sector: '', activity: `Total for ${currentActivity}`, subActivity: '', soe: '', isTotal: true, level: 'activity' });
+      groupedData.push({ ...sectorTotal, range: '', scheme: '', sector: `Total for ${currentSector}`, activity: '', subActivity: '', soe: '', isTotal: true, level: 'sector' });
+      groupedData.push({ ...schemeTotal, range: '', scheme: `Total for ${currentScheme}`, sector: '', activity: '', subActivity: '', soe: '', isTotal: true, level: 'scheme' });
+      groupedData.push({ ...grandTotal, range: '', scheme: '', sector: '', activity: '', subActivity: '', soe: 'Grand Total', isTotal: true, level: 'grand' });
     }
 
-    const headers = userRangeId 
-      ? ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Allocated', 'Expenditure', 'Remaining']
-      : ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Total Budget', 'Allocated', 'Expenditure', 'Remaining'];
+    const isAdmin = userRole === 'admin';
+    const headers = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
+    if (!userRangeId) headers.push('Total Budget');
+    headers.push('Allocated');
+    if (isAdmin) headers.push('To be Allocated');
+    headers.push('Expenditure', 'Remaining');
     
-    const tableData = groupedData.map(row => userRangeId 
-      ? [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.allocated, row.expenditure, row.remaining]
-      : [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe, row.totalBudget, row.allocated, row.expenditure, row.remaining]
-    );
+    const tableData = groupedData.map(row => {
+      const cols = [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe];
+      if (!userRangeId) cols.push(row.totalBudget);
+      cols.push(row.allocated);
+      if (isAdmin) cols.push(row.toBeAllocated);
+      cols.push(row.expenditure, row.remaining);
+      return cols;
+    });
+
+    const uniqueSchemes = Array.from(new Set(comprehensiveReportData.map(r => r.scheme))).sort();
+    const uniqueSectors = Array.from(new Set(comprehensiveReportData.map(r => r.sector))).sort();
+    const uniqueActivities = Array.from(new Set(comprehensiveReportData.map(r => r.activity))).sort();
+    const uniqueSubActivities = Array.from(new Set(comprehensiveReportData.map(r => r.subActivity))).sort();
 
     return (
       <div className="space-y-6">
@@ -1509,6 +1576,13 @@ export default function App() {
               <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
             </h3>
             <div className="flex gap-2">
+              <button 
+                onClick={() => setShowReportFilters(!showReportFilters)}
+                className="bg-gray-100 text-gray-700 px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors"
+              >
+                <Filter className="w-4 h-4" /> {showReportFilters ? 'Hide Filters' : 'Show Filters'}
+                {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
               <button 
                 onClick={() => downloadPDF('Comprehensive Budget Report', tableData, headers)}
                 className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
@@ -1530,6 +1604,63 @@ export default function App() {
             </div>
           </div>
 
+          {showReportFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
+                <select 
+                  value={reportFilters.scheme}
+                  onChange={(e) => setReportFilters({ ...reportFilters, scheme: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                >
+                  <option value="">All Schemes</option>
+                  {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
+                <select 
+                  value={reportFilters.sector}
+                  onChange={(e) => setReportFilters({ ...reportFilters, sector: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                >
+                  <option value="">All Sectors</option>
+                  {uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
+                <select 
+                  value={reportFilters.activity}
+                  onChange={(e) => setReportFilters({ ...reportFilters, activity: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                >
+                  <option value="">All Activities</option>
+                  {uniqueActivities.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
+                <select 
+                  value={reportFilters.subActivity}
+                  onChange={(e) => setReportFilters({ ...reportFilters, subActivity: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                >
+                  <option value="">All Sub-Activities</option>
+                  {uniqueSubActivities.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="md:col-span-4 flex justify-end">
+                <button 
+                  onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '' })}
+                  className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                >
+                  Clear All Filters
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse border border-gray-300">
               <thead>
@@ -1538,23 +1669,35 @@ export default function App() {
                 </tr>
               </thead>
               <tbody>
-                {groupedData.map((row, i) => (
-                  <tr key={i} className={`border-b border-gray-300 ${row.isTotal ? 'bg-gray-100 font-bold' : 'hover:bg-gray-50'}`}>
-                    <td className="p-3 text-sm border border-gray-300">{row.range}</td>
-                    <td className="p-3 text-sm border border-gray-300">{row.scheme}</td>
-                    <td className="p-3 text-sm border border-gray-300">{row.sector}</td>
-                    <td className="p-3 text-sm border border-gray-300">{row.activity}</td>
-                    <td className="p-3 text-sm border border-gray-300">{row.subActivity}</td>
-                    <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
-                    {!userRangeId && <td className="p-3 text-sm text-right text-gray-600 border border-gray-300">₹{row.totalBudget.toLocaleString()}</td>}
-                    <td className="p-3 text-sm text-right text-emerald-700 font-medium border border-gray-300">₹{row.allocated.toLocaleString()}</td>
-                    <td className="p-3 text-sm text-right text-red-700 font-medium border border-gray-300">₹{row.expenditure.toLocaleString()}</td>
-                    <td className="p-3 text-sm text-right text-blue-700 font-bold border border-gray-300">₹{row.remaining.toLocaleString()}</td>
-                  </tr>
-                ))}
+                {groupedData.map((row, i) => {
+                  let rowClass = "border-b border-gray-300 hover:bg-gray-50";
+                  if (row.isTotal) {
+                    if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
+                    else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
+                    else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
+                    else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
+                    else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
+                  }
+
+                  return (
+                    <tr key={i} className={rowClass}>
+                      <td className="p-3 text-sm border border-gray-300">{row.range}</td>
+                      <td className="p-3 text-sm border border-gray-300">{row.scheme}</td>
+                      <td className="p-3 text-sm border border-gray-300">{row.sector}</td>
+                      <td className="p-3 text-sm border border-gray-300">{row.activity}</td>
+                      <td className="p-3 text-sm border border-gray-300">{row.subActivity}</td>
+                      <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
+                      {!userRangeId && <td className={`p-3 text-sm text-right border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
+                      <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
+                      {isAdmin && <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
+                      <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
+                      <td className={`p-3 text-sm text-right font-bold border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
                 {groupedData.length === 0 && (
                   <tr>
-                    <td colSpan={userRangeId ? 9 : 10} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected Financial Year.</td>
+                    <td colSpan={headers.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
                   </tr>
                 )}
               </tbody>
