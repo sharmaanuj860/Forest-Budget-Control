@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine, Check } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -24,8 +24,8 @@ type SubActivity = { id: string; activityId: string; name: string };
 type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; name: string };
 type SOEBudget = { id: string; soeId: string; fyId: string; approvedBudgetAmount: number; receivedInTryAmount: number };
 type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string; remarks?: string };
-type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string };
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
+type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
 
 enum OperationType {
   CREATE = 'create',
@@ -116,7 +116,7 @@ export default function App() {
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
   const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
 
   // --- State ---
@@ -134,7 +134,7 @@ export default function App() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -363,7 +363,16 @@ export default function App() {
       filtered = filtered.filter(a => a.rangeId === userRangeId);
     }
     return filtered;
-  }, [allocations, selectedFyId, userRangeId]);
+  }, [allocations, selectedFyId, userRangeId, fys]);
+
+  const baseExpenses = useMemo(() => {
+    let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
+    if (userRangeId) {
+      const userAllocIds = baseAllocations.map(a => a.id);
+      filtered = filtered.filter(e => userAllocIds.includes(e.allocationId));
+    }
+    return filtered;
+  }, [expenses, baseAllocations, selectedFyId, userRangeId, fys]);
 
   const currentAllocations = useMemo(() => {
     let filtered = baseAllocations;
@@ -418,8 +427,8 @@ export default function App() {
   const getSoeAllocated = (soeId: string) => currentAllocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
-  const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
-  const totalSpent = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const totalAllocated = baseAllocations.reduce((sum, a) => sum + a.amount, 0);
+  const totalSpent = baseExpenses.reduce((sum, e) => sum + e.amount, 0);
   const totalBudget = userRangeId ? totalAllocated : currentSoeBudgets.reduce((sum, s) => sum + (s.approvedBudgetAmount || 0), 0);
   const totalReceivedInTry = userRangeId ? 0 : currentSoeBudgets.reduce((sum, s) => sum + (s.receivedInTryAmount || 0), 0);
   const remainingBalance = totalAllocated - totalSpent;
@@ -441,24 +450,23 @@ export default function App() {
 
       const approvedBudget = budgetEntry.approvedBudgetAmount || 0;
       const receivedInTry = budgetEntry.receivedInTryAmount || 0;
-      const allocated = allocations.filter(a => 
-        a.soeId === soe.id && 
-        (a.fyId || fys[0]?.id) === selectedFyId
-      ).reduce((sum, a) => sum + a.amount, 0);
       
-      const toBeAllocated = approvedBudget - allocated;
-      const tryBalance = receivedInTry - allocated;
+      const relevantAllocations = baseAllocations.filter(a => a.soeId === soe.id);
       
-      const relevantAllocations = allocations.filter(a => 
-        a.soeId === soe.id && 
-        (a.fyId || fys[0]?.id) === selectedFyId
-      );
-      const spent = expenses.filter(e => 
-        relevantAllocations.some(a => a.id === e.allocationId) &&
-        (e.fyId || fys[0]?.id) === selectedFyId
+      // If range user and no allocations for this SOE, skip it to avoid clutter
+      if (userRangeId && relevantAllocations.length === 0) return null;
+
+      const allocated = relevantAllocations.reduce((sum, a) => sum + a.amount, 0);
+      
+      const spent = baseExpenses.filter(e => 
+        relevantAllocations.some(a => a.id === e.allocationId)
       ).reduce((sum, e) => sum + e.amount, 0);
 
       const remainingToSpend = allocated - spent;
+      
+      // For range users, division-wide budget concepts are hidden/zeroed
+      const toBeAllocated = userRangeId ? 0 : (approvedBudget - allocated);
+      const tryBalance = userRangeId ? 0 : (receivedInTry - allocated);
 
       let hierarchy = '';
       if (soe.subActivityId) {
@@ -522,9 +530,9 @@ export default function App() {
   // --- Render Functions for Tabs ---
   const renderDashboard = () => {
     const rangeAllocationMap: Record<string, any> = {};
-    currentAllocations.forEach(alloc => {
+    baseAllocations.forEach(alloc => {
       const key = `${alloc.rangeId}-${alloc.schemeId}-${alloc.sectorId}-${alloc.activityId}`;
-      const spent = currentExpenses.filter(e => e.allocationId === alloc.id).reduce((sum, e) => sum + e.amount, 0);
+      const spent = baseExpenses.filter(e => e.allocationId === alloc.id).reduce((sum, e) => sum + e.amount, 0);
       
       if (rangeAllocationMap[key]) {
         const existing = rangeAllocationMap[key];
@@ -554,7 +562,7 @@ export default function App() {
     });
 
     // Group expenses by date for trend chart
-    const expensesByDate = currentExpenses.reduce((acc, exp) => {
+    const expensesByDate = baseExpenses.reduce((acc, exp) => {
       acc[exp.date] = (acc[exp.date] || 0) + exp.amount;
       return acc;
     }, {} as Record<string, number>);
@@ -565,9 +573,9 @@ export default function App() {
     }));
 
     const schemeSummary = currentSchemes.map(sch => {
-      const schAllocations = currentAllocations.filter(a => a.schemeId === sch.id);
+      const schAllocations = baseAllocations.filter(a => a.schemeId === sch.id);
       const totalAllocated = schAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = currentExpenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = baseExpenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       const schemeSoes = currentSoes.filter(s => {
         if (s.schemeId === sch.id) return true;
@@ -598,12 +606,12 @@ export default function App() {
         spent: totalSpent,
         balance: totalAllocated - totalSpent
       };
-    });
+    }).filter(s => !userRangeId || s.allocated > 0 || s.spent > 0);
 
     const sectorSummary = currentSectors.map(sec => {
-      const secAllocations = currentAllocations.filter(a => a.sectorId === sec.id);
+      const secAllocations = baseAllocations.filter(a => a.sectorId === sec.id);
       const totalAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = currentExpenses.filter(e => secAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = baseExpenses.filter(e => secAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         name: sec.name,
@@ -611,15 +619,15 @@ export default function App() {
         spent: totalSpent,
         balance: totalAllocated - totalSpent
       };
-    });
+    }).filter(s => !userRangeId || s.allocated > 0 || s.spent > 0);
 
     const activitySummary = currentActivities.map(act => {
       const sec = currentSectors.find(s => s.id === act.sectorId);
       const sch = currentSchemes.find(s => s.id === (sec ? sec.schemeId : act.schemeId));
 
-      const actAllocations = currentAllocations.filter(a => a.activityId === act.id);
+      const actAllocations = baseAllocations.filter(a => a.activityId === act.id);
       const totalAllocated = actAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const totalSpent = currentExpenses.filter(e => actAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
+      const totalSpent = baseExpenses.filter(e => actAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
       return {
         scheme: sch?.name || 'N/A',
@@ -629,7 +637,7 @@ export default function App() {
         spent: totalSpent,
         balance: totalAllocated - totalSpent
       };
-    }).sort((a, b) => {
+    }).filter(a => !userRangeId || a.allocated > 0 || a.spent > 0).sort((a, b) => {
       const aHasEntry = a.allocated > 0 || a.spent > 0 ? 1 : 0;
       const bHasEntry = b.allocated > 0 || b.spent > 0 ? 1 : 0;
       if (aHasEntry !== bHasEntry) return bHasEntry - aHasEntry;
@@ -767,13 +775,13 @@ export default function App() {
                 <tr className="bg-gray-50 text-gray-600 font-semibold">
                   <th className="p-3 border-b">Hierarchy (Scheme &gt; Sector &gt; Activity)</th>
                   <th className="p-3 border-b">SOE Head</th>
-                  <th className="p-3 border-b text-right">Approved Budget</th>
-                  <th className="p-3 border-b text-right">Received in Try</th>
+                  {!userRangeId && <th className="p-3 border-b text-right">Approved Budget</th>}
+                  {!userRangeId && <th className="p-3 border-b text-right">Received in Try</th>}
                   <th className="p-3 border-b text-right">Allocated</th>
-                  <th className="p-3 border-b text-right">To Be Allocated</th>
-                  <th className="p-3 border-b text-right">Try Balance</th>
+                  {!userRangeId && <th className="p-3 border-b text-right">To Be Allocated</th>}
+                  {!userRangeId && <th className="p-3 border-b text-right">Try Balance</th>}
                   <th className="p-3 border-b text-right">Spent</th>
-                  <th className="p-3 border-b text-right">Remaining to Spend</th>
+                  <th className="p-3 border-b text-right">Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -781,15 +789,19 @@ export default function App() {
                   <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
                     <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
                     <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
-                    <td className="p-3 text-right text-gray-700">₹{item.approvedBudget.toLocaleString()}</td>
-                    <td className="p-3 text-right text-indigo-600">₹{item.receivedInTry.toLocaleString()}</td>
+                    {!userRangeId && <td className="p-3 text-right text-gray-700">₹{item.approvedBudget.toLocaleString()}</td>}
+                    {!userRangeId && <td className="p-3 text-right text-indigo-600">₹{item.receivedInTry.toLocaleString()}</td>}
                     <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
-                    <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
-                      ₹{item.toBeAllocated.toLocaleString()}
-                    </td>
-                    <td className={`p-3 text-right font-bold ${item.tryBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                      ₹{item.tryBalance.toLocaleString()}
-                    </td>
+                    {!userRangeId && (
+                      <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        ₹{item.toBeAllocated.toLocaleString()}
+                      </td>
+                    )}
+                    {!userRangeId && (
+                      <td className={`p-3 text-right font-bold ${item.tryBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        ₹{item.tryBalance.toLocaleString()}
+                      </td>
+                    )}
                     <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
                     <td className={`p-3 text-right font-bold ${item.remainingToSpend > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                       ₹{item.remainingToSpend.toLocaleString()}
@@ -798,7 +810,7 @@ export default function App() {
                 ))}
                 {soeDashboardSummary.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-4 text-center text-gray-500">No SOE data matching current selection.</td>
+                    <td colSpan={userRangeId ? 5 : 9} className="p-4 text-center text-gray-500">No SOE data matching current selection.</td>
                   </tr>
                 )}
               </tbody>
@@ -1139,7 +1151,8 @@ export default function App() {
     formContent: React.ReactNode,
     onEdit: (item: any) => void,
     canEditDelete?: (item: any) => boolean,
-    extraContent?: React.ReactNode
+    extraContent?: React.ReactNode,
+    customActions?: (item: any) => React.ReactNode
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -1219,16 +1232,17 @@ export default function App() {
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
+                {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {filteredItems.map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && (
+                  {(canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && (
                     <td className="p-3 text-right flex justify-end gap-2">
-                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) && (
+                      {customActions && customActions(item)}
+                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) && (
                         <>
                           <button 
                             onClick={() => {
@@ -1253,7 +1267,7 @@ export default function App() {
                   )}
                 </tr>
               ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
+              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || title === 'Expenditure')) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1506,6 +1520,14 @@ export default function App() {
     }
   };
 
+  const handleUpdateExpenseStatus = async (expenseId: string, status: 'approved' | 'rejected' | 'pending', isLocked: boolean) => {
+    try {
+      await updateDoc(doc(db, 'expenditures', expenseId), { status, isLocked });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
+    }
+  };
+
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
     const allocationId = e.target.allocationId.value;
@@ -1538,7 +1560,18 @@ export default function App() {
         await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId, fyId: targetFyId, rangeId: alloc.rangeId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'expenditures'), { allocationId, amount, date, description, activityId, createdBy: user.uid, fyId: targetFyId, rangeId: alloc.rangeId });
+        await addDoc(collection(db, 'expenditures'), { 
+          allocationId, 
+          amount, 
+          date, 
+          description, 
+          activityId, 
+          createdBy: user.uid, 
+          fyId: targetFyId, 
+          rangeId: alloc.rangeId,
+          status: 'pending',
+          isLocked: false
+        });
       }
       e.target.reset();
     } catch (error) {
@@ -1563,7 +1596,7 @@ export default function App() {
     }
   };
 
-  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
+  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: newRole });
     } catch (error) {
@@ -1659,11 +1692,12 @@ export default function App() {
           />
           <select 
             value={newUserRole}
-            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
+            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
             className="p-2 border rounded"
           >
             <option value="admin">Admin</option>
             <option value="deo">DEO</option>
+            <option value="approver">DA</option>
             <option value="Sarahan">Sarahan</option>
             <option value="Narag">Narag</option>
             <option value="Habban">Habban</option>
@@ -1693,11 +1727,12 @@ export default function App() {
                 <td className="p-3">
                   <select 
                     value={u.role} 
-                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
+                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
                     className="p-1 border rounded text-sm"
                   >
                     <option value="admin">Admin</option>
                     <option value="deo">DEO</option>
+                    <option value="approver">DA</option>
                     <option value="Sarahan">Sarahan</option>
                     <option value="Narag">Narag</option>
                     <option value="Habban">Habban</option>
@@ -1798,7 +1833,7 @@ export default function App() {
       zip.file("expenses.csv", expCsv);
 
       // 3. SOE Summary (Admin/DEO only)
-      if (userRole === 'admin' || userRole === 'deo') {
+      if (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') {
         const soeHeaders = ['SOE ID', 'Name', 'Approved Budget', 'Received in TRY', 'Allocated', 'Spent', 'Remaining'];
         const soeData = currentSoes.map(s => {
           const allocated = getSoeAllocated(s.id);
@@ -1829,7 +1864,7 @@ export default function App() {
       const budget = currentSoeBudgets.find(b => b.soeId === soe?.id);
       const totalBudget = userRangeId ? a.amount : (budget?.approvedBudgetAmount || 0);
       const allocated = a.amount;
-      const expenditure = currentExpenses.filter(e => e.allocationId === a.id).reduce((sum, e) => sum + e.amount, 0);
+      const expenditure = currentExpenses.filter(e => e.allocationId === a.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
 
       return {
@@ -1992,18 +2027,18 @@ export default function App() {
       r.hierarchy, r.soeName, r.approvedBudget, r.receivedInTry, r.allocated, r.toBeAllocated, r.tryBalance, r.expenditure, r.remaining
     ]);
 
-    const isAdmin = userRole === 'admin';
+    const isGlobalUser = userRole === 'admin' || userRole === 'deo' || userRole === 'approver';
     const detailedHeaders = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
     if (!userRangeId) detailedHeaders.push('Total Budget');
     detailedHeaders.push('Allocated');
-    if (isAdmin) detailedHeaders.push('To be Allocated');
+    if (isGlobalUser) detailedHeaders.push('To be Allocated');
     detailedHeaders.push('Expenditure', 'Remaining');
     
     const detailedTableData = groupedData.map(row => {
       const cols = [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe];
       if (!userRangeId) cols.push(row.totalBudget);
       cols.push(row.allocated);
-      if (isAdmin) cols.push(row.toBeAllocated);
+      if (isGlobalUser) cols.push(row.toBeAllocated);
       cols.push(row.expenditure, row.remaining);
       return cols;
     });
@@ -2029,13 +2064,13 @@ export default function App() {
                 {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
               </button>
               <button 
-                onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
+                onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
                 className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export PDF
               </button>
               <button 
-                onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
+                onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
                 className="bg-emerald-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
               >
                 <Download className="w-4 h-4" /> Export Excel
@@ -2107,7 +2142,7 @@ export default function App() {
           )}
 
           {/* SOE Abstract Summary Table */}
-          {(userRole === 'admin' || userRole === 'deo') && (
+          {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver') && (
             <div className="mb-10">
               <div 
                 className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
@@ -2189,7 +2224,7 @@ export default function App() {
                       <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
                       {!userRangeId && <td className={`p-3 text-sm text-right border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
                       <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
-                      {isAdmin && <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
+                      {isGlobalUser && <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
                       <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
                       <td className={`p-3 text-sm text-right font-bold border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
                     </tr>
@@ -2211,7 +2246,7 @@ export default function App() {
   };
 
   const renderSchemeWiseLedger = () => {
-    if (userRole !== 'admin' && userRole !== 'deo') return null;
+    if (userRole !== 'admin' && userRole !== 'deo' && userRole !== 'approver') return null;
 
     // Group allocations and expenditures by Hierarchy + SOE Head
     const ledgerGroups: Record<string, { hierarchy: string, soeName: string, totalAllocation: number, items: any[] }> = {};
@@ -2288,7 +2323,8 @@ export default function App() {
       if (ledgerGroups[key]) {
         ledgerGroups[key].items.push({
           date: exp.date,
-          expenditure: exp.amount
+          expenditure: exp.amount,
+          status: exp.status || 'pending'
         });
       }
     });
@@ -2327,6 +2363,7 @@ export default function App() {
                         <th className="p-2 border-r border-gray-200">Date</th>
                         <th className="p-2 border-r border-gray-200 text-right">Allocation</th>
                         <th className="p-2 border-r border-gray-200 text-right">Expenditure</th>
+                        <th className="p-2 border-r border-gray-200 text-center">Status</th>
                         <th className="p-2 text-right">Balance</th>
                       </tr>
                     </thead>
@@ -2337,18 +2374,31 @@ export default function App() {
                         <td className="p-2 border-r border-gray-200 text-gray-500 italic">Allocation Date</td>
                         <td className="p-2 border-r border-gray-200 text-right font-medium text-emerald-600">₹{group.totalAllocation.toLocaleString()}</td>
                         <td className="p-2 border-r border-gray-200 text-right text-gray-400">-</td>
+                        <td className="p-2 border-r border-gray-200 text-center text-gray-400">-</td>
                         <td className="p-2 text-right font-bold text-blue-600">₹{runningBalance.toLocaleString()}</td>
                       </tr>
                       {/* Row 2+: Expenditures */}
                       {sortedItems.map((item, i) => {
-                        runningBalance -= item.expenditure;
-                        totalExp += item.expenditure;
+                        const isRejected = item.status === 'rejected';
+                        if (!isRejected) {
+                          runningBalance -= item.expenditure;
+                          totalExp += item.expenditure;
+                        }
                         return (
-                          <tr key={i} className="border-b border-gray-200 hover:bg-gray-50">
+                          <tr key={i} className={`border-b border-gray-200 hover:bg-gray-50 ${isRejected ? 'opacity-50 grayscale' : ''}`}>
                             <td className="p-2 border-r border-gray-200 text-center">{i + 2}</td>
                             <td className="p-2 border-r border-gray-200">{item.date ? item.date.split('-').reverse().join('/') : ''}</td>
                             <td className="p-2 border-r border-gray-200 text-right text-gray-400">-</td>
                             <td className="p-2 border-r border-gray-200 text-right font-medium text-red-600">₹{item.expenditure.toLocaleString()}</td>
+                            <td className="p-2 border-r border-gray-200 text-center">
+                              <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full ${
+                                item.status === 'approved' ? 'bg-green-100 text-green-800' : 
+                                item.status === 'rejected' ? 'bg-red-100 text-red-800' : 
+                                'bg-yellow-100 text-yellow-800'
+                              }`}>
+                                {item.status}
+                              </span>
+                            </td>
                             <td className="p-2 text-right font-bold text-blue-600">₹{runningBalance.toLocaleString()}</td>
                           </tr>
                         );
@@ -2359,6 +2409,7 @@ export default function App() {
                         <td colSpan={2} className="p-2 border-r border-gray-200 text-right">Total</td>
                         <td className="p-2 border-r border-gray-200 text-right text-emerald-700">₹{group.totalAllocation.toLocaleString()}</td>
                         <td className="p-2 border-r border-gray-200 text-right text-red-700">₹{totalExp.toLocaleString()}</td>
+                        <td className="p-2 border-r border-gray-200 text-center text-gray-400">-</td>
                         <td className="p-2 text-right text-blue-700">₹{runningBalance.toLocaleString()}</td>
                       </tr>
                     </tfoot>
@@ -2861,8 +2912,8 @@ export default function App() {
             <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Allocation', item }),
-          undefined,
-          (userRole === 'admin' || userRole === 'deo') ? renderSoeAbstractTable() : renderMyRangeSummaryTable()
+          (item) => userRole === 'admin' || userRole === 'deo',
+          (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? renderSoeAbstractTable() : renderMyRangeSummaryTable()
         )}
 
         {activeTab === 'Expenditures' && (
@@ -2996,6 +3047,18 @@ export default function App() {
                   );
                 }},
                 {key: 'description', label: 'Description'},
+                {key: 'status', label: 'Status', render: (val) => {
+                  const colors = {
+                    pending: 'bg-yellow-100 text-yellow-800',
+                    approved: 'bg-green-100 text-green-800',
+                    rejected: 'bg-red-100 text-red-800'
+                  };
+                  return (
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${colors[val as keyof typeof colors] || 'bg-gray-100'}`}>
+                      {val || 'pending'}
+                    </span>
+                  );
+                }},
                 {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
                 {key: 'balance', label: 'Balance', 
                   searchableText: (_, item) => {
@@ -3027,13 +3090,46 @@ export default function App() {
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Expenditure', item }),
               (item) => {
-                if (userRole === 'admin' || userRole === 'deo') return true;
+                if (item.isLocked) return false;
+                if (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') return true;
                 if (userRangeId) {
                   const alloc = allocations.find(a => a.id === item.allocationId);
                   return alloc?.rangeId === userRangeId;
                 }
                 return item.createdBy === user?.uid;
-              }
+              },
+              undefined,
+              (item) => (
+                <div className="flex gap-1">
+                  {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin') && (
+                    <>
+                      <button 
+                        onClick={() => handleUpdateExpenseStatus(item.id, 'approved', true)}
+                        className="text-green-600 hover:text-green-800 p-1"
+                        title="Approve"
+                      >
+                        <Check className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleUpdateExpenseStatus(item.id, 'rejected', false)}
+                        className="text-red-600 hover:text-red-800 p-1"
+                        title="Reject"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </>
+                  )}
+                  {item.isLocked && userRole === 'admin' && (
+                    <button 
+                      onClick={() => handleUpdateExpenseStatus(item.id, 'pending', false)}
+                      className="text-orange-600 hover:text-orange-800 p-1"
+                      title="Unlock"
+                    >
+                      <Unlock className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              )
             )}
           </div>
         )}
