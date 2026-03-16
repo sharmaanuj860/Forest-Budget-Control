@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine, Check } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -22,8 +22,8 @@ type Sector = { id: string; schemeId: string; name: string };
 type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
 type SubActivity = { id: string; activityId: string; name: string };
 type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; name: string };
-type SOEBudget = { id: string; soeId: string; fyId: string; budgetLimit: number };
-type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string };
+type SOEBudget = { id: string; soeId: string; fyId: string; approvedBudgetAmount: number; receivedInTryAmount: number };
+type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string; remarks?: string };
 type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
 
@@ -77,6 +77,32 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
 }
+
+const TryUpdateInput = ({ soeId, initialValue, onUpdate }: { soeId: string, initialValue: number, onUpdate: (id: string, val: number) => void }) => {
+  const [val, setVal] = useState(initialValue);
+  
+  useEffect(() => {
+    setVal(initialValue);
+  }, [initialValue]);
+
+  return (
+    <div className="flex items-center gap-1">
+      <input 
+        type="number" 
+        value={val} 
+        onChange={(e) => setVal(parseFloat(e.target.value) || 0)}
+        className="w-24 p-1 text-xs border rounded focus:ring-1 focus:ring-indigo-500 outline-none"
+      />
+      <button 
+        onClick={() => onUpdate(soeId, val)}
+        className="p-1 bg-indigo-50 text-indigo-600 rounded hover:bg-indigo-100 transition-colors"
+        title="Update Treasury"
+      >
+        <Check className="w-3 h-3" />
+      </button>
+    </div>
+  );
+};
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
@@ -225,7 +251,16 @@ export default function App() {
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
 
     const unsubSoeBudgets = onSnapshot(collection(db, 'soeBudgets'), (snap) => {
-      setSoeBudgets(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOEBudget)));
+      setSoeBudgets(snap.docs.map(d => {
+        const data = d.data() as any;
+        const oldBudget = data.totalBudget ?? data.budgetLimit ?? data.amount ?? 0;
+        return { 
+          id: d.id, 
+          ...data, 
+          approvedBudgetAmount: data.approvedBudgetAmount ?? oldBudget,
+          receivedInTryAmount: data.receivedInTryAmount ?? oldBudget
+        } as SOEBudget;
+      }));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeBudgets'));
 
     const unsubAllocations = onSnapshot(collection(db, 'allocations'), (snap) => {
@@ -384,8 +419,10 @@ export default function App() {
 
   const totalAllocated = currentAllocations.reduce((sum, a) => sum + a.amount, 0);
   const totalSpent = currentExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalBudget = userRangeId ? totalAllocated : currentSoeBudgets.reduce((sum, s) => sum + s.budgetLimit, 0);
-  const remainingBalance = userRangeId ? totalAllocated - totalSpent : totalBudget - totalSpent;
+  const totalBudget = userRangeId ? totalAllocated : currentSoeBudgets.reduce((sum, s) => sum + (s.approvedBudgetAmount || 0), 0);
+  const totalReceivedInTry = userRangeId ? 0 : currentSoeBudgets.reduce((sum, s) => sum + (s.receivedInTryAmount || 0), 0);
+  const remainingBalance = totalAllocated - totalSpent;
+  const totalTryBalance = totalReceivedInTry - totalAllocated;
 
   const chartData = userRangeId ? [
     { name: 'Allocated (Unspent)', value: Math.max(0, totalAllocated - totalSpent), color: '#007bff' },
@@ -401,13 +438,15 @@ export default function App() {
       const soe = currentSoes.find(s => s.id === budgetEntry.soeId);
       if (!soe) return null;
 
-      const budget = budgetEntry.budgetLimit;
+      const approvedBudget = budgetEntry.approvedBudgetAmount || 0;
+      const receivedInTry = budgetEntry.receivedInTryAmount || 0;
       const allocated = allocations.filter(a => 
         a.soeId === soe.id && 
         (a.fyId || fys[0]?.id) === selectedFyId
       ).reduce((sum, a) => sum + a.amount, 0);
       
-      const toBeAllocated = budget - allocated;
+      const toBeAllocated = approvedBudget - allocated;
+      const tryBalance = receivedInTry - allocated;
       
       const relevantAllocations = allocations.filter(a => 
         a.soeId === soe.id && 
@@ -445,9 +484,11 @@ export default function App() {
         id: soe.id,
         soeName: soe.name,
         hierarchy,
-        totalBudget: budget,
+        approvedBudget,
+        receivedInTry,
         allocated,
         toBeAllocated,
+        tryBalance,
         spent,
         remainingToSpend,
         schemeId: soe.schemeId,
@@ -544,7 +585,7 @@ export default function App() {
 
       const totalSoeBudget = schemeSoes.reduce((sum, s) => {
         const b = currentSoeBudgets.find(b => b.soeId === s.id);
-        return sum + (b?.budgetLimit || 0);
+        return sum + (b?.approvedBudgetAmount || 0);
       }, 0);
 
       const displayBudget = userRangeId ? totalAllocated : totalSoeBudget;
@@ -725,9 +766,11 @@ export default function App() {
                 <tr className="bg-gray-50 text-gray-600 font-semibold">
                   <th className="p-3 border-b">Hierarchy (Scheme &gt; Sector &gt; Activity)</th>
                   <th className="p-3 border-b">SOE Head</th>
-                  <th className="p-3 border-b text-right">Total SOE Budget</th>
+                  <th className="p-3 border-b text-right">Approved Budget</th>
+                  <th className="p-3 border-b text-right">Received in Try</th>
                   <th className="p-3 border-b text-right">Allocated</th>
                   <th className="p-3 border-b text-right">To Be Allocated</th>
+                  <th className="p-3 border-b text-right">Try Balance</th>
                   <th className="p-3 border-b text-right">Spent</th>
                   <th className="p-3 border-b text-right">Remaining to Spend</th>
                 </tr>
@@ -737,10 +780,14 @@ export default function App() {
                   <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
                     <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
                     <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
-                    <td className="p-3 text-right text-gray-700">₹{item.totalBudget.toLocaleString()}</td>
+                    <td className="p-3 text-right text-gray-700">₹{item.approvedBudget.toLocaleString()}</td>
+                    <td className="p-3 text-right text-indigo-600">₹{item.receivedInTry.toLocaleString()}</td>
                     <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
                     <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                       ₹{item.toBeAllocated.toLocaleString()}
+                    </td>
+                    <td className={`p-3 text-right font-bold ${item.tryBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      ₹{item.tryBalance.toLocaleString()}
                     </td>
                     <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
                     <td className={`p-3 text-right font-bold ${item.remainingToSpend > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
@@ -958,9 +1005,11 @@ export default function App() {
               <tr className="bg-gray-50 text-gray-600 font-semibold">
                 <th className="p-3 border-b">Hierarchy</th>
                 <th className="p-3 border-b">SOE Head</th>
-                <th className="p-3 border-b text-right">Total SOE Budget</th>
+                <th className="p-3 border-b text-right">Approved Budget</th>
+                <th className="p-3 border-b text-right">Received in Try</th>
                 <th className="p-3 border-b text-right">Allocated</th>
                 <th className="p-3 border-b text-right">To Be Allocated</th>
+                <th className="p-3 border-b text-right">Try Balance</th>
                 <th className="p-3 border-b text-right">Spent</th>
                 <th className="p-3 border-b text-right">Remaining to Spend</th>
               </tr>
@@ -970,10 +1019,14 @@ export default function App() {
                 <tr key={item.id} className="border-b hover:bg-gray-50 transition-colors">
                   <td className="p-3 text-xs text-gray-500">{item.hierarchy || 'N/A'}</td>
                   <td className="p-3 font-medium text-gray-800">{item.soeName}</td>
-                  <td className="p-3 text-right text-gray-700">₹{item.totalBudget.toLocaleString()}</td>
+                  <td className="p-3 text-right text-gray-700">₹{item.approvedBudget.toLocaleString()}</td>
+                  <td className="p-3 text-right text-indigo-600">₹{item.receivedInTry.toLocaleString()}</td>
                   <td className="p-3 text-right text-blue-600">₹{item.allocated.toLocaleString()}</td>
                   <td className={`p-3 text-right font-bold ${item.toBeAllocated > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
                     ₹{item.toBeAllocated.toLocaleString()}
+                  </td>
+                  <td className={`p-3 text-right font-bold ${item.tryBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    ₹{item.tryBalance.toLocaleString()}
                   </td>
                   <td className="p-3 text-right text-red-600">₹{item.spent.toLocaleString()}</td>
                   <td className={`p-3 text-right font-bold ${item.remainingToSpend > 0 ? 'text-emerald-600' : 'text-gray-400'}`}>
@@ -1260,7 +1313,8 @@ export default function App() {
   const handleAddSoe = async (e: any) => {
     e.preventDefault();
     const name = e.target.name.value;
-    const budgetLimit = parseFloat(e.target.budgetLimit.value);
+    const approvedBudgetAmount = parseFloat(e.target.approvedBudgetAmount.value);
+    const receivedInTryAmount = parseFloat(e.target.receivedInTryAmount?.value || '0');
     const schemeId = e.target.schemeId.value || null;
     const sectorId = e.target.sectorId.value || null;
     const activityId = e.target.activityId.value || null;
@@ -1274,9 +1328,9 @@ export default function App() {
         // Find existing budget for this FY
         const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
         if (existingBudget) {
-          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { budgetLimit });
+          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { approvedBudgetAmount, receivedInTryAmount });
         } else {
-          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, budgetLimit });
+          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount, receivedInTryAmount });
         }
         setEditingItem(null);
       } else {
@@ -1298,9 +1352,9 @@ export default function App() {
         // Add or update budget for this FY
         const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
         if (existingBudget) {
-          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { budgetLimit });
+          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { approvedBudgetAmount, receivedInTryAmount });
         } else {
-          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, budgetLimit });
+          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount, receivedInTryAmount });
         }
       }
       e.target.reset();
@@ -1309,11 +1363,26 @@ export default function App() {
     }
   };
 
+  const handleUpdateTry = async (soeId: string, newTryAmount: number) => {
+    const targetFyId = selectedFyId || fys[0]?.id;
+    try {
+      const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
+      if (existingBudget) {
+        await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { receivedInTryAmount: newTryAmount });
+      } else {
+        await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount: 0, receivedInTryAmount: newTryAmount });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'soeBudgets');
+    }
+  };
+
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
     const soeId = e.target.soeId.value;
     const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
+    const remarks = e.target.remarks.value || '';
     const schemeId = e.target.schemeId.value || null;
     const sectorId = e.target.sectorId.value || null;
     const activityId = e.target.activityId.value || null;
@@ -1327,7 +1396,7 @@ export default function App() {
     
     const soe = soes.find(s => s.id === soeId);
     if (!soe) return;
-    const soeBudget = currentSoeBudgets.find(b => b.soeId === soeId)?.budgetLimit || 0;
+    const soeBudget = currentSoeBudgets.find(b => b.soeId === soeId)?.approvedBudgetAmount || 0;
 
     const currentAllocated = baseAllocations
       .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
@@ -1336,16 +1405,16 @@ export default function App() {
     const remainingBudget = soeBudget - currentAllocated;
 
     if (amount > remainingBudget) {
-      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining SOE budget of ₹${remainingBudget.toLocaleString()}.`);
+      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Approved Budget of ₹${remainingBudget.toLocaleString()}.`);
       return;
     }
 
     try {
       if (editingItem?.type === 'Allocation') {
-        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
+        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
+        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
       }
       e.target.reset();
     } catch (error) {
@@ -1643,7 +1712,10 @@ export default function App() {
       const soeData = currentSoes.map(s => {
         const allocated = getSoeAllocated(s.id);
         const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
-        return [s.id, s.name, currentSoeBudgets.find(b => b.soeId === s.id)?.budgetLimit || 0, allocated, spent, (currentSoeBudgets.find(b => b.soeId === s.id)?.budgetLimit || 0) - allocated];
+        const budget = currentSoeBudgets.find(b => b.soeId === s.id);
+        const approved = budget?.approvedBudgetAmount || 0;
+        const received = budget?.receivedInTryAmount || 0;
+        return [s.id, s.name, approved, received, allocated, spent, approved - allocated];
       });
       const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
       const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
@@ -1662,7 +1734,8 @@ export default function App() {
       let sec = sectors.find(s => s.id === a.sectorId);
       let sch = schemes.find(s => s.id === a.schemeId);
 
-      const totalBudget = userRangeId ? a.amount : (currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0);
+      const budget = currentSoeBudgets.find(b => b.soeId === soe?.id);
+      const totalBudget = userRangeId ? a.amount : (budget?.approvedBudgetAmount || 0);
       const allocated = a.amount;
       const expenditure = currentExpenses.filter(e => e.allocationId === a.id).reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
@@ -1822,9 +1895,9 @@ export default function App() {
       remaining: r.remainingToSpend // Rename for report consistency
     })).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
 
-    const abstractHeaders = ['Hierarchy', 'Name of SOE', 'Total SOE Budget', 'Allocated', 'To be Allocated', 'Expenditure', 'Remaining'];
+    const abstractHeaders = ['Hierarchy', 'Name of SOE', 'Approved Budget', 'Received in Try', 'Allocated', 'To be Allocated', 'Try Balance', 'Expenditure', 'Remaining'];
     const abstractTableData = abstractRows.map(r => [
-      r.hierarchy, r.soeName, r.totalBudget, r.allocated, r.toBeAllocated, r.expenditure, r.remaining
+      r.hierarchy, r.soeName, r.approvedBudget, r.receivedInTry, r.allocated, r.toBeAllocated, r.tryBalance, r.expenditure, r.remaining
     ]);
 
     const isAdmin = userRole === 'admin';
@@ -1958,16 +2031,18 @@ export default function App() {
                     <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
                       <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
                       <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.totalBudget.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                      <td className="p-3 text-xs border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
                       <td className="p-3 text-xs border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
                     </tr>
                   ))}
                   {abstractRows.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
+                      <td colSpan={9} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
                     </tr>
                   )}
                 </tbody>
@@ -2383,13 +2458,17 @@ export default function App() {
               return <span className="text-xs text-gray-500">{hierarchy || 'Global (No Hierarchy)'}</span>;
             }},
             {key: 'name', label: 'SOE Name'},
-            {key: 'budgetLimit', label: 'Budget Limit', searchableText: (val, item) => String(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0), render: (_, item) => `₹${(currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0).toLocaleString()}`},
+            {key: 'approvedBudgetAmount', label: 'Approved Budget', searchableText: (val, item) => String(currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0), render: (_, item) => `₹${(currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0).toLocaleString()}`},
+            {key: 'receivedInTryAmount', label: 'Received in TRY', render: (_, item) => {
+                const budget = currentSoeBudgets.find(b => b.soeId === item.id);
+                return <TryUpdateInput soeId={item.id} initialValue={budget?.receivedInTryAmount || 0} onUpdate={handleUpdateTry} />;
+            }},
             {key: 'allocated', label: 'Allocated', render: (_, item) => {
                 const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
                 return `₹${allocated.toLocaleString()}`;
             }},
-            {key: 'remaining', label: 'Remaining', render: (_, item) => {
-                const limit = currentSoeBudgets.find(b => b.soeId === item.id)?.budgetLimit || 0;
+            {key: 'remaining', label: 'To Be Allocated', render: (_, item) => {
+                const limit = currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0;
                 const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
                 return `₹${(limit - allocated).toLocaleString()}`;
             }}
@@ -2401,7 +2480,10 @@ export default function App() {
             editingItem={editingItem} type="SOE Head"
           >
             <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
-            <input name="budgetLimit" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.budgetLimit || '') : ''} placeholder="Budget Limit (₹)" className="w-full p-2 border rounded" />
+            <div className="grid grid-cols-2 gap-2">
+              <input name="approvedBudgetAmount" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.approvedBudgetAmount || '') : ''} placeholder="Approved Budget (₹)" className="w-full p-2 border rounded" />
+              <input name="receivedInTryAmount" type="number" defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.receivedInTryAmount || '') : ''} placeholder="Received in TRY (₹)" className="w-full p-2 border rounded" />
+            </div>
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'SOE Head', item })
         )}
@@ -2456,47 +2538,37 @@ export default function App() {
               render: (val, item) => {
               const soe = soes.find(s => s.id === item.soeId);
               const totalAllocatedForSoe = getSoeAllocated(item.soeId);
-              const remaining = (currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0) - totalAllocatedForSoe;
+              const budget = currentSoeBudgets.find(b => b.soeId === soe?.id);
+              const approvedLimit = budget?.approvedBudgetAmount || 0;
+              const receivedLimit = budget?.receivedInTryAmount || 0;
+              const remaining = approvedLimit - totalAllocatedForSoe;
               
-              const parentId = item.subActivityId || item.activityId;
-              const isSub = !!item.subActivityId;
-              
-              const relatedAllocs = currentAllocations.filter(a => {
-                const aParentId = a.subActivityId || a.activityId;
-                const aIsSub = !!a.subActivityId;
-                return a.rangeId === item.rangeId && aParentId === parentId && aIsSub === isSub;
-              });
-              
-              const totalForParentRange = relatedAllocs.reduce((sum, a) => sum + a.amount, 0);
-              const breakdown = relatedAllocs.map(a => {
-                const aSoe = soes.find(s => s.id === a.soeId);
-                return `${aSoe?.name} ${a.amount}`;
-              }).join(', ');
-
               return (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-gray-600">Allocated to Range:</span>
-                    <span className="text-emerald-600 font-bold text-base">₹{val.toLocaleString()}</span>
+                    <div className="flex flex-col items-end">
+                      <span className="text-emerald-600 font-bold text-base">₹{val.toLocaleString()}</span>
+                      {item.remarks && <span className="text-[10px] text-gray-400 italic max-w-[150px] truncate" title={item.remarks}>"{item.remarks}"</span>}
+                    </div>
                   </div>
                   <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
                     <div className="flex justify-between mb-1">
-                      <span>SOE Total Budget:</span>
-                      <span className="font-medium">₹{(currentSoeBudgets.find(b => b.soeId === soe?.id)?.budgetLimit || 0).toLocaleString()}</span>
+                      <span>Approved Budget:</span>
+                      <span className="font-medium">₹{approvedLimit.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between mb-1">
+                      <span>Received in TRY:</span>
+                      <span className="font-medium text-indigo-600">₹{receivedLimit.toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between mb-1">
                       <span>Total Allocated (All Ranges):</span>
                       <span className="font-medium text-blue-600">₹{totalAllocatedForSoe.toLocaleString()}</span>
                     </div>
                     <div className="flex justify-between border-t pt-1 mt-1">
-                      <span className="font-semibold">SOE Balance:</span>
+                      <span className="font-semibold">To Be Allocated:</span>
                       <span className={`font-bold ${remaining < 0 ? 'text-red-600' : 'text-emerald-600'}`}>₹{remaining.toLocaleString()}</span>
                     </div>
-                  </div>
-                  <div className="text-[10px] text-gray-400 bg-gray-50 p-1 rounded">
-                    <div className="font-semibold text-gray-600">Range Summary:</div>
-                    <div>{breakdown}</div>
-                    <div className="border-t mt-1 pt-1 font-bold">Total: ₹{totalForParentRange.toLocaleString()}</div>
                   </div>
                 </div>
               );
@@ -2514,6 +2586,7 @@ export default function App() {
               {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
             <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+            <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Allocation', item }),
           undefined,
@@ -3010,9 +3083,11 @@ function CascadingDropdowns({
                 const totalAllocated = allocations
                   .filter((a: any) => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
                   .reduce((sum: number, a: any) => sum + a.amount, 0);
-                const limit = soeBudgets.find((b: any) => b.soeId === soe?.id)?.budgetLimit || 0;
+                const budget = soeBudgets.find((b: any) => b.soeId === soe?.id);
+                const limit = budget?.approvedBudgetAmount || 0;
+                const received = budget?.receivedInTryAmount || 0;
                 const remaining = limit - totalAllocated;
-                return `Budget Limit: ₹${limit.toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
+                return `Approved Budget: ₹${limit.toLocaleString()} | Received in TRY: ₹${received.toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
               })()}
             </div>
           )}
