@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -482,11 +482,12 @@ export default function App() {
   }, [user]);
 
   // --- Derived Data / Helpers ---
+  const ALLOWED_SOES = ['20 OC', '21 Maint', '30MV', '33M&S', '36M&W', 'Provisional'];
   const currentSchemes = schemes;
   const currentSectors = sectors;
   const currentActivities = activities;
   const currentSubActivities = subActivities;
-  const currentSoes = useMemo(() => soes, [soes]);
+  const currentSoes = useMemo(() => soes.filter(s => ALLOWED_SOES.includes(s.name || 'Provisional')), [soes]);
 
   
   const userRangeId = useMemo(() => {
@@ -1305,106 +1306,393 @@ export default function App() {
     }
   };
 
+  const renderBudgetTracker = () => {
+    const summary = currentSchemes.map(sch => {
+      const schSoes = currentSoes.filter(s => s.schemeId === sch.id);
+      const schAllocations = baseAllocations.filter(a => a.schemeId === sch.id);
+      
+      const totalSoeBudget = schSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      const allocatedBudget = schAllocations.reduce((sum, a) => sum + a.amount, 0);
+      const toBeAllocated = totalSoeBudget - allocatedBudget;
+
+      const sectorsSummary = currentSectors.filter(sec => sec.schemeId === sch.id).map(sec => {
+        const secSoes = schSoes.filter(s => s.sectorId === sec.id);
+        const secAllocations = schAllocations.filter(a => a.sectorId === sec.id);
+        
+        const secTotalSoe = secSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+        const secAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
+        
+        return {
+          name: sec.name,
+          total: secTotalSoe,
+          allocated: secAllocated,
+          balance: secTotalSoe - secAllocated
+        };
+      }).filter(s => s.total > 0 || s.allocated > 0);
+
+      return {
+        name: sch.name,
+        total: totalSoeBudget,
+        allocated: allocatedBudget,
+        balance: toBeAllocated,
+        sectors: sectorsSummary
+      };
+    }).filter(s => s.total > 0 || s.allocated > 0);
+
+    return (
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+        {summary.map(sch => (
+          <div key={sch.name} className="bg-white p-4 rounded-xl shadow-sm border border-emerald-100 hover:border-emerald-300 transition-colors">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="font-bold text-emerald-900 truncate" title={sch.name}>{sch.name}</h4>
+              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">LIVE TRACKER</span>
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Total SOE Budget:</span>
+                <span className="font-semibold text-gray-900">₹{sch.total.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-xs">
+                <span className="text-gray-500">Allocated to Ranges:</span>
+                <span className="font-semibold text-blue-600">₹{sch.allocated.toLocaleString()}</span>
+              </div>
+              <div className="flex justify-between text-xs pt-1 border-t border-gray-50">
+                <span className="text-gray-500 font-medium">Balance to Allocate:</span>
+                <span className={`font-bold ${sch.balance > 0 ? 'text-orange-600' : 'text-emerald-600'}`}>
+                  ₹{sch.balance.toLocaleString()}
+                </span>
+              </div>
+              
+              {sch.sectors.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Sector Breakdown</p>
+                  <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                    {sch.sectors.map(sec => (
+                      <div key={sec.name} className="flex flex-col p-1.5 bg-gray-50 rounded text-[10px]">
+                        <div className="flex justify-between font-medium mb-1">
+                          <span className="truncate w-2/3">{sec.name}</span>
+                          <span className="text-emerald-700">₹{sec.total.toLocaleString()}</span>
+                        </div>
+                        <div className="flex justify-between text-gray-500">
+                          <span>Allocated: ₹{sec.allocated.toLocaleString()}</span>
+                          <span className={sec.balance > 0 ? 'text-orange-500' : 'text-gray-400'}>Bal: ₹{sec.balance.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const handleSaveAllReconciliation = async () => {
+    const allocationsToSave = baseAllocations.filter(a => 
+      a.schemeId === reconSchemeId && a.status === 'Pending SOE Funds'
+    );
+
+    // Validate all variations are 0
+    const invalid = allocationsToSave.some(alloc => {
+      const distribution = reconData[alloc.id] || {};
+      const totalDistributed = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
+      return Math.abs(alloc.amount - totalDistributed) >= 0.01;
+    });
+
+    if (invalid) {
+      alert("All rows must have zero variation before saving.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const promises = allocationsToSave.map(alloc => {
+        const distribution = reconData[alloc.id] || {};
+        const fundedSOEs = Object.entries(distribution)
+          .filter(([_, amount]) => (parseFloat(amount as string) || 0) > 0)
+          .map(([soeId, amount]) => ({ soeId, amount: parseFloat(amount as string) }));
+
+        return updateDoc(doc(db, 'allocations', alloc.id), {
+          fundedSOEs,
+          status: 'Funded'
+        });
+      });
+
+      await Promise.all(promises);
+      setReconData({});
+      alert("All reconciliations saved successfully!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'allocations');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const renderReconciliation = () => {
     const provisionalSchemes = currentSchemes.filter(scheme => 
       soes.some(soe => soe.schemeId === scheme.id && soe.isProvisional)
     );
 
-    const provisionalAllocations = baseAllocations.filter(a => 
+    const allocationsToReconcile = baseAllocations.filter(a => 
       a.schemeId === reconSchemeId && a.status === 'Pending SOE Funds'
     );
 
-    const realSoes = soes.filter(soe => soe.schemeId === reconSchemeId && !soe.isProvisional);
+    // Define the 4 SOE columns as requested
+    const targetSoeNames = ['20 OC', '36 M&W', '21 Maint', '30MV']; // Mapping 36 M&S to 36 M&W if that's what's in data
+    const displaySoeNames = ['20 OC', '36 M&S', '21 Maint', '30 MV'];
+
+    // Hierarchical grouping
+    const hierarchy: any[] = [];
+    if (reconSchemeId) {
+      const scheme = currentSchemes.find(s => s.id === reconSchemeId);
+      const schemeSectors = currentSectors.filter(s => s.schemeId === reconSchemeId);
+      
+      schemeSectors.forEach(sector => {
+        const sectorActivities = currentActivities.filter(a => a.sectorId === sector.id);
+        const sectorRows: any[] = [];
+
+        sectorActivities.forEach(activity => {
+          const activitySubActivities = currentSubActivities.filter(sa => sa.activityId === activity.id);
+          const activityRows: any[] = [];
+
+          activitySubActivities.forEach(subActivity => {
+            const subActivityAllocations = allocationsToReconcile.filter(a => a.subActivityId === subActivity.id);
+            if (subActivityAllocations.length > 0) {
+              // Find SOE IDs for this sub-activity
+              const subActivitySoes = currentSoes.filter(s => s.subActivityId === subActivity.id);
+              const soeMap: Record<string, string> = {};
+              targetSoeNames.forEach((name, idx) => {
+                const found = subActivitySoes.find(s => (s.name || '').includes(name.replace(/\s/g, '')));
+                if (found) soeMap[displaySoeNames[idx]] = found.id;
+              });
+
+              activityRows.push({
+                type: 'subActivity',
+                name: subActivity.name,
+                allocations: subActivityAllocations,
+                soeMap
+              });
+            }
+          });
+
+          if (activityRows.length > 0) {
+            sectorRows.push({
+              type: 'activity',
+              name: activity.name,
+              subActivities: activityRows
+            });
+          }
+        });
+
+        if (sectorRows.length > 0) {
+          hierarchy.push({
+            type: 'sector',
+            name: sector.name,
+            activities: sectorRows
+          });
+        }
+      });
+    }
+
+    const getRowTotals = (allocId: string) => {
+      const distribution = reconData[allocId] || {};
+      const total = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
+      return total;
+    };
+
+    const isSchemeReady = allocationsToReconcile.length > 0 && allocationsToReconcile.every(a => {
+      const total = getRowTotals(a.id);
+      return Math.abs(a.amount - total) < 0.01;
+    });
 
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
-            <RefreshCcw className="w-5 h-5 text-emerald-600" />
-            Budget Reconciliation (Provisional to SOE)
-          </h2>
-          
-          <div className="max-w-md mb-6">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Select Provisional Scheme</label>
-            <select 
-              value={reconSchemeId} 
-              onChange={(e) => { setReconSchemeId(e.target.value); setReconData({}); }}
-              className="w-full p-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-            >
-              <option value="">-- Select Scheme --</option>
-              {provisionalSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-
-          {!reconSchemeId ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
-              <p className="text-gray-500">Please select a scheme to start reconciliation</p>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+              <RefreshCcw className="w-5 h-5 text-emerald-600" />
+              Budget Reconciliation (Provisional to SOE)
+            </h2>
+            <div className="flex items-center gap-4">
+              <div className="w-64">
+                <select 
+                  value={reconSchemeId} 
+                  onChange={(e) => { setReconSchemeId(e.target.value); setReconData({}); }}
+                  className="w-full p-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                >
+                  <option value="">-- Select Scheme --</option>
+                  {provisionalSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
             </div>
-          ) : provisionalAllocations.length === 0 ? (
-            <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
-              <p className="text-gray-500">No pending provisional allocations found for this scheme</p>
+          </div>
+          
+          {!reconSchemeId ? (
+            <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+              <RefreshCcw className="w-12 h-12 text-gray-300 mx-auto mb-4 animate-spin-slow" />
+              <p className="text-gray-500 font-medium">Please select a scheme to start the hierarchical reconciliation process</p>
+            </div>
+          ) : allocationsToReconcile.length === 0 ? (
+            <div className="text-center py-20 bg-gray-50 rounded-xl border-2 border-dashed border-gray-200">
+              <Check className="w-12 h-12 text-emerald-300 mx-auto mb-4" />
+              <p className="text-gray-500 font-medium">No pending provisional allocations found for this scheme. Everything is reconciled!</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
+            <div className="overflow-x-auto border rounded-xl shadow-sm">
+              <table className="w-full border-collapse text-xs">
                 <thead>
-                  <tr className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wider text-gray-600">
-                    <th className="p-3 border">Range</th>
-                    <th className="p-3 border">Lump-sum Amount</th>
-                    {realSoes.map(soe => (
-                      <th key={soe.id} className="p-3 border text-center">{soe.name}</th>
+                  <tr className="bg-emerald-800 text-white">
+                    <th className="p-3 border border-emerald-700 text-left sticky left-0 bg-emerald-800 z-10" rowSpan={2}>Hierarchy (Sector/Activity/Sub-Activity)</th>
+                    <th className="p-3 border border-emerald-700 text-center" rowSpan={2}>Approved Budget</th>
+                    <th className="p-3 border border-emerald-700 text-left" rowSpan={2}>Range Name</th>
+                    <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Amount Allocated</th>
+                    <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Budget to be Allocated</th>
+                    <th className="p-3 border border-emerald-700 text-center" colSpan={4}>SOE Distribution (Editable)</th>
+                    <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Try SOE Total</th>
+                    <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Variation</th>
+                  </tr>
+                  <tr className="bg-emerald-700 text-white">
+                    {displaySoeNames.map(name => (
+                      <th key={name} className="p-2 border border-emerald-600 text-center">{name}</th>
                     ))}
-                    <th className="p-3 border text-center">Variation</th>
-                    <th className="p-3 border text-center">Action</th>
                   </tr>
                 </thead>
-                <tbody className="text-sm">
-                  {provisionalAllocations.map(alloc => {
-                    const distribution = reconData[alloc.id] || {};
-                    const totalDistributed = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
-                    const variation = alloc.amount - totalDistributed;
-                    
-                    return (
-                      <tr key={alloc.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="p-3 border font-medium">{ranges.find(r => r.id === alloc.rangeId)?.name}</td>
-                        <td className="p-3 border font-bold text-blue-600">₹{alloc.amount.toLocaleString()}</td>
-                        {realSoes.map(soe => (
-                          <td key={soe.id} className="p-3 border">
-                            <input 
-                              type="number"
-                              value={distribution[soe.id] || ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setReconData((prev: any) => ({
-                                  ...prev,
-                                  [alloc.id]: {
-                                    ...(prev[alloc.id] || {}),
-                                    [soe.id]: val
-                                  }
-                                }));
-                              }}
-                              placeholder="0"
-                              className="w-24 p-1 border rounded text-right focus:ring-1 focus:ring-emerald-500"
-                            />
-                          </td>
-                        ))}
-                        <td className={`p-3 border text-center font-bold ${Math.abs(variation) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
-                          ₹{variation.toLocaleString()}
-                        </td>
-                        <td className="p-3 border text-center">
-                          <button
-                            disabled={Math.abs(variation) >= 0.01}
-                            onClick={() => handleSaveReconciliation(alloc.id)}
-                            className={`px-4 py-1.5 rounded text-xs font-bold transition-all ${Math.abs(variation) < 0.01 ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
-                          >
-                            Save
-                          </button>
-                        </td>
+                <tbody>
+                  {hierarchy.map((sector, sIdx) => (
+                    <React.Fragment key={sector.name}>
+                      {/* Sector Row */}
+                      <tr className="bg-gray-200 font-bold">
+                        <td className="p-2 border border-gray-300 sticky left-0 bg-gray-200 z-10" colSpan={11}>SECTOR: {sector.name}</td>
                       </tr>
-                    );
-                  })}
+                      {sector.activities.map((activity: any, aIdx: number) => (
+                        <React.Fragment key={activity.name}>
+                          {/* Activity Row */}
+                          <tr className="bg-gray-100 font-semibold italic">
+                            <td className="p-2 border border-gray-300 pl-6 sticky left-0 bg-gray-100 z-10" colSpan={11}>Activity: {activity.name}</td>
+                          </tr>
+                          {activity.subActivities.map((subActivity: any, saIdx: number) => {
+                            const subActivityAllocations = subActivity.allocations;
+                            const approvedBudget = currentSoes.filter(s => s.subActivityId === subActivityAllocations[0].subActivityId).reduce((sum, s) => sum + getReceivedInTry(s), 0);
+                            
+                            return (
+                              <React.Fragment key={subActivity.name}>
+                                {subActivityAllocations.map((alloc: any, alIdx: number) => {
+                                  const distribution = reconData[alloc.id] || {};
+                                  const tryTotal = getRowTotals(alloc.id);
+                                  const variation = alloc.amount - tryTotal;
+                                  const range = ranges.find(r => r.id === alloc.rangeId);
+                                  
+                                  return (
+                                    <tr key={alloc.id} className="hover:bg-emerald-50 transition-colors">
+                                      {alIdx === 0 && (
+                                        <td className="p-2 border border-gray-300 pl-10 sticky left-0 bg-white z-10 font-medium" rowSpan={subActivityAllocations.length}>
+                                          {subActivity.name}
+                                        </td>
+                                      )}
+                                      {alIdx === 0 && (
+                                        <td className="p-2 border border-gray-300 text-right font-bold text-emerald-700" rowSpan={subActivityAllocations.length}>
+                                          ₹{approvedBudget.toLocaleString()}
+                                        </td>
+                                      )}
+                                      <td className="p-2 border border-gray-300 italic text-gray-600">{range?.name}</td>
+                                      <td className="p-2 border border-gray-300 text-right font-bold text-blue-600">₹{alloc.amount.toLocaleString()}</td>
+                                      <td className="p-2 border border-gray-300 text-right text-gray-400">₹{(approvedBudget - alloc.amount).toLocaleString()}</td>
+                                      
+                                      {displaySoeNames.map(soeName => {
+                                        const soeId = subActivity.soeMap[soeName];
+                                        return (
+                                          <td key={soeName} className="p-1 border border-gray-300">
+                                            {soeId ? (
+                                              <input 
+                                                type="number"
+                                                value={distribution[soeId] || ''}
+                                                onChange={(e) => {
+                                                  const val = e.target.value;
+                                                  setReconData((prev: any) => ({
+                                                    ...prev,
+                                                    [alloc.id]: {
+                                                      ...(prev[alloc.id] || {}),
+                                                      [soeId]: val
+                                                    }
+                                                  }));
+                                                }}
+                                                placeholder="0"
+                                                className="w-full p-1 border-none focus:ring-1 focus:ring-emerald-500 text-right bg-transparent"
+                                              />
+                                            ) : (
+                                              <div className="text-center text-gray-300">-</div>
+                                            )}
+                                          </td>
+                                        );
+                                      })}
+                                      
+                                      <td className="p-2 border border-gray-300 text-right font-bold text-emerald-600">₹{tryTotal.toLocaleString()}</td>
+                                      <td className={`p-2 border border-gray-300 text-right font-bold ${Math.abs(variation) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                                        ₹{variation.toLocaleString()}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                                {/* Sub-Activity Total Row */}
+                                <tr className="bg-gray-50 font-bold text-[10px]">
+                                  <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total for {subActivity.name}</td>
+                                  <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + a.amount, 0).toLocaleString()}</td>
+                                  <td className="p-2 border border-gray-300" colSpan={5}></td>
+                                  <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + getRowTotals(a.id), 0).toLocaleString()}</td>
+                                  <td className="p-2 border border-gray-300"></td>
+                                </tr>
+                              </React.Fragment>
+                            );
+                          })}
+                          {/* Activity Total Row */}
+                          <tr className="bg-blue-50 font-bold text-[11px]">
+                            <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Activity: {activity.name}</td>
+                            <td className="p-2 border border-gray-300 text-right">₹{activity.subActivities.reduce((sum: number, sa: any) => sum + sa.allocations.reduce((s: number, a: any) => s + a.amount, 0), 0).toLocaleString()}</td>
+                            <td className="p-2 border border-gray-300" colSpan={7}></td>
+                          </tr>
+                        </React.Fragment>
+                      ))}
+                      {/* Sector Total Row */}
+                      <tr className="bg-emerald-50 font-bold text-xs">
+                        <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Sector: {sector.name}</td>
+                        <td className="p-2 border border-gray-300 text-right">₹{sector.activities.reduce((sum: number, act: any) => sum + act.subActivities.reduce((s: number, sa: any) => s + sa.allocations.reduce((ss: number, a: any) => ss + a.amount, 0), 0), 0).toLocaleString()}</td>
+                        <td className="p-2 border border-gray-300" colSpan={7}></td>
+                      </tr>
+                    </React.Fragment>
+                  ))}
+                  {/* Grand Total Row */}
+                  <tr className="bg-emerald-900 text-white font-bold text-sm">
+                    <td className="p-3 border border-emerald-800 text-right" colSpan={3}>GRAND TOTAL (SCHEME)</td>
+                    <td className="p-3 border border-emerald-800 text-right">₹{allocationsToReconcile.reduce((sum, a) => sum + a.amount, 0).toLocaleString()}</td>
+                    <td className="p-3 border border-emerald-800" colSpan={5}></td>
+                    <td className="p-3 border border-emerald-800 text-right">₹{allocationsToReconcile.reduce((sum, a) => sum + getRowTotals(a.id), 0).toLocaleString()}</td>
+                    <td className="p-3 border border-emerald-800 text-right">
+                      ₹{allocationsToReconcile.reduce((sum, a) => sum + (a.amount - getRowTotals(a.id)), 0).toLocaleString()}
+                    </td>
+                  </tr>
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {reconSchemeId && allocationsToReconcile.length > 0 && (
+            <div className="mt-8 flex justify-end items-center gap-6 p-6 bg-gray-50 rounded-xl border border-gray-200">
+              <div className="text-right">
+                <p className="text-xs text-gray-500 uppercase font-bold">Reconciliation Status</p>
+                <p className={`text-sm font-bold ${isSchemeReady ? 'text-green-600' : 'text-orange-600'}`}>
+                  {isSchemeReady ? '✓ All variations are zero. Ready to save.' : '⚠ Please fix variations to zero to enable saving.'}
+                </p>
+              </div>
+              <button
+                disabled={!isSchemeReady || loading}
+                onClick={handleSaveAllReconciliation}
+                className={`px-8 py-3 rounded-lg font-bold shadow-lg transition-all flex items-center gap-2 ${isSchemeReady ? 'bg-emerald-600 text-white hover:bg-emerald-700 hover:scale-105 active:scale-95' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}
+              >
+                {loading ? <RefreshCcw className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                Save All Reconciliation Data
+              </button>
             </div>
           )}
         </div>
@@ -1434,16 +1722,17 @@ export default function App() {
             {isFormExpanded && (
               <form onSubmit={handleAddSoeName} className="space-y-4">
                 <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
                   editingItem={editingItem} type="SOE Name"
                 >
-                  <input 
+                  <select 
                     name="name" 
-                    type="text" 
                     defaultValue={editingItem?.type === 'SOE Name' ? editingItem.item.name : ''} 
-                    placeholder="SOE Name (e.g. 20 OC) (Optional)" 
                     className="w-full p-2 border rounded" 
-                  />
+                  >
+                    <option value="">Select SOE Head (Optional - defaults to Provisional)</option>
+                    {ALLOWED_SOES.filter(n => n !== 'Provisional').map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
                   <div className="grid grid-cols-2 gap-2">
                     <input 
                       name="approvedBudget" 
@@ -2545,10 +2834,10 @@ export default function App() {
       return cols;
     });
 
-    const uniqueSchemes = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[0]))).filter(Boolean).sort();
-    const uniqueSectors = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[1]))).filter(Boolean).sort();
-    const uniqueActivities = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[2]))).filter(Boolean).sort();
-    const uniqueSubActivities = Array.from(new Set(soeAbstractData.map(r => r.hierarchy.split(' > ')[3]))).filter(Boolean).sort();
+    const uniqueSchemes = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[0]))).filter(Boolean).sort();
+    const uniqueSectors = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[1]))).filter(Boolean).sort();
+    const uniqueActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[2]))).filter(Boolean).sort();
+    const uniqueSubActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[3]))).filter(Boolean).sort();
 
     return (
       <div className="space-y-6">
@@ -3095,7 +3384,7 @@ export default function App() {
           </div>
           
           <div className={`${menuOpen ? 'flex' : 'hidden'} lg:flex flex-col lg:flex-row flex-wrap gap-1 p-2`}>
-            {(userRole === 'admin' ? [
+            {((userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? [
               'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
               'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports', 'Users'
             ] : [
@@ -3249,7 +3538,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -3258,57 +3547,62 @@ export default function App() {
         )}
 
         {activeTab === 'SOE Heads' && renderSOEHeads()}
-        {activeTab === 'Allocations' && renderSimpleManager(
-          'Allocation', 
-          currentAllocations, 
-          [
-            {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item)},
-            {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
-            {key: 'amount', label: 'Sanctioned Amount', render: (val) => `₹${val.toLocaleString()}`},
-            {key: 'status', label: 'Funding Status', render: (val, item) => (
-              <div className="flex flex-col">
-                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
-                  {val}
-                </span>
-                {val === 'Funded' && item.fundedSOEs && (
-                  <div className="mt-1 space-y-1">
-                    {item.fundedSOEs.map((f: any, idx: number) => (
-                      <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
-                        <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
-                        <span className="font-medium">₹{f.amount.toLocaleString()}</span>
+        {activeTab === 'Allocations' && (
+          <div className="space-y-6">
+            {renderBudgetTracker()}
+            {renderSimpleManager(
+              'Allocation', 
+              currentAllocations, 
+              [
+                {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item)},
+                {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
+                {key: 'amount', label: 'Sanctioned Amount', render: (val) => `₹${val.toLocaleString()}`},
+                {key: 'status', label: 'Funding Status', render: (val, item) => (
+                  <div className="flex flex-col">
+                    <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
+                      {val}
+                    </span>
+                    {val === 'Funded' && item.fundedSOEs && (
+                      <div className="mt-1 space-y-1">
+                        {item.fundedSOEs.map((f: any, idx: number) => (
+                          <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
+                            <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
+                            <span className="font-medium">₹{f.amount.toLocaleString()}</span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
+                )},
+                {key: 'actions', label: 'Funding', render: (_, item) => (
+                  userRole === 'admin' && item.status === 'Pending SOE Funds' && (
+                    <button
+                      onClick={() => setFundingAllocation(item)}
+                      className="bg-emerald-600 text-white px-3 py-1 rounded text-xs hover:bg-emerald-700 transition-colors"
+                    >
+                      Assign SOE Funds
+                    </button>
+                  )
                 )}
-              </div>
-            )},
-            {key: 'actions', label: 'Funding', render: (_, item) => (
-              userRole === 'admin' && item.status === 'Pending SOE Funds' && (
-                <button
-                  onClick={() => setFundingAllocation(item)}
-                  className="bg-emerald-600 text-white px-3 py-1 rounded text-xs hover:bg-emerald-700 transition-colors"
-                >
-                  Assign SOE Funds
-                </button>
-              )
+              ], 
+              handleAddAllocation, 
+              (id) => handleDelete('allocations', id), 
+              <CascadingDropdowns 
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                editingItem={editingItem} type="Allocation"
+                onSelectionChange={setAllocationFormFilters}
+              >
+                <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
+                  <option value="">Select Range</option>
+                  {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </select>
+                <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
+              </CascadingDropdowns>,
+              (item) => setEditingItem({ type: 'Allocation', item }),
+              (item) => userRole === 'admin' || userRole === 'deo'
             )}
-          ], 
-          handleAddAllocation, 
-          (id) => handleDelete('allocations', id), 
-          <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Allocation"
-            onSelectionChange={setAllocationFormFilters}
-          >
-            <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
-              <option value="">Select Range</option>
-              {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-            </select>
-            <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
-            <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
-          </CascadingDropdowns>,
-          (item) => setEditingItem({ type: 'Allocation', item }),
-          (item) => userRole === 'admin' || userRole === 'deo'
+          </div>
         )}
 
         {activeTab === 'Reconciliation' && renderReconciliation()}
@@ -3479,7 +3773,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
@@ -3536,7 +3830,7 @@ export default function App() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4 border-b pb-2">
               <h3 className="text-lg font-semibold">Passbook Ledger</h3>
-              <span className="text-sm font-medium text-emerald-600">FY {selectedFY}</span>
+              <span className="text-sm font-medium text-emerald-600">FY {fys.find(f => f.id === selectedFY)?.name || selectedFY}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -3724,24 +4018,42 @@ function CascadingDropdowns({
     ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
     : schemes;
 
-  const filteredSectors = sectors.filter((s: any) => {
-    if (s.schemeId !== schemeId) return false;
-    if (type === 'Expenditure') return allocations.some((a: any) => a.schemeId === schemeId && a.sectorId === s.id);
-    return true;
-  });
+  // Deduplicate by name to remove repeated items
+  const getUniqueByName = (items: any[]) => {
+    const seen = new Set();
+    return items.filter(item => {
+      if (!item.name) return true;
+      const duplicate = seen.has(item.name);
+      seen.add(item.name);
+      return !duplicate;
+    });
+  };
 
-  const filteredActivities = activities.filter((a: any) => {
+  const filteredSectors = getUniqueByName(sectors.filter((s: any) => {
+    if (s.schemeId !== schemeId) return false;
+    if (type === 'Expenditure' || type === 'Allocation') {
+      // For allocations and expenditures, only show sectors that have budgets (SOE Heads) or existing allocations
+      return soes.some((soe: any) => soe.sectorId === s.id) || allocations.some((a: any) => a.sectorId === s.id);
+    }
+    return true;
+  }));
+
+  const filteredActivities = getUniqueByName(activities.filter((a: any) => {
     if (sectorId && a.sectorId !== sectorId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
-    if (type === 'Expenditure') return allocations.some((al: any) => al.schemeId === schemeId && al.activityId === a.id && (!sectorId || al.sectorId === sectorId));
+    if (type === 'Expenditure' || type === 'Allocation') {
+      return soes.some((soe: any) => soe.activityId === a.id) || allocations.some((al: any) => al.activityId === a.id);
+    }
     return true;
-  });
+  }));
 
-  const filteredSubActivities = subActivities.filter((sa: any) => {
+  const filteredSubActivities = getUniqueByName(subActivities.filter((sa: any) => {
     if (sa.activityId !== activityId) return false;
-    if (type === 'Expenditure') return allocations.some((al: any) => al.schemeId === schemeId && al.activityId === activityId && al.subActivityId === sa.id && (!sectorId || al.sectorId === sectorId));
+    if (type === 'Expenditure' || type === 'Allocation') {
+      return soes.some((soe: any) => soe.subActivityId === sa.id) || allocations.some((al: any) => al.subActivityId === sa.id);
+    }
     return true;
-  });
+  }));
 
   const filteredSoes = soes.filter((s: any) => {
     if (schemeId && s.schemeId && s.schemeId !== schemeId) return false;
