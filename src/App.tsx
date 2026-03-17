@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -13,6 +13,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { preloadDatabase } from './preloadData';
+import { emergencyRestoreData } from './emergencyRestoreData';
 
 // --- Types ---
 type FinancialYear = { id: string; name: string };
@@ -21,10 +22,25 @@ type Scheme = { id: string; name: string };
 type Sector = { id: string; schemeId: string; name: string };
 type ActivityItem = { id: string; sectorId?: string; schemeId?: string; name: string };
 type SubActivity = { id: string; activityId: string; name: string };
-type SOE = { id: string; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; name: string };
-type SOEBudget = { id: string; soeId: string; fyId: string; approvedBudgetAmount: number; receivedInTryAmount: number };
-type Allocation = { id: string; soeId: string; rangeId: string; amount: number; schemeId?: string; sectorId?: string; activityId?: string; subActivityId?: string; fyId: string; remarks?: string };
-type Expense = { id: string; allocationId: string; amount: number; date: string; description: string; activityId?: string; fyId: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean; approvalId?: number };
+type SOE = { 
+  id: string; 
+  name: string; 
+  isProvisional?: boolean;
+  schemeId?: string; 
+  sectorId?: string; 
+  activityId?: string; 
+  subActivityId?: string; 
+  approvedBudget: number; 
+  receivedInTry: number;
+  fyId?: string;
+  financialYear?: string;
+  approvedBudgetAmount?: number;
+  receivedInTryAmount?: number;
+  tryAmount?: number;
+};
+
+type Allocation = { id: string; rangeId: string; schemeId: string; sectorId?: string; activityId?: string; subActivityId?: string; amount: number; status: 'Pending SOE Funds' | 'Funded'; fundedSOEs: { soeId: string; amount: number }[]; fyId?: string; financialYear?: string; remarks?: string };
+type Expense = { id: string; allocationId: string; soeId: string; amount: number; date: string; description: string; fyId?: string; financialYear?: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean; approvalId?: number };
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
 
 enum OperationType {
@@ -104,6 +120,16 @@ const TryUpdateInput = ({ soeId, initialValue, onUpdate }: { soeId: string, init
   );
 };
 
+const getApprovedBudget = (s: any) => {
+  const val = s.approvedBudget || s.approvedBudgetAmount || s.approved_budget || s.budget || 0;
+  return Number(val) || 0;
+};
+
+const getReceivedInTry = (s: any) => {
+  const val = s.receivedInTry || s.receivedInTryAmount || s.tryAmount || s.received_in_try || 0;
+  return Number(val) || 0;
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [menuOpen, setMenuOpen] = useState(false);
@@ -118,17 +144,20 @@ export default function App() {
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fundingAllocation, setFundingAllocation] = useState<Allocation | null>(null);
 
   // --- State ---
   const [fys, setFys] = useState<FinancialYear[]>([]);
-  const [selectedFyId, setSelectedFyId] = useState<string>('');
+  const [selectedFY, setSelectedFY] = useState<string>('2025-26');
   const [ranges, setRanges] = useState<Range[]>([]);
   const [schemes, setSchemes] = useState<Scheme[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [subActivities, setSubActivities] = useState<SubActivity[]>([]);
   const [soes, setSoes] = useState<SOE[]>([]);
-  const [soeBudgets, setSoeBudgets] = useState<SOEBudget[]>([]);
+  const [isSoesLoaded, setIsSoesLoaded] = useState(false);
+  const hasSeeded = React.useRef(false);
+
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -145,6 +174,8 @@ export default function App() {
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '' });
+  const [reconSchemeId, setReconSchemeId] = useState('');
+  const [reconData, setReconData] = useState<any>({});
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
@@ -222,14 +253,13 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- Real-time Data Sync ---
+  // --- Real-time Data Sync (Master Data) ---
   useEffect(() => {
     if (!user || !userRole) return;
 
     const unsubFys = onSnapshot(collection(db, 'financialYears'), (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialYear));
       setFys(data);
-      if (data.length > 0 && !selectedFyId) setSelectedFyId(data[0].id);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'financialYears'));
 
     const unsubRanges = onSnapshot(collection(db, 'ranges'), (snap) => {
@@ -252,40 +282,144 @@ export default function App() {
       setSubActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'subActivities'));
 
-    const unsubSoes = onSnapshot(collection(db, 'soeHeads'), (snap) => {
-      setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
-
-    const unsubSoeBudgets = onSnapshot(collection(db, 'soeBudgets'), (snap) => {
-      setSoeBudgets(snap.docs.map(d => {
-        const data = d.data() as any;
-        const oldBudget = data.totalBudget ?? data.budgetLimit ?? data.amount ?? 0;
-        return { 
-          id: d.id, 
-          ...data, 
-          approvedBudgetAmount: data.approvedBudgetAmount ?? oldBudget,
-          receivedInTryAmount: data.receivedInTryAmount ?? oldBudget
-        } as SOEBudget;
-      }));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeBudgets'));
-
-    const unsubAllocations = onSnapshot(collection(db, 'allocations'), (snap) => {
-      setAllocations(snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
-
-    const unsubExpenses = onSnapshot(collection(db, 'expenditures'), (snap) => {
-      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
-
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
-      unsubSubActivities(); unsubSoes(); unsubSoeBudgets(); unsubAllocations(); unsubExpenses(); unsubUsers();
+      unsubSubActivities(); unsubUsers();
     };
   }, [user, userRole]);
+
+  // --- Real-time Data Sync (Transactional Data filtered by FY) ---
+  useEffect(() => {
+    if (!user || !userRole || !selectedFY) return;
+
+    setIsSoesLoaded(false);
+
+    const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
+    const fyQueryValues = activeFy ? Array.from(new Set([activeFy.id, activeFy.name])) : [selectedFY];
+
+    const soesQuery = query(
+      collection(db, 'soeHeads'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubSoes = onSnapshot(soesQuery, (snap) => {
+      setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
+      setIsSoesLoaded(true);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
+
+    const allocsQuery = query(
+      collection(db, 'allocations'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubAllocations = onSnapshot(allocsQuery, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation));
+      console.log('Fetched allocations for FY:', fyQueryValues, 'Count:', data.length);
+      setAllocations(data);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
+
+    const expensesQuery = query(
+      collection(db, 'expenditures'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubExpenses = onSnapshot(expensesQuery, (snap) => {
+      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
+
+    return () => {
+      unsubSoes(); unsubAllocations(); unsubExpenses();
+    };
+  }, [user, userRole, selectedFY, fys]);
+
+  // --- Silent Auto-Seeding for 2025-26 ---
+  useEffect(() => {
+    if (!user || !userRole || selectedFY !== '2025-26' || !isSoesLoaded) return;
+
+    if (soes.length === 0 && !hasSeeded.current) {
+      hasSeeded.current = true;
+      const seedData = async () => {
+        try {
+          console.log("Silently seeding emergency restore data for FY 2025-26...");
+          
+          const fy = fys.find(f => f.name === '2025-26');
+          const fyId = fy ? fy.id : '2025-26';
+
+          let localSchemes = [...schemes];
+          let localSectors = [...sectors];
+          let localActivities = [...activities];
+          let localSubActivities = [...subActivities];
+
+          for (const item of emergencyRestoreData) {
+            // Determine IDs based on hierarchy string
+            let schemeId = null;
+            let sectorId = null;
+            let activityId = null;
+            let subActivityId = null;
+
+            const parts = item.hierarchy.split(' -> ');
+            
+            if (parts.length > 0) {
+              let sch = localSchemes.find(s => s.name === parts[0]);
+              if (!sch) {
+                const docRef = await addDoc(collection(db, 'schemes'), { name: parts[0] });
+                sch = { id: docRef.id, name: parts[0] };
+                localSchemes.push(sch);
+              }
+              schemeId = sch.id;
+            }
+            if (parts.length > 1) {
+              let sec = localSectors.find(s => s.name === parts[1] && s.schemeId === schemeId);
+              if (!sec) {
+                const docRef = await addDoc(collection(db, 'sectors'), { name: parts[1], schemeId });
+                sec = { id: docRef.id, name: parts[1], schemeId };
+                localSectors.push(sec);
+              }
+              sectorId = sec.id;
+            }
+            if (parts.length > 2) {
+              let act = localActivities.find(a => a.name === parts[2] && a.sectorId === sectorId);
+              if (!act) {
+                const docRef = await addDoc(collection(db, 'activities'), { name: parts[2], sectorId });
+                act = { id: docRef.id, name: parts[2], sectorId };
+                localActivities.push(act);
+              }
+              activityId = act.id;
+            }
+            if (parts.length > 3) {
+              let sa = localSubActivities.find(s => s.name === parts[3] && s.activityId === activityId);
+              if (!sa) {
+                const docRef = await addDoc(collection(db, 'subActivities'), { name: parts[3], activityId });
+                sa = { id: docRef.id, name: parts[3], activityId };
+                localSubActivities.push(sa);
+              }
+              subActivityId = sa.id;
+            }
+
+            await addDoc(collection(db, 'soeHeads'), {
+              name: item.soeName,
+              schemeId,
+              sectorId,
+              activityId,
+              subActivityId,
+              approvedBudget: item.approvedBudget,
+              approvedBudgetAmount: item.approvedBudget,
+              receivedInTry: item.receivedInTry,
+              receivedInTryAmount: item.receivedInTry,
+              tryAmount: item.receivedInTry,
+              financialYear: fyId
+            });
+          }
+          console.log("Silent seeding completed successfully.");
+        } catch (error) {
+          console.error("Failed to silently seed data:", error);
+        }
+      };
+
+      seedData();
+    }
+  }, [user, userRole, selectedFY, isSoesLoaded, soes.length, schemes, sectors, activities, subActivities, fys]);
 
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -352,35 +486,40 @@ export default function App() {
   const currentSectors = sectors;
   const currentActivities = activities;
   const currentSubActivities = subActivities;
-  const currentSoes = soes;
-  const currentSoeBudgets = useMemo(() => soeBudgets.filter(b => (b.fyId || fys[0]?.id) === selectedFyId), [soeBudgets, selectedFyId, fys]);
+  const currentSoes = useMemo(() => soes, [soes]);
+
   
   const userRangeId = useMemo(() => {
+    console.log('Calculating userRangeId. userRole:', userRole);
     if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh'].includes(userRole)) {
-      return ranges.find(r => r.name === userRole)?.id;
+      const r = ranges.find(r => r.name === userRole);
+      console.log('Found range for role:', r);
+      return r?.id;
     }
     return null;
   }, [userRole, ranges]);
 
   const baseAllocations = useMemo(() => {
-    let filtered = allocations.filter(a => (a.fyId || fys[0]?.id) === selectedFyId);
+    let filtered = allocations;
     if (userRangeId) {
       filtered = filtered.filter(a => a.rangeId === userRangeId);
     }
     return filtered;
-  }, [allocations, selectedFyId, userRangeId, fys]);
+  }, [allocations, userRangeId]);
 
   const baseExpenses = useMemo(() => {
-    let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
+    let filtered = expenses;
     if (userRangeId) {
       const userAllocIds = baseAllocations.map(a => a.id);
       filtered = filtered.filter(e => userAllocIds.includes(e.allocationId));
     }
     return filtered;
-  }, [expenses, baseAllocations, selectedFyId, userRangeId, fys]);
+  }, [expenses, baseAllocations, userRangeId]);
 
   const currentAllocations = useMemo(() => {
     let filtered = baseAllocations;
+    console.log('baseAllocations count:', baseAllocations.length);
+    console.log('allocFilters:', allocFilters);
     
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
@@ -391,11 +530,12 @@ export default function App() {
     if (allocFilters.rangeId) {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
+    console.log('currentAllocations count:', filtered.length);
     return filtered;
   }, [baseAllocations, allocFilters]);
   
   const currentExpenses = useMemo(() => {
-    let filtered = expenses.filter(e => (e.fyId || fys[0]?.id) === selectedFyId);
+    let filtered = expenses;
     
     if (userRangeId) {
       const userAllocIds = currentAllocations.map(a => a.id);
@@ -427,15 +567,15 @@ export default function App() {
     }
 
     return filtered;
-  }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId, selectedFyId]);
+  }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId]);
 
-  const getSoeAllocated = (soeId: string) => currentAllocations.filter(a => a.soeId === soeId).reduce((sum, a) => sum + a.amount, 0);
+  const getSoeAllocated = (soeId: string) => baseAllocations.reduce((sum, a) => sum + (a.fundedSOEs?.find(f => f.soeId === soeId)?.amount || 0), 0);
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
   const totalAllocated = baseAllocations.reduce((sum, a) => sum + a.amount, 0);
   const totalSpent = baseExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const totalBudget = userRangeId ? totalAllocated : currentSoeBudgets.reduce((sum, s) => sum + (s.approvedBudgetAmount || 0), 0);
-  const totalReceivedInTry = userRangeId ? 0 : currentSoeBudgets.reduce((sum, s) => sum + (s.receivedInTryAmount || 0), 0);
+  const totalBudget = userRangeId ? totalAllocated : currentSoes.reduce((sum, s) => sum + getApprovedBudget(s), 0);
+  const totalReceivedInTry = userRangeId ? 0 : currentSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
   const remainingBalance = totalAllocated - totalSpent;
   const totalTryBalance = totalReceivedInTry - totalAllocated;
 
@@ -449,69 +589,41 @@ export default function App() {
   ];
 
   const soeAbstractData = useMemo(() => {
-    return currentSoeBudgets.map(budgetEntry => {
-      const soe = currentSoes.find(s => s.id === budgetEntry.soeId);
-      if (!soe) return null;
+    return currentSoes.map(soe => {
+      const sch = schemes.find(s => s.id === soe.schemeId);
+      const sec = sectors.find(s => s.id === soe.sectorId);
+      const act = activities.find(a => a.id === soe.activityId);
+      const sa = subActivities.find(s => s.id === soe.subActivityId);
+      const hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
 
-      const approvedBudget = budgetEntry.approvedBudgetAmount || 0;
-      const receivedInTry = budgetEntry.receivedInTryAmount || 0;
-      
-      const relevantAllocations = baseAllocations.filter(a => a.soeId === soe.id);
-      
-      // If range user and no allocations for this SOE, skip it to avoid clutter
-      if (userRangeId && relevantAllocations.length === 0) return null;
+      const allocated = baseAllocations.reduce((sum, a) => {
+        const funded = a.fundedSOEs?.find(f => f.soeId === soe.id);
+        return sum + (funded?.amount || 0);
+      }, 0);
 
-      const allocated = relevantAllocations.reduce((sum, a) => sum + a.amount, 0);
-      
-      const spent = baseExpenses.filter(e => 
-        relevantAllocations.some(a => a.id === e.allocationId)
-      ).reduce((sum, e) => sum + e.amount, 0);
-
-      const remainingToSpend = allocated - spent;
-      
-      // For range users, division-wide budget concepts are hidden/zeroed
-      const toBeAllocated = userRangeId ? 0 : (approvedBudget - allocated);
-      const tryBalance = userRangeId ? 0 : (receivedInTry - allocated);
-
-      let hierarchy = '';
-      if (soe.subActivityId) {
-        const sa = subActivities.find(sa => sa.id === soe.subActivityId);
-        const act = activities.find(a => a.id === sa?.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
-      } else if (soe.activityId) {
-        const act = activities.find(a => a.id === soe.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
-      } else if (soe.sectorId) {
-        const sec = sectors.find(sec => sec.id === soe.sectorId);
-        const sch = schemes.find(sc => sc.id === sec?.schemeId);
-        hierarchy = [sch?.name, sec?.name].filter(Boolean).join(' > ');
-      } else if (soe.schemeId) {
-        const sch = schemes.find(sc => sc.id === soe.schemeId);
-        hierarchy = sch?.name || '';
-      }
+      const spent = baseExpenses.filter(e => e.soeId === soe.id).reduce((sum, e) => sum + e.amount, 0);
+      const approvedBudget = getApprovedBudget(soe);
+      const receivedInTry = getReceivedInTry(soe);
 
       return {
         id: soe.id,
+        soeId: soe.id,
         soeName: soe.name,
         hierarchy,
         approvedBudget,
         receivedInTry,
         allocated,
-        toBeAllocated,
-        tryBalance,
+        toBeAllocated: receivedInTry - allocated,
+        tryBalance: receivedInTry - allocated,
         spent,
-        remainingToSpend,
+        remainingToSpend: allocated - spent,
         schemeId: soe.schemeId,
         sectorId: soe.sectorId,
         activityId: soe.activityId,
         subActivityId: soe.subActivityId
       };
-    }).filter((item): item is NonNullable<typeof item> => item !== null).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
-  }, [currentSoeBudgets, currentSoes, allocations, expenses, selectedFyId, fys, subActivities, activities, sectors, schemes]);
+    }).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+  }, [currentSoes, baseAllocations, baseExpenses, schemes, sectors, activities, subActivities]);
 
   const soeAbstractForAllocations = useMemo(() => {
     return soeAbstractData.filter(item => {
@@ -582,25 +694,8 @@ export default function App() {
       const totalAllocated = schAllocations.reduce((sum, a) => sum + a.amount, 0);
       const totalSpent = baseExpenses.filter(e => schAllocations.some(a => a.id === e.allocationId)).reduce((sum, e) => sum + e.amount, 0);
       
-      const schemeSoes = currentSoes.filter(s => {
-        if (s.schemeId === sch.id) return true;
-        if (s.sectorId) return currentSectors.find(sec => sec.id === s.sectorId)?.schemeId === sch.id;
-        if (s.activityId) {
-          const act = currentActivities.find(a => a.id === s.activityId);
-          return act?.schemeId === sch.id || currentSectors.find(sec => sec.id === act?.sectorId)?.schemeId === sch.id;
-        }
-        if (s.subActivityId) {
-          const sa = currentSubActivities.find(sa => sa.id === s.subActivityId);
-          const act = currentActivities.find(a => a.id === sa?.activityId);
-          return act?.schemeId === sch.id || currentSectors.find(sec => sec.id === act?.sectorId)?.schemeId === sch.id;
-        }
-        return false;
-      });
-
-      const totalSoeBudget = schemeSoes.reduce((sum, s) => {
-        const b = currentSoeBudgets.find(b => b.soeId === s.id);
-        return sum + (b?.approvedBudgetAmount || 0);
-      }, 0);
+      const schemeSoes = currentSoes.filter(s => s.schemeId === sch.id);
+      const totalSoeBudget = schemeSoes.reduce((sum, s) => sum + getApprovedBudget(s), 0);
 
       const displayBudget = userRangeId ? totalAllocated : totalSoeBudget;
 
@@ -966,10 +1061,10 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {expenses.slice().reverse().slice(0, 5).map((exp) => {
+                  {currentExpenses.slice().reverse().slice(0, 5).map((exp) => {
                     const alloc = allocations.find(a => a.id === exp.allocationId);
                     const range = ranges.find(r => r.id === alloc?.rangeId);
-                    const soe = soes.find(s => s.id === alloc?.soeId);
+                    const soe = soes.find(s => s.id === exp.soeId);
                     return (
                       <tr key={exp.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="p-3">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
@@ -995,38 +1090,41 @@ export default function App() {
     const summaryMap: Record<string, { hierarchy: string, soeName: string, allocated: number, spent: number, remaining: number }> = {};
     
     currentAllocations.forEach(alloc => {
-      const soe = soes.find(s => s.id === alloc.soeId);
-      if (!soe) return;
-      
-      let hierarchy = '';
-      if (alloc.subActivityId) {
-        const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
-        const act = activities.find(a => a.id === sa?.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
-      } else if (alloc.activityId) {
-        const act = activities.find(a => a.id === alloc.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
-      }
+      alloc.fundedSOEs?.forEach(f => {
+        const soe = soes.find(s => s.id === f.soeId);
+        if (!soe) return;
+        
+        let hierarchy = '';
+        if (alloc.subActivityId) {
+          const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+          const act = activities.find(a => a.id === sa?.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+        } else if (alloc.activityId) {
+          const act = activities.find(a => a.id === alloc.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+        }
 
-      const spent = currentExpenses.filter(e => e.allocationId === alloc.id).reduce((sum, e) => sum + e.amount, 0);
+        const spent = currentExpenses.filter(e => e.allocationId === alloc.id && e.soeId === f.soeId).reduce((sum, e) => sum + e.amount, 0);
+        const key = `${alloc.id}-${f.soeId}`;
 
-      if (summaryMap[soe.id]) {
-        summaryMap[soe.id].allocated += alloc.amount;
-        summaryMap[soe.id].spent += spent;
-        summaryMap[soe.id].remaining = summaryMap[soe.id].allocated - summaryMap[soe.id].spent;
-      } else {
-        summaryMap[soe.id] = {
-          hierarchy,
-          soeName: soe.name,
-          allocated: alloc.amount,
-          spent,
-          remaining: alloc.amount - spent
-        };
-      }
+        if (summaryMap[key]) {
+          summaryMap[key].allocated += f.amount;
+          summaryMap[key].spent += spent;
+          summaryMap[key].remaining = summaryMap[key].allocated - summaryMap[key].spent;
+        } else {
+          summaryMap[key] = {
+            hierarchy,
+            soeName: soe.name,
+            allocated: f.amount,
+            spent,
+            remaining: f.amount - spent
+          };
+        }
+      });
     });
 
     const summaryData = Object.values(summaryMap).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
@@ -1148,6 +1246,298 @@ export default function App() {
       )}
     </div>
   );
+
+  const renderHierarchy = (item: any) => {
+    let hierarchy = '';
+    if (item.subActivityId) {
+      const sa = subActivities.find(sa => sa.id === item.subActivityId);
+      const act = activities.find(a => a.id === sa?.activityId);
+      const sec = sectors.find(sec => sec.id === act?.sectorId);
+      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+      hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+    } else if (item.activityId) {
+      const act = activities.find(a => a.id === item.activityId);
+      const sec = sectors.find(sec => sec.id === act?.sectorId);
+      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+      hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+    } else if (item.sectorId) {
+      const sec = sectors.find(sec => sec.id === item.sectorId);
+      const sch = schemes.find(sc => sc.id === sec?.schemeId);
+      hierarchy = [sch?.name, sec?.name].filter(Boolean).join(' -> ');
+    } else if (item.schemeId) {
+      const sch = schemes.find(sc => sc.id === item.schemeId);
+      hierarchy = sch?.name || '';
+    }
+    return <span className="text-xs text-gray-500">{hierarchy || 'Global (No Hierarchy)'}</span>;
+  };
+
+
+
+  const handleSaveReconciliation = async (allocationId: string) => {
+    const distribution = reconData[allocationId] || {};
+    const allocation = baseAllocations.find(a => a.id === allocationId);
+    if (!allocation) return;
+
+    const totalDistributed = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
+    
+    if (Math.abs(totalDistributed - allocation.amount) > 0.01) {
+      alert("Total distributed amount must match the allocated amount.");
+      return;
+    }
+
+    try {
+      const fundedSOEs = Object.entries(distribution)
+        .filter(([_, amount]) => (parseFloat(amount as string) || 0) > 0)
+        .map(([soeId, amount]) => ({ soeId, amount: parseFloat(amount as string) }));
+
+      await updateDoc(doc(db, 'allocations', allocationId), {
+        fundedSOEs,
+        status: 'Funded'
+      });
+      
+      const newReconData = { ...reconData };
+      delete newReconData[allocationId];
+      setReconData(newReconData);
+      
+      alert("Reconciliation saved successfully!");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'allocations');
+    }
+  };
+
+  const renderReconciliation = () => {
+    const provisionalSchemes = currentSchemes.filter(scheme => 
+      soes.some(soe => soe.schemeId === scheme.id && soe.isProvisional)
+    );
+
+    const provisionalAllocations = baseAllocations.filter(a => 
+      a.schemeId === reconSchemeId && a.status === 'Pending SOE Funds'
+    );
+
+    const realSoes = soes.filter(soe => soe.schemeId === reconSchemeId && !soe.isProvisional);
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+            <RefreshCcw className="w-5 h-5 text-emerald-600" />
+            Budget Reconciliation (Provisional to SOE)
+          </h2>
+          
+          <div className="max-w-md mb-6">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Select Provisional Scheme</label>
+            <select 
+              value={reconSchemeId} 
+              onChange={(e) => { setReconSchemeId(e.target.value); setReconData({}); }}
+              className="w-full p-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+            >
+              <option value="">-- Select Scheme --</option>
+              {provisionalSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+
+          {!reconSchemeId ? (
+            <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+              <p className="text-gray-500">Please select a scheme to start reconciliation</p>
+            </div>
+          ) : provisionalAllocations.length === 0 ? (
+            <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed border-gray-200">
+              <p className="text-gray-500">No pending provisional allocations found for this scheme</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-left text-xs font-bold uppercase tracking-wider text-gray-600">
+                    <th className="p-3 border">Range</th>
+                    <th className="p-3 border">Lump-sum Amount</th>
+                    {realSoes.map(soe => (
+                      <th key={soe.id} className="p-3 border text-center">{soe.name}</th>
+                    ))}
+                    <th className="p-3 border text-center">Variation</th>
+                    <th className="p-3 border text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="text-sm">
+                  {provisionalAllocations.map(alloc => {
+                    const distribution = reconData[alloc.id] || {};
+                    const totalDistributed = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
+                    const variation = alloc.amount - totalDistributed;
+                    
+                    return (
+                      <tr key={alloc.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="p-3 border font-medium">{ranges.find(r => r.id === alloc.rangeId)?.name}</td>
+                        <td className="p-3 border font-bold text-blue-600">₹{alloc.amount.toLocaleString()}</td>
+                        {realSoes.map(soe => (
+                          <td key={soe.id} className="p-3 border">
+                            <input 
+                              type="number"
+                              value={distribution[soe.id] || ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setReconData((prev: any) => ({
+                                  ...prev,
+                                  [alloc.id]: {
+                                    ...(prev[alloc.id] || {}),
+                                    [soe.id]: val
+                                  }
+                                }));
+                              }}
+                              placeholder="0"
+                              className="w-24 p-1 border rounded text-right focus:ring-1 focus:ring-emerald-500"
+                            />
+                          </td>
+                        ))}
+                        <td className={`p-3 border text-center font-bold ${Math.abs(variation) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                          ₹{variation.toLocaleString()}
+                        </td>
+                        <td className="p-3 border text-center">
+                          <button
+                            disabled={Math.abs(variation) >= 0.01}
+                            onClick={() => handleSaveReconciliation(alloc.id)}
+                            className={`px-4 py-1.5 rounded text-xs font-bold transition-all ${Math.abs(variation) < 0.01 ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}`}
+                          >
+                            Save
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSOEHeads = () => {
+    const filteredItems = currentSoes.filter(s => 
+      (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (s.schemeId && schemes.find(sch => sch.id === s.schemeId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    );
+
+    return (
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="lg:col-span-1">
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 sticky top-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Add SOE Head</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setIsFormExpanded(!isFormExpanded)} className="lg:hidden">
+                  {isFormExpanded ? <ChevronUp /> : <ChevronDown />}
+                </button>
+              </div>
+            </div>
+            
+            {isFormExpanded && (
+              <form onSubmit={handleAddSoeName} className="space-y-4">
+                <CascadingDropdowns 
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                  editingItem={editingItem} type="SOE Name"
+                >
+                  <input 
+                    name="name" 
+                    type="text" 
+                    defaultValue={editingItem?.type === 'SOE Name' ? editingItem.item.name : ''} 
+                    placeholder="SOE Name (e.g. 20 OC) (Optional)" 
+                    className="w-full p-2 border rounded" 
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input 
+                      name="approvedBudget" 
+                      type="number" 
+                      defaultValue={editingItem?.type === 'SOE Name' ? (getApprovedBudget(editingItem.item) || '') : ''} 
+                      placeholder="Approved Budget (₹) (Optional)" 
+                      className="w-full p-2 border rounded text-sm" 
+                    />
+                    <input 
+                      name="receivedInTry" 
+                      type="number" 
+                      defaultValue={editingItem?.type === 'SOE Name' ? (getReceivedInTry(editingItem.item) || '') : ''} 
+                      placeholder="Received in TRY (₹) (Optional)" 
+                      className="w-full p-2 border rounded text-sm" 
+                    />
+                  </div>
+                </CascadingDropdowns>
+                <button type="submit" className="w-full bg-emerald-600 text-white py-2 rounded-lg hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2">
+                  <Plus className="w-4 h-4" />
+                  <span>{editingItem?.type === 'SOE Name' ? 'Update SOE Head' : 'Add SOE Head'}</span>
+                </button>
+                {editingItem && (
+                  <button type="button" onClick={() => setEditingItem(null)} className="w-full bg-gray-100 text-gray-600 py-2 rounded-lg hover:bg-gray-200 transition-colors">
+                    Cancel Edit
+                  </button>
+                )}
+              </form>
+            )}
+          </div>
+        </div>
+
+        <div className="lg:col-span-3 space-y-4">
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input 
+                type="text" 
+                placeholder="Search SOE Heads..." 
+                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-gray-50 text-gray-600 font-medium border-b">
+                <tr>
+                  <th className="px-4 py-4">Hierarchy</th>
+                  <th className="px-4 py-4">SOE Name</th>
+                  <th className="px-4 py-4 text-right">Approved Budget</th>
+                  <th className="px-4 py-4 text-right">Received in TRY</th>
+                  <th className="px-4 py-4 text-right">Allocated</th>
+                  <th className="px-4 py-4 text-right">To Be Allocated</th>
+                  <th className="px-4 py-4 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredItems.map(s => {
+                  const allocated = allocations.reduce((sum, a) => {
+                    const funded = a.fundedSOEs?.find(f => f.soeId === s.id);
+                    return sum + (funded?.amount || 0);
+                  }, 0);
+                  const toBeAllocated = getReceivedInTry(s) - allocated;
+
+                  return (
+                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-4">{renderHierarchy(s)}</td>
+                      <td className="px-4 py-4 font-medium">{s.name || '-'}</td>
+                      <td className="px-4 py-4 text-right">₹{getApprovedBudget(s).toLocaleString()}</td>
+                      <td className="px-4 py-4 text-right">
+                        <TryUpdateInput 
+                          soeId={s.id} 
+                          initialValue={getReceivedInTry(s)} 
+                          onUpdate={handleUpdateSoeTry} 
+                        />
+                      </td>
+                      <td className="px-4 py-4 text-right font-medium text-emerald-600">₹{allocated.toLocaleString()}</td>
+                      <td className="px-4 py-4 text-right font-medium text-orange-600">₹{toBeAllocated.toLocaleString()}</td>
+                      <td className="px-4 py-4 text-right space-x-2">
+                        <button onClick={() => setEditingItem({ type: 'SOE Name', item: s })} className="text-blue-600 hover:text-blue-800"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => handleDelete('soeHeads', s.id)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4" /></button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderSimpleManager = (
     title: string, 
@@ -1415,76 +1805,65 @@ export default function App() {
     }
   };
 
-  const handleAddSoe = async (e: any) => {
+  const handleAddSoeName = async (e: any) => {
     e.preventDefault();
-    const name = e.target.name.value;
-    const approvedBudgetAmount = parseFloat(e.target.approvedBudgetAmount.value);
-    const receivedInTryAmount = parseFloat(e.target.receivedInTryAmount?.value || '0');
-    const schemeId = e.target.schemeId.value || null;
-    const sectorId = e.target.sectorId.value || null;
-    const activityId = e.target.activityId.value || null;
-    const subActivityId = e.target.subActivityId.value || null;
-    const targetFyId = selectedFyId || fys[0]?.id;
+    const rawName = e.target.name.value;
+    const name = rawName || 'Provisional';
+    const schemeId = e.target.schemeId?.value || null;
+    const sectorId = e.target.sectorId?.value || null;
+    const activityId = e.target.activityId?.value || null;
+    const subActivityId = e.target.subActivityId?.value || null;
+    const approvedBudget = parseFloat(e.target.approvedBudget?.value) || 0;
+    const receivedInTry = parseFloat(e.target.receivedInTry?.value) || 0;
+
+    if (!schemeId) {
+      alert("Scheme is mandatory.");
+      return;
+    }
 
     try {
-      let soeId = editingItem?.item?.id;
-      if (editingItem?.type === 'SOE Head') {
-        await updateDoc(doc(db, 'soeHeads', soeId), { name, schemeId, sectorId, activityId, subActivityId });
-        // Find existing budget for this FY
-        const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
-        if (existingBudget) {
-          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { approvedBudgetAmount, receivedInTryAmount });
-        } else {
-          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount, receivedInTryAmount });
-        }
+      const data = { 
+        name, 
+        isProvisional: !rawName,
+        schemeId, 
+        sectorId, 
+        activityId, 
+        subActivityId, 
+        approvedBudget, 
+        approvedBudgetAmount: approvedBudget,
+        receivedInTry,
+        receivedInTryAmount: receivedInTry,
+        tryAmount: receivedInTry,
+        financialYear: selectedFY
+      };
+      if (editingItem?.type === 'SOE Name') {
+        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), data);
         setEditingItem(null);
       } else {
-        // Check if SOE Head already exists globally
-        const existingSoe = soes.find(s => 
-          s.name.toLowerCase() === name.toLowerCase() && 
-          (s.schemeId || null) === schemeId && 
-          (s.sectorId || null) === sectorId && 
-          (s.activityId || null) === activityId && 
-          (s.subActivityId || null) === subActivityId
-        );
-        if (existingSoe) {
-          soeId = existingSoe.id;
-        } else {
-          const newSoeRef = await addDoc(collection(db, 'soeHeads'), { name, schemeId, sectorId, activityId, subActivityId });
-          soeId = newSoeRef.id;
-        }
-        
-        // Add or update budget for this FY
-        const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
-        if (existingBudget) {
-          await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { approvedBudgetAmount, receivedInTryAmount });
-        } else {
-          await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount, receivedInTryAmount });
-        }
+        await addDoc(collection(db, 'soeHeads'), data);
       }
       e.target.reset();
     } catch (error) {
-      handleFirestoreError(error, editingItem?.type === 'SOE Head' ? OperationType.UPDATE : OperationType.CREATE, 'soeHeads');
+      handleFirestoreError(error, editingItem?.type === 'SOE Name' ? OperationType.UPDATE : OperationType.CREATE, 'soeHeads');
     }
   };
 
-  const handleUpdateTry = async (soeId: string, newTryAmount: number) => {
-    const targetFyId = selectedFyId || fys[0]?.id;
+  const handleUpdateSoeTry = async (soeId: string, amount: number) => {
     try {
-      const existingBudget = soeBudgets.find(b => b.soeId === soeId && (b.fyId || fys[0]?.id) === targetFyId);
-      if (existingBudget) {
-        await updateDoc(doc(db, 'soeBudgets', existingBudget.id), { receivedInTryAmount: newTryAmount });
-      } else {
-        await addDoc(collection(db, 'soeBudgets'), { soeId, fyId: targetFyId, approvedBudgetAmount: 0, receivedInTryAmount: newTryAmount });
-      }
+      await updateDoc(doc(db, 'soeHeads', soeId), { 
+        receivedInTry: amount,
+        receivedInTryAmount: amount,
+        tryAmount: amount
+      });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, 'soeBudgets');
+      handleFirestoreError(error, OperationType.UPDATE, 'soeHeads');
     }
   };
+
+
 
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
-    const soeId = e.target.soeId.value;
     const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
     const remarks = e.target.remarks.value || '';
@@ -1492,38 +1871,123 @@ export default function App() {
     const sectorId = e.target.sectorId.value || null;
     const activityId = e.target.activityId.value || null;
     const subActivityId = e.target.subActivityId.value || null;
-    const targetFyId = selectedFyId || fys[0]?.id;
+    const targetFyId = selectedFY;
     
     if (isNaN(amount) || amount <= 0) {
       alert("Please enter a valid positive amount.");
       return;
     }
     
-    const soe = soes.find(s => s.id === soeId);
-    if (!soe) return;
-    const soeBudget = currentSoeBudgets.find(b => b.soeId === soeId)?.approvedBudgetAmount || 0;
+    // Validation: Check against Approved Budget (Administrative Sanction)
+    const approvedBudget = currentSoes.filter(s => 
+      s.schemeId === schemeId && 
+      (s.sectorId || null) === sectorId && 
+      (s.activityId || null) === activityId && 
+      (s.subActivityId || null) === subActivityId
+    ).reduce((sum, s) => sum + getApprovedBudget(s), 0);
 
     const currentAllocated = baseAllocations
-      .filter(a => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
+      .filter(a => 
+        a.schemeId === schemeId && 
+        (a.sectorId || null) === sectorId && 
+        (a.activityId || null) === activityId && 
+        (a.subActivityId || null) === subActivityId &&
+        (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
+      )
       .reduce((sum, a) => sum + a.amount, 0);
 
-    const remainingBudget = soeBudget - currentAllocated;
+    const remainingApproved = approvedBudget - currentAllocated;
 
-    if (amount > remainingBudget) {
-      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Approved Budget of ₹${remainingBudget.toLocaleString()}.`);
+    if (amount > remainingApproved) {
+      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Approved Budget (Sanction) of ₹${remainingApproved.toLocaleString()}.`);
       return;
     }
 
     try {
       if (editingItem?.type === 'Allocation') {
-        await updateDoc(doc(db, 'allocations', editingItem.item.id), { soeId, rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
+        await updateDoc(doc(db, 'allocations', editingItem.item.id), { 
+          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId 
+        });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'allocations'), { soeId, rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, fyId: targetFyId });
+        await addDoc(collection(db, 'allocations'), { 
+          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
+          status: 'Pending SOE Funds',
+          fundedSOEs: []
+        });
       }
       e.target.reset();
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Allocation' ? OperationType.UPDATE : OperationType.CREATE, 'allocations');
+    }
+  };
+
+  const handleFundAllocation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fundingAllocation) return;
+
+    const form = e.target as HTMLFormElement;
+    const formData = new FormData(form);
+    const soeId = formData.get('soeId') as string;
+    const amount = parseFloat(formData.get('amount') as string);
+
+    if (!soeId || isNaN(amount) || amount <= 0) {
+      alert("Please select an SOE and enter a valid amount.");
+      return;
+    }
+
+    // Check treasury availability for this SOE
+    const soe = currentSoes.find(s => s.id === soeId);
+    const totalReceived = soe ? getReceivedInTry(soe) : 0;
+
+    const totalFundedFromThisSoe = allocations
+      .filter(a => 
+        a.schemeId === fundingAllocation.schemeId && 
+        (a.sectorId || null) === (fundingAllocation.sectorId || null) && 
+        (a.activityId || null) === (fundingAllocation.activityId || null) && 
+        (a.subActivityId || null) === (fundingAllocation.subActivityId || null)
+      )
+      .reduce((sum, a) => {
+        const funded = a.fundedSOEs?.find(f => f.soeId === soeId);
+        return sum + (funded?.amount || 0);
+      }, 0);
+
+    const availableInTry = totalReceived - totalFundedFromThisSoe;
+
+    if (amount > availableInTry) {
+      alert(`Insufficient funds in Treasury for this SOE. Available: ₹${availableInTry.toLocaleString()}`);
+      return;
+    }
+
+    // Check if this funding exceeds the allocation's remaining amount
+    const alreadyFundedTotal = fundingAllocation.fundedSOEs?.reduce((sum, f) => sum + f.amount, 0) || 0;
+    const remainingToFund = fundingAllocation.amount - alreadyFundedTotal;
+
+    if (amount > remainingToFund) {
+      alert(`Funding amount ₹${amount.toLocaleString()} exceeds the remaining allocation requirement of ₹${remainingToFund.toLocaleString()}.`);
+      return;
+    }
+
+    try {
+      const updatedFundedSOEs = [...(fundingAllocation.fundedSOEs || [])];
+      const existingIdx = updatedFundedSOEs.findIndex(f => f.soeId === soeId);
+      if (existingIdx >= 0) {
+        updatedFundedSOEs[existingIdx].amount += amount;
+      } else {
+        updatedFundedSOEs.push({ soeId, amount });
+      }
+
+      const totalFundedNow = updatedFundedSOEs.reduce((sum, f) => sum + f.amount, 0);
+      const newStatus = totalFundedNow >= fundingAllocation.amount ? 'Funded' : 'Pending SOE Funds';
+
+      await updateDoc(doc(db, 'allocations', fundingAllocation.id), {
+        fundedSOEs: updatedFundedSOEs,
+        status: newStatus
+      });
+
+      setFundingAllocation(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'allocations');
     }
   };
 
@@ -1562,11 +2026,11 @@ export default function App() {
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
     const allocationId = e.target.allocationId.value;
+    const soeId = e.target.soeId.value;
     const amount = parseFloat(e.target.amount.value);
     const date = e.target.date.value;
     const description = e.target.description.value;
-    const activityId = e.target.activityId?.value || null;
-    const targetFyId = selectedFyId || fys[0]?.id;
+    const targetFyId = selectedFY;
 
     const today = new Date().toISOString().split('T')[0];
     if (date > today) {
@@ -1577,29 +2041,37 @@ export default function App() {
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
 
-    const currentSpent = expenses
-      .filter(e => e.allocationId === allocationId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-      .reduce((sum, e) => sum + e.amount, 0);
+    if (alloc.status === 'Pending SOE Funds') {
+      alert("Cannot book expenditure against an allocation that is pending SOE funds.");
+      return;
+    }
 
-    if (currentSpent + amount > alloc.amount) {
-      alert(`Cannot add expense. Exceeds allocated budget of ₹${alloc.amount}. Current spent: ₹${currentSpent}`);
+    const fundedSoe = alloc.fundedSOEs.find(f => f.soeId === soeId);
+    if (!fundedSoe) {
+      alert("Selected SOE is not funded for this allocation.");
+      return;
+    }
+
+    const currentSpentOnSoe = expenses
+      .filter(ex => ex.allocationId === allocationId && ex.soeId === soeId && ex.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? ex.id !== editingItem.item.id : true))
+      .reduce((sum, ex) => sum + ex.amount, 0);
+
+    if (amount > (fundedSoe.amount - currentSpentOnSoe)) {
+      alert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
       return;
     }
 
     try {
       if (editingItem?.type === 'Expenditure') {
-        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { allocationId, amount, date, description, activityId, fyId: targetFyId, rangeId: alloc.rangeId });
+        await updateDoc(doc(db, 'expenditures', editingItem.item.id), { 
+          allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId 
+        });
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'expenditures'), { 
-          allocationId, 
-          amount, 
-          date, 
-          description, 
-          activityId, 
-          createdBy: user.uid, 
-          fyId: targetFyId, 
+          allocationId, soeId, amount, date, description, financialYear: targetFyId,
           rangeId: alloc.rangeId,
+          createdBy: user.uid,
           status: 'pending',
           isLocked: false
         });
@@ -1614,13 +2086,6 @@ export default function App() {
     if (window.confirm('Are you sure you want to delete this entry?')) {
       try {
         await deleteDoc(doc(db, collectionName, id));
-        if (collectionName === 'soeHeads') {
-          // Also delete associated budgets
-          const budgetsToDelete = soeBudgets.filter(b => b.soeId === id);
-          for (const b of budgetsToDelete) {
-            await deleteDoc(doc(db, 'soeBudgets', b.id));
-          }
-        }
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, collectionName);
       }
@@ -1842,7 +2307,7 @@ export default function App() {
       const allocHeaders = ['ID', 'SOE', 'Range', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
       const allocData = currentAllocations.map(a => [
         a.id,
-        soes.find(s => s.id === a.soeId)?.name || 'N/A',
+        a.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).join(', ') || 'Pending',
         ranges.find(r => r.id === a.rangeId)?.name || 'N/A',
         a.amount,
         schemes.find(s => s.id === a.schemeId)?.name || 'N/A',
@@ -1866,25 +2331,26 @@ export default function App() {
       // 3. SOE Summary (Admin/DEO only)
       if (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') {
         const soeHeaders = ['SOE ID', 'Name', 'Approved Budget', 'Received in TRY', 'Allocated', 'Spent', 'Remaining'];
-        const soeData = currentSoes.map(s => {
-          const allocated = getSoeAllocated(s.id);
-          const spent = currentAllocations.filter(a => a.soeId === s.id).reduce((sum, a) => sum + getAllocSpent(a.id), 0);
-          const budget = currentSoeBudgets.find(b => b.soeId === s.id);
-          const approved = budget?.approvedBudgetAmount || 0;
-          const received = budget?.receivedInTryAmount || 0;
-          return [s.id, s.name, approved, received, allocated, spent, approved - allocated];
-        });
+        const soeData = soeAbstractData.map(s => [
+          s.soeId, 
+          s.soeName, 
+          s.approvedBudget, 
+          s.receivedInTry, 
+          s.allocated, 
+          s.spent, 
+          s.remainingToSpend
+        ]);
         const soeWs = XLSX.utils.aoa_to_sheet([soeHeaders, ...soeData]);
         const soeCsv = XLSX.utils.sheet_to_csv(soeWs);
         zip.file("soe_summary.csv", soeCsv);
       }
 
       const content = await zip.generateAsync({ type: "blob" });
-      saveAs(content, `financial_data_fy_${fys.find(f => f.id === selectedFyId)?.name || 'export'}.zip`);
+      saveAs(content, `financial_data_fy_${selectedFY}.zip`);
     };
 
     const comprehensiveReportData = currentAllocations.map(a => {
-      const soe = soes.find(s => s.id === a.soeId);
+      const soeNames = a.fundedSOEs?.map((f: any) => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
       const range = ranges.find(r => r.id === a.rangeId);
       
       let sa = subActivities.find(s => s.id === a.subActivityId);
@@ -1892,20 +2358,25 @@ export default function App() {
       let sec = sectors.find(s => s.id === a.sectorId);
       let sch = schemes.find(s => s.id === a.schemeId);
 
-      const budget = currentSoeBudgets.find(b => b.soeId === soe?.id);
-      const totalBudget = userRangeId ? a.amount : (budget?.approvedBudgetAmount || 0);
+      const budget = currentSoes.filter(s => 
+        s.schemeId === a.schemeId && 
+        (s.sectorId || null) === (a.sectorId || null) && 
+        (s.activityId || null) === (a.activityId || null) && 
+        (s.subActivityId || null) === (a.subActivityId || null)
+      ).reduce((sum, s) => sum + getApprovedBudget(s), 0);
+      const totalBudget = budget || 0;
       const allocated = a.amount;
       const expenditure = currentExpenses.filter(e => e.allocationId === a.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
 
       return {
-        soeId: a.soeId,
+        soeId: soeNames,
         range: range?.name || 'N/A',
         scheme: sch?.name || 'N/A',
         sector: sec?.name || 'N/A',
         activity: act?.name || 'N/A',
         subActivity: sa?.name || 'N/A',
-        soe: soe?.name || 'N/A',
+        soe: soeNames,
         totalBudget,
         allocated,
         expenditure,
@@ -2297,42 +2768,44 @@ export default function App() {
     });
 
     filteredAllocations.forEach(alloc => {
-      const soe = soes.find(s => s.id === alloc.soeId);
-      if (!soe) return;
+      alloc.fundedSOEs?.forEach(f => {
+        const soe = soes.find(s => s.id === f.soeId);
+        if (!soe) return;
 
-      let hierarchy = '';
-      if (alloc.subActivityId) {
-        const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
-        const act = activities.find(a => a.id === sa?.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
-      } else if (alloc.activityId) {
-        const act = activities.find(a => a.id === alloc.activityId);
-        const sec = sectors.find(sec => sec.id === act?.sectorId);
-        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
-      }
+        let hierarchy = '';
+        if (alloc.subActivityId) {
+          const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+          const act = activities.find(a => a.id === sa?.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+        } else if (alloc.activityId) {
+          const act = activities.find(a => a.id === alloc.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+        }
 
-      const key = `${hierarchy}-${soe.name}`;
+        const key = `${hierarchy}-${soe.name}`;
 
-      if (!ledgerGroups[key]) {
-        ledgerGroups[key] = {
-          hierarchy,
-          soeName: soe.name,
-          totalAllocation: 0,
-          items: []
-        };
-      }
+        if (!ledgerGroups[key]) {
+          ledgerGroups[key] = {
+            hierarchy,
+            soeName: soe.name,
+            totalAllocation: 0,
+            items: []
+          };
+        }
 
-      ledgerGroups[key].totalAllocation += alloc.amount;
+        ledgerGroups[key].totalAllocation += f.amount;
+      });
     });
 
     // Now add expenditures
     currentExpenses.forEach(exp => {
       const alloc = filteredAllocations.find(a => a.id === exp.allocationId);
       if (!alloc) return;
-      const soe = soes.find(s => s.id === alloc.soeId);
+      const soe = soes.find(s => s.id === exp.soeId);
       if (!soe) return;
 
       let hierarchy = '';
@@ -2557,8 +3030,8 @@ export default function App() {
             <div className="flex items-center gap-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
               <span className="text-sm font-semibold text-emerald-800">FY:</span>
               <select 
-                value={selectedFyId} 
-                onChange={(e) => setSelectedFyId(e.target.value)}
+                value={selectedFY} 
+                onChange={(e) => setSelectedFY(e.target.value)}
                 className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-sm"
               >
                 {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
@@ -2569,7 +3042,7 @@ export default function App() {
               {userRole === 'admin' && currentSchemes.length === 0 && (
                 <button
                   onClick={async () => {
-                    await preloadDatabase(selectedFyId);
+                    await preloadDatabase(selectedFY);
                     alert('Preloaded data added successfully!');
                   }}
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm"
@@ -2624,7 +3097,7 @@ export default function App() {
           <div className={`${menuOpen ? 'flex' : 'hidden'} lg:flex flex-col lg:flex-row flex-wrap gap-1 p-2`}>
             {(userRole === 'admin' ? [
               'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
-              'SOE Heads', 'Allocations', 'Expenditures', 'Ledger', 'Reports', 'Users'
+              'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports', 'Users'
             ] : [
               'Dashboard', 'Allocations', 'Expenditures', 'Ledger', 'Reports'
             ]).map((item) => (
@@ -2776,7 +3249,7 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Sub-Activity"
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
@@ -2784,154 +3257,46 @@ export default function App() {
           (item) => setEditingItem({ type: 'Sub-Activity', item })
         )}
 
-        {activeTab === 'SOE Heads' && renderSimpleManager(
-          'SOE Head', 
-          soes, 
-          [
-            {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => {
-              let hierarchy = '';
-              if (item.subActivityId) {
-                const sa = subActivities.find(sa => sa.id === item.subActivityId);
-                const act = activities.find(a => a.id === sa?.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-              } else if (item.activityId) {
-                const act = activities.find(a => a.id === item.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-              } else if (item.sectorId) {
-                const sec = sectors.find(sec => sec.id === item.sectorId);
-                const sch = schemes.find(sc => sc.id === sec?.schemeId);
-                hierarchy = [sch?.name, sec?.name].filter(Boolean).join(' -> ');
-              } else if (item.schemeId) {
-                const sch = schemes.find(sc => sc.id === item.schemeId);
-                hierarchy = sch?.name || '';
-              }
-              return <span className="text-xs text-gray-500">{hierarchy || 'Global (No Hierarchy)'}</span>;
-            }},
-            {key: 'name', label: 'SOE Name'},
-            {key: 'approvedBudgetAmount', label: 'Approved Budget', searchableText: (val, item) => String(currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0), render: (_, item) => `₹${(currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0).toLocaleString()}`},
-            {key: 'receivedInTryAmount', label: 'Received in TRY', render: (_, item) => {
-                const budget = currentSoeBudgets.find(b => b.soeId === item.id);
-                return <TryUpdateInput soeId={item.id} initialValue={budget?.receivedInTryAmount || 0} onUpdate={handleUpdateTry} />;
-            }},
-            {key: 'allocated', label: 'Allocated', render: (_, item) => {
-                const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
-                return `₹${allocated.toLocaleString()}`;
-            }},
-            {key: 'remaining', label: 'To Be Allocated', render: (_, item) => {
-                const limit = currentSoeBudgets.find(b => b.soeId === item.id)?.approvedBudgetAmount || 0;
-                const allocated = currentAllocations.filter(a => a.soeId === item.id).reduce((sum, a) => sum + a.amount, 0);
-                return `₹${(limit - allocated).toLocaleString()}`;
-            }}
-          ], 
-          handleAddSoe, 
-          (id) => handleDelete('soeHeads', id), 
-          <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="SOE Head"
-          >
-            <input name="name" required defaultValue={editingItem?.type === 'SOE Head' ? editingItem.item.name : ''} placeholder="SOE Name (e.g. 20 OC)" className="w-full p-2 border rounded" />
-            <div className="grid grid-cols-2 gap-2">
-              <input name="approvedBudgetAmount" type="number" required defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.approvedBudgetAmount || '') : ''} placeholder="Approved Budget (₹)" className="w-full p-2 border rounded" />
-              <input name="receivedInTryAmount" type="number" defaultValue={editingItem?.type === 'SOE Head' ? (currentSoeBudgets.find(b => b.soeId === editingItem.item.id)?.receivedInTryAmount || '') : ''} placeholder="Received in TRY (₹)" className="w-full p-2 border rounded" />
-            </div>
-          </CascadingDropdowns>,
-          (item) => setEditingItem({ type: 'SOE Head', item })
-        )}
-
+        {activeTab === 'SOE Heads' && renderSOEHeads()}
         {activeTab === 'Allocations' && renderSimpleManager(
           'Allocation', 
           currentAllocations, 
           [
-            {key: 'soeId', label: 'Hierarchy & SOE', 
-              searchableText: (val, item) => {
-                const s = soes.find(s => s.id === val);
-                let hierarchy = '';
-                if (item.subActivityId) {
-                  const sa = subActivities.find(sa => sa.id === item.subActivityId);
-                  const act = activities.find(a => a.id === sa?.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                } else if (item.activityId) {
-                  const act = activities.find(a => a.id === item.activityId);
-                  const sec = sectors.find(sec => sec.id === act?.sectorId);
-                  const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                  hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-                }
-                return `[${hierarchy || 'N/A'}] ${s?.name || 'N/A'}`;
-              },
-              render: (val, item) => {
-              const s = soes.find(s => s.id === val);
-              let hierarchy = '';
-              if (item.subActivityId) {
-                const sa = subActivities.find(sa => sa.id === item.subActivityId);
-                const act = activities.find(a => a.id === sa?.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-              } else if (item.activityId) {
-                const act = activities.find(a => a.id === item.activityId);
-                const sec = sectors.find(sec => sec.id === act?.sectorId);
-                const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-              }
-              return (
-                <div className="flex flex-col">
-                  <span className="text-xs text-gray-500">{hierarchy || 'N/A'}</span>
-                  <span className="font-medium text-gray-800">{s?.name || 'N/A'}</span>
-                </div>
-              );
-            }},
+            {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item)},
             {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
-            {key: 'amount', label: 'Allocation Details', 
-              searchableText: (val) => String(val),
-              render: (val, item) => {
-              const soe = soes.find(s => s.id === item.soeId);
-              const totalAllocatedForSoe = getSoeAllocated(item.soeId);
-              const budget = currentSoeBudgets.find(b => b.soeId === soe?.id);
-              const approvedLimit = budget?.approvedBudgetAmount || 0;
-              const receivedLimit = budget?.receivedInTryAmount || 0;
-              const remaining = approvedLimit - totalAllocatedForSoe;
-              
-              return (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-600">Allocated to Range:</span>
-                    <div className="flex flex-col items-end">
-                      <span className="text-emerald-600 font-bold text-base">₹{val.toLocaleString()}</span>
-                      {item.remarks && <span className="text-[10px] text-gray-400 italic max-w-[150px] truncate" title={item.remarks}>"{item.remarks}"</span>}
-                    </div>
+            {key: 'amount', label: 'Sanctioned Amount', render: (val) => `₹${val.toLocaleString()}`},
+            {key: 'status', label: 'Funding Status', render: (val, item) => (
+              <div className="flex flex-col">
+                <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
+                  {val}
+                </span>
+                {val === 'Funded' && item.fundedSOEs && (
+                  <div className="mt-1 space-y-1">
+                    {item.fundedSOEs.map((f: any, idx: number) => (
+                      <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
+                        <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
+                        <span className="font-medium">₹{f.amount.toLocaleString()}</span>
+                      </div>
+                    ))}
                   </div>
-                  <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded border border-gray-100">
-                    <div className="flex justify-between mb-1">
-                      <span>Approved Budget:</span>
-                      <span className="font-medium">₹{approvedLimit.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between mb-1">
-                      <span>Received in TRY:</span>
-                      <span className="font-medium text-indigo-600">₹{receivedLimit.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between mb-1">
-                      <span>Total Allocated (All Ranges):</span>
-                      <span className="font-medium text-blue-600">₹{totalAllocatedForSoe.toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between border-t pt-1 mt-1">
-                      <span className="font-semibold">To Be Allocated:</span>
-                      <span className={`font-bold ${remaining < 0 ? 'text-red-600' : 'text-emerald-600'}`}>₹{remaining.toLocaleString()}</span>
-                    </div>
-                  </div>
-                </div>
-              );
-            }}
+                )}
+              </div>
+            )},
+            {key: 'actions', label: 'Funding', render: (_, item) => (
+              userRole === 'admin' && item.status === 'Pending SOE Funds' && (
+                <button
+                  onClick={() => setFundingAllocation(item)}
+                  className="bg-emerald-600 text-white px-3 py-1 rounded text-xs hover:bg-emerald-700 transition-colors"
+                >
+                  Assign SOE Funds
+                </button>
+              )
+            )}
           ], 
           handleAddAllocation, 
           (id) => handleDelete('allocations', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Allocation"
             onSelectionChange={setAllocationFormFilters}
           >
@@ -2943,9 +3308,10 @@ export default function App() {
             <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Allocation', item }),
-          (item) => userRole === 'admin' || userRole === 'deo',
-          (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? renderSoeAbstractTable() : renderMyRangeSummaryTable()
+          (item) => userRole === 'admin' || userRole === 'deo'
         )}
+
+        {activeTab === 'Reconciliation' && renderReconciliation()}
 
         {activeTab === 'Expenditures' && (
           <div className="space-y-4">
@@ -3031,7 +3397,7 @@ export default function App() {
                   searchableText: (val, item) => {
                     const al = allocations.find(a => a.id === val);
                     const r = ranges.find(r => r.id === al?.rangeId);
-                    const s = soes.find(s => s.id === al?.soeId);
+                    const s = soes.find(s => s.id === item.soeId);
                     let hierarchy = '';
                     if (al?.subActivityId) {
                       const sa = subActivities.find(sa => sa.id === al.subActivityId);
@@ -3051,7 +3417,7 @@ export default function App() {
                   render: (val, item) => {
                   const al = allocations.find(a => a.id === val);
                   const r = ranges.find(r => r.id === al?.rangeId);
-                  const s = soes.find(s => s.id === al?.soeId);
+                  const s = soes.find(s => s.id === item.soeId);
                   let hierarchy = '';
                   if (al?.subActivityId) {
                     const sa = subActivities.find(sa => sa.id === al.subActivityId);
@@ -3113,7 +3479,7 @@ export default function App() {
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={currentSoeBudgets} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={soes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
                 editingItem={editingItem} type="Expenditure"
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
@@ -3170,7 +3536,7 @@ export default function App() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center justify-between mb-4 border-b pb-2">
               <h3 className="text-lg font-semibold">Passbook Ledger</h3>
-              <span className="text-sm font-medium text-emerald-600">FY {fys.find(f => f.id === selectedFyId)?.name}</span>
+              <span className="text-sm font-medium text-emerald-600">FY {selectedFY}</span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
@@ -3189,7 +3555,7 @@ export default function App() {
                 <tbody>
                   {currentAllocations.map(alloc => {
                     const r = ranges.find(r => r.id === alloc.rangeId);
-                    const s = soes.find(s => s.id === alloc.soeId);
+                    const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
                     
                     let hierarchy = '';
                     if (alloc.subActivityId) {
@@ -3217,7 +3583,7 @@ export default function App() {
                           <td className="p-3 font-medium">{r?.name}</td>
                           <td className="p-3 font-medium">
                             <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
-                            <div>{s?.name}</div>
+                            <div>{soeNames}</div>
                           </td>
                           <td className="p-3 italic text-gray-600">Initial Allocation</td>
                           <td className="p-3 text-gray-400">-</td>
@@ -3234,10 +3600,10 @@ export default function App() {
                               <td className="p-3">{r?.name}</td>
                               <td className="p-3">
                                 <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
-                                <div>{s?.name}</div>
-                                {exp.activityId && (
+                                <div>{soeNames}</div>
+                                {alloc.activityId && (
                                   <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
-                                    Activity: {activities.find(a => a.id === exp.activityId)?.name}
+                                    Activity: {activities.find(a => a.id === alloc.activityId)?.name}
                                   </div>
                                 )}
                               </td>
@@ -3311,7 +3677,7 @@ function CascadingDropdowns({
         currentSchemeId = item.schemeId || '';
       } else if (type === 'Sub-Activity') {
         currentActivityId = item.activityId;
-      } else if (type === 'SOE Head') {
+      } else if (type === 'SOE Name') {
         currentSubActivityId = item.subActivityId || '';
         currentActivityId = item.activityId || '';
         currentSectorId = item.sectorId || '';
@@ -3382,17 +3748,14 @@ function CascadingDropdowns({
     if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
     if (activityId && s.activityId && s.activityId !== activityId) return false;
     if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
-    if (type === 'Expenditure') return allocations.some((al: any) => 
-      al.schemeId === schemeId && 
-      (!sectorId || al.sectorId === sectorId) && 
-      al.activityId === activityId && 
-      (!subActivityId || al.subActivityId === subActivityId) && 
-      al.soeId === s.id
-    );
+    if (type === 'Expenditure') {
+      if (!allocationId) return false;
+      const alloc = allocations.find((a: any) => a.id === allocationId);
+      return alloc?.fundedSOEs?.some((f: any) => f.soeId === s.id);
+    }
     return true;
   });
   const filteredAllocations = allocations.filter((a: any) => {
-    if (a.soeId !== soeId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     if (activityId && a.activityId !== activityId) return false;
@@ -3407,15 +3770,15 @@ function CascadingDropdowns({
           className="w-full p-2 border rounded" 
           value={schemeId} 
           onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-          required={type !== 'Activity' && type !== 'SOE Head'}
+          required={type !== 'Activity'}
         >
-          <option value="">Select Scheme {type === 'SOE Head' ? '(Optional)' : ''}</option>
+          <option value="">Select Scheme</option>
           {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
       </div>
 
-      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-2 border rounded" 
@@ -3429,22 +3792,22 @@ function CascadingDropdowns({
         </div>
       )}
 
-      {(type === 'Sub-Activity' || type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-2 border rounded" 
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            required={type !== 'SOE Head'}
+            required={type !== 'SOE Name' && type !== 'Allocation'}
           >
-            <option value="">Select Activity {type === 'SOE Head' ? '(Optional)' : ''}</option>
+            <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation') ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Activity">+</button>
         </div>
       )}
 
-      {(type === 'SOE Head' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-2 border rounded" 
@@ -3464,77 +3827,86 @@ function CascadingDropdowns({
       <input type="hidden" name="activityId" value={activityId} />
       <input type="hidden" name="subActivityId" value={subActivityId} />
 
-      {(type === 'Allocation' || type === 'Expenditure') && (
+      {type === 'Allocation' && (
         <div className="flex flex-col gap-1">
-          <div className="flex gap-2">
-            <select 
-              name={type === 'Allocation' ? 'soeId' : undefined}
-              className="w-full p-2 border rounded" 
-              value={soeId} 
-              onChange={(e) => { setSoeId(e.target.value); setAllocationId(''); }}
-              required
-            >
-              <option value="">Select SOE Head</option>
-              {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-            <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add SOE Head">+</button>
+          <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+            {(() => {
+              const approvedBudget = soes.filter((s: any) => 
+                s.schemeId === schemeId && 
+                (s.sectorId || null) === (sectorId || null) && 
+                (s.activityId || null) === (activityId || null) && 
+                (s.subActivityId || null) === (subActivityId || null)
+              ).reduce((sum: number, s: any) => sum + getApprovedBudget(s), 0);
+              
+              const totalAllocated = allocations
+                .filter((a: any) => 
+                  a.schemeId === schemeId && 
+                  (a.sectorId || null) === (sectorId || null) && 
+                  (a.activityId || null) === (activityId || null) && 
+                  (a.subActivityId || null) === (subActivityId || null) &&
+                  (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
+                )
+                .reduce((sum: number, a: any) => sum + a.amount, 0);
+              
+              const remaining = approvedBudget - totalAllocated;
+              return `Approved Budget (Sanction): ₹${approvedBudget.toLocaleString()} | Total Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
+            })()}
           </div>
-          {type === 'Allocation' && soeId && (
-            <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
-              {(() => {
-                const soe = soes.find((s: any) => s.id === soeId);
-                const totalAllocated = allocations
-                  .filter((a: any) => a.soeId === soeId && (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true))
-                  .reduce((sum: number, a: any) => sum + a.amount, 0);
-                const budget = soeBudgets.find((b: any) => b.soeId === soe?.id);
-                const limit = budget?.approvedBudgetAmount || 0;
-                const received = budget?.receivedInTryAmount || 0;
-                const remaining = limit - totalAllocated;
-                return `Approved Budget: ₹${limit.toLocaleString()} | Received in TRY: ₹${received.toLocaleString()} | Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
-              })()}
-            </div>
-          )}
-          {type === 'Expenditure' && soeId && (
-            <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
-              {(() => {
-                if (allocationId) {
-                  const alloc = allocations.find((a: any) => a.id === allocationId);
-                  if (alloc) {
-                    const spent = expenses
-                      .filter((e: any) => e.allocationId === allocationId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                      .reduce((sum: number, e: any) => sum + e.amount, 0);
-                    return `Allocation Budget: ₹${alloc.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(alloc.amount - spent).toLocaleString()}`;
-                  }
-                }
-                const soeAllocations = allocations.filter((a: any) => a.soeId === soeId);
-                const totalAllocated = soeAllocations.reduce((sum: number, a: any) => sum + a.amount, 0);
-                const totalSpent = expenses
-                  .filter((e: any) => soeAllocations.some(a => a.id === e.allocationId) && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                  .reduce((sum: number, e: any) => sum + e.amount, 0);
-                const remaining = totalAllocated - totalSpent;
-                return `Allocated: ₹${totalAllocated.toLocaleString()} | Expenditure: ₹${totalSpent.toLocaleString()} | Remaining: ₹${remaining.toLocaleString()}`;
-              })()}
-            </div>
-          )}
         </div>
       )}
 
       {type === 'Expenditure' && (
-        <div className="flex gap-2">
-          <select 
-            name="allocationId"
-            className="w-full p-2 border rounded" 
-            value={allocationId} 
-            onChange={(e) => setAllocationId(e.target.value)}
-            required
-          >
-            <option value="">Select Allocation (Range)</option>
-            {filteredAllocations.map((a: any) => {
-              const r = ranges.find((r: any) => r.id === a.rangeId);
-              return <option key={a.id} value={a.id}>{r?.name} (Allocated: ₹{a.amount})</option>
-            })}
-          </select>
-          <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Allocation">+</button>
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <select 
+              name="allocationId"
+              className="w-full p-2 border rounded" 
+              value={allocationId} 
+              onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
+              required
+            >
+              <option value="">Select Allocation (Range)</option>
+              {filteredAllocations.map((a: any) => {
+                const r = ranges.find((r: any) => r.id === a.rangeId);
+                return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
+              })}
+            </select>
+            <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Allocation">+</button>
+          </div>
+
+          {allocationId && (
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-2">
+                <select 
+                  name="soeId"
+                  className="w-full p-2 border rounded" 
+                  value={soeId} 
+                  onChange={(e) => setSoeId(e.target.value)}
+                  required
+                >
+                  <option value="">Select Funded SOE</option>
+                  {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>)}
+                </select>
+                <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Manage SOE Heads">+</button>
+              </div>
+              
+              {soeId && (
+                <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+                  {(() => {
+                    const alloc = allocations.find((a: any) => a.id === allocationId);
+                    const fundedSoe = alloc?.fundedSOEs?.find((f: any) => f.soeId === soeId);
+                    if (fundedSoe) {
+                      const spent = expenses
+                        .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                        .reduce((sum: number, e: any) => sum + e.amount, 0);
+                      return `SOE Funding: ₹${fundedSoe.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(fundedSoe.amount - spent).toLocaleString()}`;
+                    }
+                    return 'Select an SOE to see balance';
+                  })()}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

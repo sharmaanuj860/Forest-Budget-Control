@@ -1,0 +1,22 @@
+export const emergencyRestoreData = [
+{ hierarchy: "CAMPA -> CA -> Nursery", soeName: "33M&S", approvedBudget: 308340, receivedInTry: 308340, allocated: 308340, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-070-01-S00N -> 2406-01-070-01 -> repair of road, path and building", soeName: "21 Maint.", approvedBudget: 1500000, receivedInTry: 1500000, allocated: 1500000, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-105-01-S00N -> Timber -> Seized Timber", soeName: "36MW", approvedBudget: 100000, receivedInTry: 100000, allocated: 100000, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-102-43-S00N", soeName: "36MW", approvedBudget: 238080, receivedInTry: 238080, allocated: 238080, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV", soeName: "33M&S", approvedBudget: 1184640, receivedInTry: 1184640, allocated: 1026100, toBeAllocated: 158540 },
+{ hierarchy: "Demand No 32 State Plan -> 2406-01-789-27-S00N", soeName: "36MW", approvedBudget: 141400, receivedInTry: 141400, allocated: 141400, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2059-01-053-68-S00N -> 2059-01-053-68-S00N-21-N-V -> 21 maint building maint", soeName: "21 Maint.", approvedBudget: 100000, receivedInTry: 100000, allocated: 100000, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-105-03-S00N -> Timber, Driftwood -> Timber related", soeName: "36MW", approvedBudget: 20000, receivedInTry: 20000, allocated: 20000, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-102-13-S00N", soeName: "33M&S", approvedBudget: 62949, receivedInTry: 62949, allocated: 62949, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-001-02-S00N -> Livery -> Uniform etc", soeName: "33M&S", approvedBudget: 66000, receivedInTry: 66000, allocated: 66000, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV -> Forest Fire related activity", soeName: "20OC", approvedBudget: 111500, receivedInTry: 111500, allocated: 111500, toBeAllocated: 0 },
+{ hierarchy: "Demand No 32 State Plan -> 2406-01-789-27-S00N", soeName: "33M&S", approvedBudget: 20000, receivedInTry: 20000, allocated: 20000, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV -> Forest Fire related activity -> Fire line Maint", soeName: "21 Maint.", approvedBudget: 100000, receivedInTry: 99950, allocated: 99950, toBeAllocated: 50 },
+{ hierarchy: "Demand No 15 BASP -> 2406-01-102-18-S00B -> Plantation -> Documentation", soeName: "33M&S", approvedBudget: 2800, receivedInTry: 2800, allocated: 2800, toBeAllocated: 0 },
+{ hierarchy: "Demand No 16 State Plan -> 2406-01-102-46-S00N -> MMVVY Maint. of Plantation", soeName: "21 Maint.", approvedBudget: 38800, receivedInTry: 38800, allocated: 38800, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV", soeName: "36MW", approvedBudget: 3462882, receivedInTry: 3462882, allocated: 3346250, toBeAllocated: 116632 },
+{ hierarchy: "CAMPA -> CA -> Nursery", soeName: "36MW", approvedBudget: 1368120, receivedInTry: 1368120, allocated: 1368120, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV -> Boarder Patrolling -> Patrolling Purposes", soeName: "30 MV", approvedBudget: 26972, receivedInTry: 26972, allocated: 26972, toBeAllocated: 0 },
+{ hierarchy: "CAMPA -> NPV -> Building and Path (FID) -> IHT cum Watch Tower at Mahal Preet Nagar", soeName: "20OC", approvedBudget: 500000, receivedInTry: 500000, allocated: 500000, toBeAllocated: 0 },
+{ hierarchy: "Demand No 32 State Plan -> 2406-01-789-29-S00N -> MMVVY Maint. of Plantation -> RF Shalogini MMVVY 10 Ha", soeName: "21 Maint.", approvedBudget: 12200, receivedInTry: 12200, allocated: 12200, toBeAllocated: 0 }
+];

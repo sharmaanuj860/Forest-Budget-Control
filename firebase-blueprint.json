@@ -72,27 +72,59 @@
       },
       "required": ["name"]
     },
-    "SOEBudget": {
-      "title": "SOE Budget",
-      "description": "Represents the budget limit for an SOE head in a specific financial year",
+    "ApprovedBudget": {
+      "title": "Approved Budget",
+      "description": "Represents an administrative sanction for a specific hierarchy",
       "type": "object",
       "properties": {
-        "soeId": { "type": "string", "description": "ID of the SOE head" },
         "fyId": { "type": "string", "description": "ID of the financial year" },
-        "budgetLimit": { "type": "number", "description": "The total budget limit" }
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "sectorId": { "type": "string", "description": "ID of the sector (optional)" },
+        "activityId": { "type": "string", "description": "ID of the activity (optional)" },
+        "subActivityId": { "type": "string", "description": "ID of the sub-activity (optional)" },
+        "amount": { "type": "number", "description": "The sanctioned amount" }
       },
-      "required": ["soeId", "fyId", "budgetLimit"]
+      "required": ["fyId", "schemeId", "amount"]
+    },
+    "TreasuryReceipt": {
+      "title": "Treasury Receipt",
+      "description": "Represents physical cash received in the treasury for an SOE head",
+      "type": "object",
+      "properties": {
+        "fyId": { "type": "string", "description": "ID of the financial year" },
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "sectorId": { "type": "string", "description": "ID of the sector (optional)" },
+        "activityId": { "type": "string", "description": "ID of the activity (optional)" },
+        "subActivityId": { "type": "string", "description": "ID of the sub-activity (optional)" },
+        "soeId": { "type": "string", "description": "ID of the SOE head" },
+        "amount": { "type": "number", "description": "The received amount" }
+      },
+      "required": ["fyId", "schemeId", "soeId", "amount"]
     },
     "Allocation": {
       "title": "Allocation",
       "description": "Represents a budget allocation to a range",
       "type": "object",
       "properties": {
-        "soeId": { "type": "string", "description": "ID of the SOE head" },
         "rangeId": { "type": "string", "description": "ID of the range" },
-        "amount": { "type": "number", "description": "The allocated amount" }
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "sectorId": { "type": "string", "description": "ID of the sector (optional)" },
+        "activityId": { "type": "string", "description": "ID of the activity (optional)" },
+        "subActivityId": { "type": "string", "description": "ID of the sub-activity (optional)" },
+        "amount": { "type": "number", "description": "The sanctioned amount for the range" },
+        "status": { "type": "string", "enum": ["Pending SOE Funds", "Funded"], "description": "Funding status" },
+        "fundedSOEs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "soeId": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        }
       },
-      "required": ["soeId", "rangeId", "amount"]
+      "required": ["rangeId", "schemeId", "amount", "status"]
     },
     "Expenditure": {
       "title": "Expenditure",
@@ -100,12 +132,12 @@
       "type": "object",
       "properties": {
         "allocationId": { "type": "string", "description": "ID of the allocation" },
+        "soeId": { "type": "string", "description": "ID of the SOE head being booked against" },
         "amount": { "type": "number", "description": "The expenditure amount" },
         "date": { "type": "string", "description": "The date of expenditure (ISO format)" },
-        "description": { "type": "string", "description": "Description of the expenditure" },
-        "activityId": { "type": "string", "description": "ID of the activity (optional)" }
+        "description": { "type": "string", "description": "Description of the expenditure" }
       },
-      "required": ["allocationId", "amount", "date", "description"]
+      "required": ["allocationId", "soeId", "amount", "date", "description"]
     },
     "User": {
       "title": "User",
@@ -126,7 +158,8 @@
     "/activities": { "schema": "Activity", "description": "Collection of activities" },
     "/subActivities": { "schema": "SubActivity", "description": "Collection of sub-activities" },
     "/soeHeads": { "schema": "SOEHead", "description": "Collection of SOE heads" },
-    "/soeBudgets": { "schema": "SOEBudget", "description": "Collection of SOE budgets" },
+    "/approvedBudgets": { "schema": "ApprovedBudget", "description": "Collection of administrative sanctions" },
+    "/treasuryReceipts": { "schema": "TreasuryReceipt", "description": "Collection of physical cash receipts" },
     "/allocations": { "schema": "Allocation", "description": "Collection of budget allocations" },
     "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
     "/users": { "schema": "User", "description": "Collection of application users" }

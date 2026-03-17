@@ -90,6 +90,16 @@ service cloud.firestore {
       allow create, update, delete: if canWrite();
     }
 
+    match /approvedBudgets/{id} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if canWrite();
+    }
+
+    match /treasuryReceipts/{id} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if canWrite();
+    }
+
     match /soeBudgets/{id} {
       allow read: if isAuthenticated();
       allow create, update, delete: if canWrite();
