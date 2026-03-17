@@ -2097,9 +2097,19 @@ export default function App() {
             className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6 pt-2" 
             onClick={() => setIsFormExpanded(!isFormExpanded)}
           >
-            <h3 className="text-lg font-semibold">
-              {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
-            </h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-semibold">
+                {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
+              </h3>
+              {editingItem?.type === title && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setEditingItem(null); }}
+                  className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-100 font-bold uppercase"
+                >
+                  New
+                </button>
+              )}
+            </div>
             <button type="button" className="text-gray-500 hover:text-gray-700">
               {isFormExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
             </button>
@@ -2598,6 +2608,9 @@ export default function App() {
     if (window.confirm('Are you sure you want to delete this entry?')) {
       try {
         await deleteDoc(doc(db, collectionName, id));
+        if (editingItem?.item?.id === id) {
+          setEditingItem(null);
+        }
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, collectionName);
       }
@@ -3527,6 +3540,7 @@ export default function App() {
             onClick={() => {
               setActiveTab('Dashboard');
               setSearchTerm('');
+              setEditingItem(null);
               setIsFormExpanded(window.innerWidth > 1024);
             }}
           >
@@ -3619,6 +3633,7 @@ export default function App() {
                 onClick={() => {
                   setActiveTab(item);
                   setSearchTerm('');
+                  setEditingItem(null);
                   setMenuOpen(false);
                   setIsFormExpanded(window.innerWidth > 1024);
                 }}
