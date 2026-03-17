@@ -132,6 +132,7 @@ const getReceivedInTry = (s: any) => {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
+  const [allocationAmount, setAllocationAmount] = useState<string>('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -1323,11 +1324,22 @@ export default function App() {
         const secTotalSoe = secSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
         const secAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
         
+        const soeBreakdown = secSoes.map(soe => {
+          const allocated = getSoeAllocated(soe.id);
+          return {
+            name: soe.name,
+            total: getReceivedInTry(soe),
+            allocated: allocated,
+            balance: getReceivedInTry(soe) - allocated
+          };
+        }).filter(s => s.total > 0 || s.allocated > 0);
+
         return {
           name: sec.name,
           total: secTotalSoe,
           allocated: secAllocated,
-          balance: secTotalSoe - secAllocated
+          balance: secTotalSoe - secAllocated,
+          soeBreakdown
         };
       }).filter(s => s.total > 0 || s.allocated > 0);
 
@@ -1396,10 +1408,20 @@ export default function App() {
                               <span className="truncate w-2/3">{sec.name}</span>
                               <span className="text-emerald-700">₹{sec.total.toLocaleString()}</span>
                             </div>
-                            <div className="flex justify-between text-gray-500">
+                            <div className="flex justify-between text-gray-500 mb-1">
                               <span>Allocated: ₹{sec.allocated.toLocaleString()}</span>
                               <span className={sec.balance > 0 ? 'text-orange-500' : 'text-gray-400'}>Bal: ₹{sec.balance.toLocaleString()}</span>
                             </div>
+                            {sec.soeBreakdown.length > 0 && (
+                              <div className="mt-1 pl-2 border-l-2 border-emerald-200 space-y-1">
+                                {sec.soeBreakdown.map(soe => (
+                                  <div key={soe.name} className="flex justify-between text-[9px] text-gray-500">
+                                    <span className="truncate w-1/2">{soe.name}</span>
+                                    <span>Bal: <span className={soe.balance > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>₹{soe.balance.toLocaleString()}</span></span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -2067,7 +2089,8 @@ export default function App() {
     onEdit: (item: any) => void,
     canEditDelete?: (item: any) => boolean,
     extraContent?: React.ReactNode,
-    customActions?: (item: any) => React.ReactNode
+    customActions?: (item: any) => React.ReactNode,
+    isSubmitDisabled: boolean = false
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -2118,7 +2141,11 @@ export default function App() {
             <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-4">
               {formContent}
               <div className="flex gap-2">
-                <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded font-medium flex items-center justify-center gap-2">
+                <button 
+                  type="submit" 
+                  disabled={isSubmitDisabled}
+                  className={`flex-1 py-2 rounded font-medium flex items-center justify-center gap-2 transition-colors ${isSubmitDisabled ? 'bg-gray-300 cursor-not-allowed text-gray-500' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                >
                   {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                   {editingItem?.type === title ? 'Update' : 'Add'}
                 </button>
@@ -2201,6 +2228,14 @@ export default function App() {
     </div>
     );
   };
+
+  useEffect(() => {
+    if (editingItem?.type === 'Allocation') {
+      setAllocationAmount(editingItem.item.amount.toString());
+    } else if (!editingItem) {
+      setAllocationAmount('');
+    }
+  }, [editingItem]);
 
   // --- PWA Install Logic ---
   const [installPrompt, setInstallPrompt] = useState<any>(null);
@@ -2390,6 +2425,31 @@ export default function App() {
 
 
 
+  const isAllocationInvalid = useMemo(() => {
+    if (activeTab !== 'Allocations' || !allocationFormFilters.schemeId) return false;
+    const amount = parseFloat(allocationAmount);
+    if (isNaN(amount) || amount <= 0) return false;
+
+    const availableBudget = currentSoes.filter(s => 
+      s.schemeId === allocationFormFilters.schemeId && 
+      (s.sectorId || null) === (allocationFormFilters.sectorId || null) && 
+      (s.activityId || null) === (allocationFormFilters.activityId || null) && 
+      (s.subActivityId || null) === (allocationFormFilters.subActivityId || null)
+    ).reduce((sum, s) => sum + getReceivedInTry(s), 0);
+
+    const currentAllocated = baseAllocations
+      .filter(a => 
+        a.schemeId === allocationFormFilters.schemeId && 
+        (a.sectorId || null) === (allocationFormFilters.sectorId || null) && 
+        (a.activityId || null) === (allocationFormFilters.activityId || null) && 
+        (a.subActivityId || null) === (allocationFormFilters.subActivityId || null) &&
+        (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
+      )
+      .reduce((sum, a) => sum + a.amount, 0);
+
+    return amount > (availableBudget - currentAllocated);
+  }, [activeTab, allocationAmount, allocationFormFilters, currentSoes, baseAllocations, editingItem]);
+
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
     const rangeId = e.target.rangeId.value;
@@ -2406,13 +2466,13 @@ export default function App() {
       return;
     }
     
-    // Validation: Check against Approved Budget (Administrative Sanction)
-    const approvedBudget = currentSoes.filter(s => 
+    // Validation: Check against Received Budget (to prevent negative balances in tracker)
+    const availableBudget = currentSoes.filter(s => 
       s.schemeId === schemeId && 
       (s.sectorId || null) === sectorId && 
       (s.activityId || null) === activityId && 
       (s.subActivityId || null) === subActivityId
-    ).reduce((sum, s) => sum + getApprovedBudget(s), 0);
+    ).reduce((sum, s) => sum + getReceivedInTry(s), 0);
 
     const currentAllocated = baseAllocations
       .filter(a => 
@@ -2424,10 +2484,10 @@ export default function App() {
       )
       .reduce((sum, a) => sum + a.amount, 0);
 
-    const remainingApproved = approvedBudget - currentAllocated;
+    const remainingAvailable = availableBudget - currentAllocated;
 
-    if (amount > remainingApproved) {
-      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Approved Budget (Sanction) of ₹${remainingApproved.toLocaleString()}.`);
+    if (amount > remainingAvailable) {
+      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Available Budget (Received) of ₹${remainingAvailable.toLocaleString()}.`);
       return;
     }
 
@@ -2445,6 +2505,7 @@ export default function App() {
         });
       }
       e.target.reset();
+      setAllocationAmount('');
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Allocation' ? OperationType.UPDATE : OperationType.CREATE, 'allocations');
     }
@@ -3835,11 +3896,25 @@ export default function App() {
                   <option value="">Select Range</option>
                   {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
-                <input name="amount" type="number" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                <input 
+                  name="amount" 
+                  type="number" 
+                  required 
+                  value={allocationAmount}
+                  onChange={(e) => setAllocationAmount(e.target.value)}
+                  placeholder="Amount (₹)" 
+                  className={`w-full p-2 border rounded ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                />
+                {isAllocationInvalid && (
+                  <p className="text-[10px] text-red-600 font-bold px-1">Amount exceeds available budget!</p>
+                )}
                 <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Allocation', item }),
-              (item) => userRole === 'admin' || userRole === 'deo'
+              (item) => userRole === 'admin' || userRole === 'deo',
+              null,
+              null,
+              isAllocationInvalid
             )}
           </div>
         )}
@@ -4405,12 +4480,12 @@ function CascadingDropdowns({
         <div className="flex flex-col gap-1">
           <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
             {(() => {
-              const approvedBudget = soes.filter((s: any) => 
+              const availableBudget = soes.filter((s: any) => 
                 s.schemeId === schemeId && 
                 (s.sectorId || null) === (sectorId || null) && 
                 (s.activityId || null) === (activityId || null) && 
                 (s.subActivityId || null) === (subActivityId || null)
-              ).reduce((sum: number, s: any) => sum + getApprovedBudget(s), 0);
+              ).reduce((sum: number, s: any) => sum + getReceivedInTry(s), 0);
               
               const totalAllocated = allocations
                 .filter((a: any) => 
@@ -4422,8 +4497,8 @@ function CascadingDropdowns({
                 )
                 .reduce((sum: number, a: any) => sum + a.amount, 0);
               
-              const remaining = approvedBudget - totalAllocated;
-              return `Approved Budget (Sanction): ₹${approvedBudget.toLocaleString()} | Total Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
+              const remaining = availableBudget - totalAllocated;
+              return `Available Budget (Received): ₹${availableBudget.toLocaleString()} | Total Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
             })()}
           </div>
         </div>
