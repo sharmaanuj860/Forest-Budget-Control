@@ -283,6 +283,37 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // --- Session Expiry Logic ---
+  useEffect(() => {
+    if (!user || userRole === 'admin') return;
+
+    let timeoutId: any;
+
+    const resetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => {
+        alert("Session expired due to inactivity (15 mins). Please login again.");
+        handleLogout();
+      }, 15 * 60 * 1000); // 15 minutes
+    };
+
+    // Initial start
+    resetTimer();
+
+    // Listen for activity
+    const activityEvents = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    activityEvents.forEach(event => {
+      window.addEventListener(event, resetTimer);
+    });
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+      activityEvents.forEach(event => {
+        window.removeEventListener(event, resetTimer);
+      });
+    };
+  }, [user, userRole]);
+
   // --- Real-time Data Sync (Master Data) ---
   useEffect(() => {
     if (!user || !userRole) return;
