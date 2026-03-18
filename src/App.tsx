@@ -37,10 +37,43 @@ type SOE = {
   approvedBudgetAmount?: number;
   receivedInTryAmount?: number;
   tryAmount?: number;
+  updatedAt?: number;
+  createdAt?: number;
 };
 
-type Allocation = { id: string; rangeId: string; schemeId: string; sectorId?: string; activityId?: string; subActivityId?: string; amount: number; status: 'Pending SOE Funds' | 'Funded'; fundedSOEs: { soeId: string; amount: number }[]; fyId?: string; financialYear?: string; remarks?: string };
-type Expense = { id: string; allocationId: string; soeId: string; amount: number; date: string; description: string; fyId?: string; financialYear?: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean; approvalId?: number };
+type Allocation = { 
+  id: string; 
+  rangeId: string; 
+  schemeId: string; 
+  sectorId?: string; 
+  activityId?: string; 
+  subActivityId?: string; 
+  amount: number; 
+  status: 'Pending SOE Funds' | 'Funded'; 
+  fundedSOEs: { soeId: string; amount: number }[]; 
+  fyId?: string; 
+  financialYear?: string; 
+  remarks?: string;
+  updatedAt?: number;
+  createdAt?: number;
+};
+
+type Expense = { 
+  id: string; 
+  allocationId: string; 
+  soeId: string; 
+  amount: number; 
+  date: string; 
+  description: string; 
+  fyId?: string; 
+  financialYear?: string; 
+  status: 'pending' | 'approved' | 'rejected'; 
+  isLocked: boolean; 
+  approvalId?: number;
+  updatedAt?: number;
+  createdAt?: number;
+  approvalReason?: string;
+};
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
 
 enum OperationType {
@@ -143,6 +176,7 @@ export default function App() {
   const [showAllBudget, setShowAllBudget] = useState(false);
   const [rangeSearch, setRangeSearch] = useState('');
   const [soeSearchTerm, setSoeSearchTerm] = useState('');
+  const [soeAbstractSearch, setSoeAbstractSearch] = useState('');
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
@@ -151,6 +185,12 @@ export default function App() {
   const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
   const [fundingAllocation, setFundingAllocation] = useState<Allocation | null>(null);
+
+  const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
+  const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; message: string; onConfirm: () => void }>({ isOpen: false, message: '', onConfirm: () => {} });
+
+  const showAlert = (message: string) => setAlertModal({ isOpen: true, message });
+  const showConfirm = (message: string, onConfirm: () => void) => setConfirmModal({ isOpen: true, message, onConfirm });
 
   // --- State ---
   const [fys, setFys] = useState<FinancialYear[]>([]);
@@ -234,17 +274,17 @@ export default function App() {
         if (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com') {
            setUserRole('admin');
            // Try to save it, ignore if fails
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'admin' }, { merge: true }).catch(() => {});
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'admin' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
            setLoading(false);
            return;
         } else if (email === 'da123@rajgarhforest.app') {
            setUserRole('deo');
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'deo' }, { merge: true }).catch(() => {});
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'deo' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
            setLoading(false);
            return;
         } else if (email === 'da789@rajgarhforest.app') {
            setUserRole('approver');
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'approver' }, { merge: true }).catch(() => {});
+           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'approver' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
            setLoading(false);
            return;
         }
@@ -269,6 +309,7 @@ export default function App() {
               }
             } catch (e) {
                setUserRole(null);
+               handleFirestoreError(e, OperationType.GET, 'users');
             }
           }
         } catch (error) {
@@ -292,7 +333,7 @@ export default function App() {
     const resetTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        alert("Session expired due to inactivity (15 mins). Please login again.");
+        showAlert("Session expired due to inactivity (15 mins). Please login again.");
         handleLogout();
       }, 15 * 60 * 1000); // 15 minutes
     };
@@ -432,7 +473,7 @@ export default function App() {
             if (parts.length > 0) {
               let sch = localSchemes.find(s => s.name === parts[0]);
               if (!sch) {
-                const docRef = await addDoc(collection(db, 'schemes'), { name: parts[0] });
+                const docRef = await addDoc(collection(db, 'schemes'), { name: parts[0], createdAt: Date.now(), updatedAt: Date.now() });
                 sch = { id: docRef.id, name: parts[0] };
                 localSchemes.push(sch);
               }
@@ -441,7 +482,7 @@ export default function App() {
             if (parts.length > 1) {
               let sec = localSectors.find(s => s.name === parts[1] && s.schemeId === schemeId);
               if (!sec) {
-                const docRef = await addDoc(collection(db, 'sectors'), { name: parts[1], schemeId });
+                const docRef = await addDoc(collection(db, 'sectors'), { name: parts[1], schemeId, createdAt: Date.now(), updatedAt: Date.now() });
                 sec = { id: docRef.id, name: parts[1], schemeId };
                 localSectors.push(sec);
               }
@@ -450,7 +491,7 @@ export default function App() {
             if (parts.length > 2) {
               let act = localActivities.find(a => a.name === parts[2] && a.sectorId === sectorId);
               if (!act) {
-                const docRef = await addDoc(collection(db, 'activities'), { name: parts[2], sectorId });
+                const docRef = await addDoc(collection(db, 'activities'), { name: parts[2], sectorId, createdAt: Date.now(), updatedAt: Date.now() });
                 act = { id: docRef.id, name: parts[2], sectorId };
                 localActivities.push(act);
               }
@@ -459,7 +500,7 @@ export default function App() {
             if (parts.length > 3) {
               let sa = localSubActivities.find(s => s.name === parts[3] && s.activityId === activityId);
               if (!sa) {
-                const docRef = await addDoc(collection(db, 'subActivities'), { name: parts[3], activityId });
+                const docRef = await addDoc(collection(db, 'subActivities'), { name: parts[3], activityId, createdAt: Date.now(), updatedAt: Date.now() });
                 sa = { id: docRef.id, name: parts[3], activityId };
                 localSubActivities.push(sa);
               }
@@ -477,12 +518,15 @@ export default function App() {
               receivedInTry: item.receivedInTry,
               receivedInTryAmount: item.receivedInTry,
               tryAmount: item.receivedInTry,
-              financialYear: fyId
+              financialYear: fyId,
+              createdAt: Date.now(),
+              updatedAt: Date.now()
             });
           }
           console.log("Silent seeding completed successfully.");
         } catch (error) {
           console.error("Failed to silently seed data:", error);
+          handleFirestoreError(error, OperationType.CREATE, 'soeHeads');
         }
       };
 
@@ -1360,7 +1404,7 @@ export default function App() {
     const totalDistributed = Object.values(distribution).reduce<number>((sum, val) => sum + (parseFloat(val as string) || 0), 0);
     
     if (Math.abs(totalDistributed - allocation.amount) > 0.01) {
-      alert("Total distributed amount must match the allocated amount.");
+      showAlert("Total distributed amount must match the allocated amount.");
       return;
     }
 
@@ -1378,7 +1422,7 @@ export default function App() {
       delete newReconData[allocationId];
       setReconData(newReconData);
       
-      alert("Reconciliation saved successfully!");
+      showAlert("Reconciliation saved successfully!");
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'allocations');
     }
@@ -1520,7 +1564,7 @@ export default function App() {
     });
 
     if (invalid) {
-      alert("All rows must have zero variation before saving.");
+      showAlert("All rows must have zero variation before saving.");
       return;
     }
 
@@ -1540,7 +1584,7 @@ export default function App() {
 
       await Promise.all(promises);
       setReconData({});
-      alert("All reconciliations saved successfully!");
+      showAlert("All reconciliations saved successfully!");
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'allocations');
     } finally {
@@ -1551,13 +1595,13 @@ export default function App() {
   const renderApprovalModal = () => {
     if (!isApprovalModalOpen || !selectedExpenseForApproval) return null;
 
-    const handleConfirm = async () => {
-      if (window.confirm(`Are you sure you want to ${approvalStatus} this expenditure? This action will lock the entry.`)) {
+    const handleConfirm = () => {
+      showConfirm(`Are you sure you want to ${approvalStatus} this expenditure? This action will lock the entry.`, async () => {
         await handleUpdateExpenseStatus(selectedExpenseForApproval.id, approvalStatus, true, approvalReason);
         setIsApprovalModalOpen(false);
         setSelectedExpenseForApproval(null);
         setApprovalReason('');
-      }
+      });
     };
 
     return (
@@ -2169,6 +2213,7 @@ export default function App() {
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-50 text-gray-600 font-medium border-b">
                 <tr>
+                  <th className="px-4 py-4">SrNo</th>
                   <th className="px-4 py-4">Hierarchy</th>
                   <th className="px-4 py-4">SOE Name</th>
                   <th className="px-4 py-4 text-right">Approved Budget</th>
@@ -2179,7 +2224,18 @@ export default function App() {
                 </tr>
               </thead>
             <tbody className="divide-y divide-gray-100">
-                {filteredItems.slice(0, visibleCount).map(s => {
+                {filteredItems
+                  .sort((a, b) => {
+                    // For SOE Heads, we might want to prioritize those with received budget
+                    const hasBudgetA = (a.receivedInTry || 0) > 0;
+                    const hasBudgetB = (b.receivedInTry || 0) > 0;
+                    if (hasBudgetA && !hasBudgetB) return -1;
+                    if (!hasBudgetA && hasBudgetB) return 1;
+
+                    return (b.updatedAt || 0) - (a.updatedAt || 0);
+                  })
+                  .slice(0, visibleCount)
+                  .map((s, index) => {
                   const allocated = allocations.reduce((sum, a) => {
                     const funded = a.fundedSOEs?.find(f => f.soeId === s.id);
                     return sum + (funded?.amount || 0);
@@ -2188,6 +2244,7 @@ export default function App() {
 
                   return (
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-4 text-gray-500 font-medium">{index + 1}</td>
                       <td className="px-4 py-4">{renderHierarchy(s)}</td>
                       <td className="px-4 py-4 font-medium">{s.name || '-'}</td>
                       <td className="px-4 py-4 text-right">₹{getApprovedBudget(s).toLocaleString()}</td>
@@ -2264,7 +2321,7 @@ export default function App() {
     }
 
     return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
       {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) && (
         <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto custom-scrollbar">
           <div 
@@ -2314,7 +2371,7 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-2' : 'lg:col-span-3'}`}>
+      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4'}`}>
         {extraContent}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
@@ -2334,13 +2391,28 @@ export default function App() {
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
+                <th className="p-3 border-b">SrNo</th>
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
                 {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
-              {filteredItems.slice(0, visibleCount).map(item => (
+              {filteredItems
+                .sort((a, b) => {
+                  // Priority 1: Status (Funded/Approved first)
+                  const statusA = a.status === 'Funded' || a.status === 'approved';
+                  const statusB = b.status === 'Funded' || b.status === 'approved';
+                  
+                  // If one is funded and other is not, funded wins
+                  if (statusA !== statusB) return statusA ? -1 : 1;
+                  
+                  // Priority 2: updatedAt (Descending)
+                  return (b.updatedAt || 0) - (a.updatedAt || 0);
+                })
+                .slice(0, visibleCount)
+                .map((item, index) => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
+                  <td className="p-3 text-gray-500 font-medium">{index + 1}</td>
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
                   {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
                     <td className="p-3 text-right flex justify-end gap-2">
@@ -2497,7 +2569,7 @@ export default function App() {
     const schemeId = e.target.schemeId?.value || null;
 
     if (!sectorId && !schemeId) {
-      alert("Please select either a Sector or a Scheme");
+      showAlert("Please select either a Sector or a Scheme");
       return;
     }
 
@@ -2543,7 +2615,7 @@ export default function App() {
     const receivedInTry = parseFloat(e.target.receivedInTry?.value) || 0;
 
     if (!schemeId) {
-      alert("Scheme is mandatory.");
+      showAlert("Scheme is mandatory.");
       return;
     }
 
@@ -2560,13 +2632,14 @@ export default function App() {
         receivedInTry,
         receivedInTryAmount: receivedInTry,
         tryAmount: receivedInTry,
-        financialYear: selectedFY
+        financialYear: selectedFY,
+        updatedAt: Date.now()
       };
       if (editingItem?.type === 'SOE Name') {
-        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), data);
+        await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { ...data, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'soeHeads'), data);
+        await addDoc(collection(db, 'soeHeads'), { ...data, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2579,7 +2652,8 @@ export default function App() {
       await updateDoc(doc(db, 'soeHeads', soeId), { 
         receivedInTry: amount,
         receivedInTryAmount: amount,
-        tryAmount: amount
+        tryAmount: amount,
+        updatedAt: Date.now()
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'soeHeads');
@@ -2642,7 +2716,7 @@ export default function App() {
     const fundingSoeName = e.target.fundingSoeName?.value || null;
     
     if (isNaN(amount) || amount <= 0) {
-      alert("Please enter a valid positive amount.");
+      showAlert("Please enter a valid positive amount.");
       return;
     }
     
@@ -2665,7 +2739,7 @@ export default function App() {
       const remaining = received - allocated;
 
       if (amount > remaining) {
-        alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining balance of SOE ${fundingSoeName} (₹${remaining.toLocaleString()}).`);
+        showAlert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining balance of SOE ${fundingSoeName} (₹${remaining.toLocaleString()}).`);
         return;
       }
     } else {
@@ -2682,7 +2756,7 @@ export default function App() {
       const remainingInSector = totalReceivedInSector - totalAllocatedInSector;
 
       if (amount > remainingInSector) {
-        alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Sector-wide Available Budget of ₹${remainingInSector.toLocaleString()}.`);
+        showAlert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Sector-wide Available Budget of ₹${remainingInSector.toLocaleString()}.`);
         return;
       }
     }
@@ -2786,7 +2860,7 @@ export default function App() {
     const amount = parseFloat(formData.get('amount') as string);
 
     if (!soeId || isNaN(amount) || amount <= 0) {
-      alert("Please select an SOE and enter a valid amount.");
+      showAlert("Please select an SOE and enter a valid amount.");
       return;
     }
 
@@ -2803,7 +2877,7 @@ export default function App() {
     const availableInTry = totalReceived - totalFundedFromThisSoe;
 
     if (amount > availableInTry) {
-      alert(`Insufficient funds in Treasury for this SOE. Available: ₹${availableInTry.toLocaleString()}`);
+      showAlert(`Insufficient funds in Treasury for this SOE. Available: ₹${availableInTry.toLocaleString()}`);
       return;
     }
 
@@ -2812,7 +2886,7 @@ export default function App() {
     const remainingToFund = fundingAllocation.amount - alreadyFundedTotal;
 
     if (amount > remainingToFund) {
-      alert(`Funding amount ₹${amount.toLocaleString()} exceeds the remaining allocation requirement of ₹${remainingToFund.toLocaleString()}.`);
+      showAlert(`Funding amount ₹${amount.toLocaleString()} exceeds the remaining allocation requirement of ₹${remainingToFund.toLocaleString()}.`);
       return;
     }
 
@@ -2872,7 +2946,7 @@ export default function App() {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
-      alert(`Error updating status: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      showAlert(`Error updating status: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -2887,7 +2961,7 @@ export default function App() {
 
     const today = new Date().toISOString().split('T')[0];
     if (date > today) {
-      alert("Cannot add expenditure for a future date.");
+      showAlert("Cannot add expenditure for a future date.");
       return;
     }
 
@@ -2896,7 +2970,7 @@ export default function App() {
 
     const fundedSoe = alloc.fundedSOEs.find(f => f.soeId === soeId);
     if (!fundedSoe) {
-      alert("Selected SOE is not funded for this allocation.");
+      showAlert("Selected SOE is not funded for this allocation.");
       return;
     }
 
@@ -2905,14 +2979,15 @@ export default function App() {
       .reduce((sum, ex) => sum + ex.amount, 0);
 
     if (amount > (fundedSoe.amount - currentSpentOnSoe)) {
-      alert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
+      showAlert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
       return;
     }
 
     try {
       if (editingItem?.type === 'Expenditure') {
         await updateDoc(doc(db, 'expenditures', editingItem.item.id), { 
-          allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId 
+          allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId,
+          updatedAt: Date.now()
         });
         setEditingItem(null);
         e.target.reset();
@@ -2922,7 +2997,9 @@ export default function App() {
           rangeId: alloc.rangeId,
           createdBy: user.uid,
           status: 'pending',
-          isLocked: false
+          isLocked: false,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
         });
         // Clear only the amount field to allow quick entry for same activity/SOE
         if (e.target.amount) e.target.amount.value = '';
@@ -2932,8 +3009,8 @@ export default function App() {
     }
   };
 
-  const handleDelete = async (collectionName: string, id: string) => {
-    if (window.confirm('Are you sure you want to delete this entry?')) {
+  const handleDelete = (collectionName: string, id: string) => {
+    showConfirm('Are you sure you want to delete this entry?', async () => {
       try {
         await deleteDoc(doc(db, collectionName, id));
         if (editingItem?.item?.id === id) {
@@ -2942,7 +3019,7 @@ export default function App() {
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, collectionName);
       }
-    }
+    });
   };
 
   const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
@@ -2953,14 +3030,14 @@ export default function App() {
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    if (window.confirm('Delete this user access?')) {
+  const handleDeleteUser = (userId: string) => {
+    showConfirm('Delete this user access?', async () => {
       try {
         await deleteDoc(doc(db, 'users', userId));
       } catch (error) {
         handleFirestoreError(error, OperationType.DELETE, 'users');
       }
-    }
+    });
   };
 
   const handleCreateNewUser = async (e: React.FormEvent) => {
@@ -2981,11 +3058,15 @@ export default function App() {
       const userCredential = await createUserWithEmailAndPassword(secondaryAuth, emailToUse, newUserPassword);
       
       // Add user to firestore
-      await setDoc(doc(db, 'users', userCredential.user.uid), {
-        email: emailToUse,
-        role: newUserRole,
-        password: newUserPassword
-      });
+      try {
+        await setDoc(doc(db, 'users', userCredential.user.uid), {
+          email: emailToUse,
+          role: newUserRole,
+          password: newUserPassword
+        });
+      } catch (firestoreError) {
+        handleFirestoreError(firestoreError, OperationType.CREATE, 'users');
+      }
       
       // Sign out the secondary app
       await secondaryAuth.signOut();
@@ -2993,12 +3074,12 @@ export default function App() {
       setNewUserEmail('');
       setNewUserPassword('');
       setNewUserRole('deo');
-      alert('User created successfully!');
+      showAlert('User created successfully!');
     } catch (error: any) {
       if (error.code === 'auth/email-already-in-use') {
-        alert(`Error: This User ID / Email already exists in the system. If you deleted them previously, they still exist in the authentication database. You cannot recreate them with the same ID.`);
+        showAlert(`Error: This User ID / Email already exists in the system. If you deleted them previously, they still exist in the authentication database. You cannot recreate them with the same ID.`);
       } else {
-        alert(`Error creating user: ${error.message}`);
+        showAlert(`Error creating user: ${error.message}`);
       }
     }
   };
@@ -3012,21 +3093,21 @@ export default function App() {
       });
       setEditingPasswordId(null);
       setNewPasswordInput('');
-      alert('Password updated in system records. Note: This does not change the actual login password in Firebase Auth. The user should use the forgot password link if they cannot log in.');
+      showAlert('Password updated in system records. Note: This does not change the actual login password in Firebase Auth. The user should use the forgot password link if they cannot log in.');
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'users');
     }
   };
 
-  const handleResetPassword = async (email: string) => {
-    if (window.confirm(`Send password reset email to ${email}?`)) {
+  const handleResetPassword = (email: string) => {
+    showConfirm(`Send password reset email to ${email}?`, async () => {
       try {
         await sendPasswordResetEmail(auth, email);
-        alert('Password reset email sent!');
+        showAlert('Password reset email sent!');
       } catch (error: any) {
-        alert(`Error sending reset email: ${error.message}`);
+        showAlert(`Error sending reset email: ${error.message}`);
       }
-    }
+    });
   };
 
   const renderUserManagement = () => (
@@ -3433,12 +3514,24 @@ export default function App() {
       const activity = row.hierarchy.split(' > ')[2];
       const subActivity = row.hierarchy.split(' > ')[3];
 
-      return (
+      const matchesFilters = (
         (!reportFilters.scheme || scheme === reportFilters.scheme) &&
         (!reportFilters.sector || sector === reportFilters.sector) &&
         (!reportFilters.activity || activity === reportFilters.activity) &&
         (!reportFilters.subActivity || subActivity === reportFilters.subActivity)
       );
+
+      if (!matchesFilters) return false;
+
+      if (soeAbstractSearch) {
+        const searchStr = soeAbstractSearch.toLowerCase();
+        return (
+          row.hierarchy.toLowerCase().includes(searchStr) ||
+          row.soeName.toLowerCase().includes(searchStr)
+        );
+      }
+
+      return true;
     }).map(r => ({
       ...r,
       expenditure: r.spent, // Rename for report consistency
@@ -3574,9 +3667,23 @@ export default function App() {
                 <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
                   <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
                 </h4>
-                <button type="button" className="text-gray-500 hover:text-gray-700">
-                  {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
-                </button>
+                <div className="flex items-center gap-4">
+                  {showSoeAbstract && (
+                    <div className="relative" onClick={(e) => e.stopPropagation()}>
+                      <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Search abstract..."
+                        value={soeAbstractSearch}
+                        onChange={(e) => setSoeAbstractSearch(e.target.value)}
+                        className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                      />
+                    </div>
+                  )}
+                  <button type="button" className="text-gray-500 hover:text-gray-700">
+                    {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                  </button>
+                </div>
               </div>
               
               {showSoeAbstract && (
@@ -3976,7 +4083,7 @@ export default function App() {
                 <button
                   onClick={async () => {
                     await preloadDatabase(selectedFY);
-                    alert('Preloaded data added successfully!');
+                    showAlert('Preloaded data added successfully!');
                   }}
                   className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm"
                 >
@@ -4283,7 +4390,7 @@ export default function App() {
                     )}
                   </div>
                 )},
-                {key: 'remarks', label: 'Description / Remarks', render: (val) => val || '-'},
+                {key: 'remarks', label: 'Description / Remarks', render: (val) => <span className="text-xs italic text-gray-500">{val || '-'}</span>},
                 {key: 'status', label: 'Funding Status', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
@@ -4346,101 +4453,8 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'Reconciliation' && renderReconciliation()}
-
         {activeTab === 'Expenditures' && (
           <div className="space-y-4">
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-bold text-gray-700">Filters</h3>
-                </div>
-                <button 
-                  onClick={() => setIsExpFilterExpanded(!isExpFilterExpanded)}
-                  className="text-emerald-600 hover:text-emerald-700 flex items-center gap-1 text-sm font-medium"
-                >
-                  {isExpFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  {isExpFilterExpanded ? 'Collapse' : 'Expand'}
-                </button>
-              </div>
-
-              {isExpFilterExpanded && (
-                <div className="space-y-4 animate-in slide-in-from-top-2 duration-200">
-                  <div className="flex flex-wrap gap-4 items-end">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
-                      <input 
-                        type="date" 
-                        value={expDateRange.start} 
-                        onChange={(e) => setExpDateRange(prev => ({ ...prev, start: e.target.value }))}
-                        className="p-2 border rounded text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
-                      <input 
-                        type="date" 
-                        value={expDateRange.end} 
-                        onChange={(e) => setExpDateRange(prev => ({ ...prev, end: e.target.value }))}
-                        className="p-2 border rounded text-sm"
-                      />
-                    </div>
-                    <button 
-                      onClick={() => {
-                        setExpDateRange({ start: '', end: '' });
-                        setExpFilters({ schemeId: '', sectorId: '', activityId: '' });
-                      }}
-                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded bg-gray-50"
-                    >
-                      Clear All Filters
-                    </button>
-                  </div>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Scheme</label>
-                      <select 
-                        value={expFilters.schemeId} 
-                        onChange={(e) => setExpFilters(prev => ({ ...prev, schemeId: e.target.value, sectorId: '', activityId: '' }))}
-                        className="w-full p-2 border rounded text-sm"
-                      >
-                        <option value="">All Schemes</option>
-                        {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Sector</label>
-                      <select 
-                        value={expFilters.sectorId} 
-                        disabled={!expFilters.schemeId}
-                        onChange={(e) => setExpFilters(prev => ({ ...prev, sectorId: e.target.value, activityId: '' }))}
-                        className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                      >
-                        <option value="">All Sectors</option>
-                        {currentSectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Activity</label>
-                      <select 
-                        value={expFilters.activityId} 
-                        disabled={!expFilters.schemeId}
-                        onChange={(e) => setExpFilters(prev => ({ ...prev, activityId: e.target.value }))}
-                        className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                      >
-                        <option value="">All Activities</option>
-                        {currentActivities.filter(a => {
-                          if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
-                          if (expFilters.schemeId) return a.schemeId === expFilters.schemeId;
-                          return true;
-                        }).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
             {renderSimpleManager(
               'Expenditure', 
               currentExpenses, 
@@ -4498,7 +4512,7 @@ export default function App() {
                 }},
                 {key: 'description', label: 'Description', render: (val, item) => (
                   <div>
-                    <div>{val}</div>
+                    <div className="text-xs italic text-gray-500">{val}</div>
                     {item.approvalReason && (
                       <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
                         Action Reason: {item.approvalReason}
@@ -4585,10 +4599,13 @@ export default function App() {
                     </button>
                   )}
                 </div>
-              )
+              ),
+              false
             )}
           </div>
         )}
+
+        {activeTab === 'Reconciliation' && renderReconciliation()}
 
         {activeTab === 'Ledger' && (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -4688,6 +4705,61 @@ export default function App() {
 
         {renderFundingModal()}
         {renderApprovalModal()}
+
+        {/* Global Alert Modal */}
+        {alertModal.isOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-in zoom-in duration-200">
+              <div className="bg-emerald-600 p-4 text-white flex justify-between items-center">
+                <h3 className="font-bold">Notification</h3>
+                <button onClick={() => setAlertModal({ ...alertModal, isOpen: false })}><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-6">
+                <p className="text-gray-700">{alertModal.message}</p>
+                <div className="mt-6 flex justify-end">
+                  <button 
+                    onClick={() => setAlertModal({ ...alertModal, isOpen: false })}
+                    className="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 transition-colors font-medium"
+                  >
+                    OK
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Global Confirm Modal */}
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden animate-in zoom-in duration-200">
+              <div className="bg-amber-500 p-4 text-white flex justify-between items-center">
+                <h3 className="font-bold">Confirm Action</h3>
+                <button onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}><X className="w-5 h-5" /></button>
+              </div>
+              <div className="p-6">
+                <p className="text-gray-700">{confirmModal.message}</p>
+                <div className="mt-6 flex justify-end gap-3">
+                  <button 
+                    onClick={() => setConfirmModal({ ...confirmModal, isOpen: false })}
+                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    onClick={() => {
+                      confirmModal.onConfirm();
+                      setConfirmModal({ ...confirmModal, isOpen: false });
+                    }}
+                    className="bg-amber-500 text-white px-4 py-2 rounded-lg hover:bg-amber-600 transition-colors font-medium"
+                  >
+                    Confirm
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>
