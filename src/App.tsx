@@ -74,7 +74,7 @@ type Expense = {
   createdAt?: number;
   approvalReason?: string;
 };
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
 
 enum OperationType {
   CREATE = 'create',
@@ -183,7 +183,7 @@ export default function App() {
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
   const [showReconSummary, setShowReconSummary] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
   const [fundingAllocation, setFundingAllocation] = useState<Allocation | null>(null);
 
@@ -633,9 +633,11 @@ export default function App() {
 
   const currentAllocations = useMemo(() => {
     let filtered = baseAllocations;
-    console.log('baseAllocations count:', baseAllocations.length);
-    console.log('allocFilters:', allocFilters);
     
+    if (userRangeId) {
+      filtered = filtered.filter(a => a.rangeId === userRangeId);
+    }
+
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
     }
@@ -869,7 +871,7 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-4' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-3`}>
+        <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-4' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-2 sm:gap-3`}>
           <StatCard title={userRangeId ? "Total Allocation" : "Total SOE Budget"} amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
           {!userRangeId && <StatCard title="Total Received (Try)" amount={totalReceivedInTry} icon={<Landmark />} color="text-indigo-500" />}
           <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
@@ -958,7 +960,7 @@ export default function App() {
             </div>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-sm">
+            <table className="w-full text-left border-collapse text-sm min-w-[600px]">
               <thead>
                 <tr className="bg-gray-50 text-gray-600 font-semibold">
                   <th className="p-3 border-b">Scheme</th>
@@ -1018,7 +1020,7 @@ export default function App() {
             <Activity className="h-5 w-5 text-emerald-600" /> Live SOE Budget Tracker
           </h3>
           <div className="overflow-x-auto max-h-96">
-            <table className="w-full text-left border-collapse text-sm">
+            <table className="w-full text-left border-collapse text-sm min-w-[1000px]">
               <thead className="sticky top-0 bg-white shadow-sm">
                 <tr className="bg-gray-50 text-gray-600 font-semibold">
                   <th className="p-3 border-b">Hierarchy (Scheme &gt; Sector &gt; Activity)</th>
@@ -1092,7 +1094,7 @@ export default function App() {
               <Table className="h-5 w-5 text-gray-500" /> Scheme-wise Budget
             </h3>
             <div className="overflow-x-auto h-64">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full text-left border-collapse text-sm min-w-[600px]">
                 <thead className="sticky top-0 bg-white shadow-sm">
                   <tr className="bg-gray-50 text-gray-600 font-semibold">
                     <th className="p-3 border-b">Scheme</th>
@@ -1139,7 +1141,7 @@ export default function App() {
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
+              <table className="w-full text-left border-collapse text-sm min-w-[800px]">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 font-semibold">
                     <th className="p-3 border-b">Range</th>
@@ -1198,7 +1200,7 @@ export default function App() {
               <FileText className="h-5 w-5 text-gray-500" /> Latest Expenditures
             </h3>
             <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
+              <table className="w-full text-left border-collapse min-w-[700px]">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
@@ -1285,7 +1287,7 @@ export default function App() {
           </h3>
         </div>
         <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-left border-collapse text-sm">
+          <table className="w-full text-left border-collapse text-sm min-w-[800px]">
             <thead className="sticky top-0 bg-white shadow-sm">
               <tr className="bg-gray-50 text-gray-600 font-semibold">
                 <th className="p-3 border-b">Hierarchy</th>
@@ -1349,7 +1351,7 @@ export default function App() {
       
       {isSoeTrackerExpanded && (
         <div className="overflow-x-auto max-h-80">
-          <table className="w-full text-left border-collapse text-sm">
+          <table className="w-full text-left border-collapse text-sm min-w-[1000px]">
             <thead className="sticky top-0 bg-white shadow-sm">
               <tr className="bg-gray-50 text-gray-600 font-semibold">
                 <th className="p-3 border-b">Hierarchy</th>
@@ -1794,7 +1796,7 @@ export default function App() {
     );
 
     const allocationsToReconcile = baseAllocations.filter(a => 
-      (reconSchemeId === 'all' ? provisionalSchemes.some(ps => ps.id === a.schemeId) : a.schemeId === reconSchemeId) && a.status === 'Pending SOE Funds'
+      (reconSchemeId === 'all' ? currentSchemes.some(ps => ps.id === a.schemeId) : a.schemeId === reconSchemeId) && a.status === 'Pending SOE Funds'
     );
 
     // Define the 4 SOE columns as requested
@@ -1805,7 +1807,7 @@ export default function App() {
     const hierarchy: any[] = [];
     if (reconSchemeId) {
       const schemesToProcess = reconSchemeId === 'all' 
-        ? provisionalSchemes 
+        ? currentSchemes 
         : [currentSchemes.find(s => s.id === reconSchemeId)].filter(Boolean);
       
       schemesToProcess.forEach(scheme => {
@@ -1904,8 +1906,8 @@ export default function App() {
       let title = "";
 
       if (reconSchemeId === 'all') {
-        schemeSoes = currentSoes.filter(s => provisionalSchemes.some(ps => ps.id === s.schemeId));
-        schemeAllocations = baseAllocations.filter(a => provisionalSchemes.some(ps => ps.id === a.schemeId));
+        schemeSoes = currentSoes;
+        schemeAllocations = baseAllocations;
         title = "All Schemes - SOE-wise Reconciliation Summary";
       } else {
         const scheme = currentSchemes.find(s => s.id === reconSchemeId);
@@ -1933,8 +1935,9 @@ export default function App() {
             <span className="text-xs bg-emerald-800 px-3 py-1 rounded-full border border-emerald-700">TRY Budget vs Allocated</span>
           </div>
           <div className="bg-white border border-gray-200 rounded-b-xl overflow-hidden shadow-sm">
-            <table className="w-full text-sm">
-              <thead>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm min-w-[800px]">
+                <thead>
                 <tr className="bg-gray-50 text-gray-600 border-b">
                   <th className="p-4 text-left font-bold">SOE Head</th>
                   {reconSchemeId === 'all' && <th className="p-4 text-left font-bold">Scheme</th>}
@@ -2002,6 +2005,7 @@ export default function App() {
             </table>
           </div>
         </div>
+      </div>
       );
     };
 
@@ -2064,7 +2068,7 @@ export default function App() {
             </div>
           ) : (
             <div className="overflow-x-auto border rounded-xl shadow-sm">
-              <table className="w-full border-collapse text-xs">
+              <table className="w-full border-collapse text-xs min-w-[1200px]">
                 <thead>
                   <tr className="bg-emerald-800 text-white">
                     <th className="p-3 border border-emerald-700 text-left sticky left-0 bg-emerald-800 z-10" rowSpan={2}>Hierarchy (Sector/Activity/Sub-Activity)</th>
@@ -2437,7 +2441,7 @@ export default function App() {
 
     return (
     <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) && (
+      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA'))) && (
         <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto custom-scrollbar">
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
@@ -2503,7 +2507,7 @@ export default function App() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
+          <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 <th className="p-3 border-b">SrNo</th>
@@ -4147,9 +4151,9 @@ export default function App() {
       <div className="max-w-7xl mx-auto space-y-6">
         
         {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-3 md:p-4 rounded-xl shadow-sm border border-gray-200">
           <div 
-            className="flex items-center gap-3 cursor-pointer hover:opacity-80 transition-opacity"
+            className="flex items-center gap-2 md:gap-3 cursor-pointer hover:opacity-80 transition-opacity"
             onClick={() => {
               setActiveTab('Dashboard');
               setSearchTerm('');
@@ -4158,37 +4162,39 @@ export default function App() {
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
           >
-            <img src="/logo.png" alt="Forest Budget Logo" className="h-10 w-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
-            <Landmark className="h-10 w-10 text-emerald-600 hidden" />
+            <img src="/logo.png" alt="Forest Budget Logo" className="h-8 md:h-10 w-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
+            <Landmark className="h-8 md:h-10 w-8 md:w-10 text-emerald-600 hidden" />
             <div>
-              <h1 className="text-xl md:text-2xl font-bold text-gray-900 leading-tight">Forest Budget Control</h1>
-              <p className="text-xs md:text-sm text-gray-500">Financial Management System</p>
+              <h1 className="text-lg md:text-2xl font-bold text-gray-900 leading-tight">Forest Budget Control</h1>
+              <p className="text-[10px] md:text-sm text-gray-500">Financial Management System</p>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 justify-between md:justify-end">
-            <div className="flex items-center gap-2 bg-emerald-50 px-3 py-2 rounded-lg border border-emerald-100">
-              <span className="text-sm font-semibold text-emerald-800">FY:</span>
+          <div className="flex flex-wrap items-center gap-2 md:gap-3 justify-between md:justify-end">
+            <div className="flex items-center gap-1.5 bg-emerald-50 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-emerald-100">
+              <span className="text-xs md:text-sm font-semibold text-emerald-800">FY:</span>
               <select 
                 value={selectedFY} 
                 onChange={(e) => setSelectedFY(e.target.value)}
-                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-sm"
+                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-xs md:text-sm"
               >
                 {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
               </select>
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Global Search..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 w-48 md:w-64 bg-white shadow-sm"
-                />
-              </div>
+            <div className="flex items-center gap-2 w-full md:w-auto">
+                {activeTab !== 'Dashboard' && (
+                  <div className="relative flex-1 md:flex-none">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                    <input
+                      type="text"
+                      placeholder="Search..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-8 pr-3 py-1.5 text-xs md:text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full md:w-48 lg:w-64 bg-white shadow-sm"
+                    />
+                  </div>
+                )}
               {userRole === 'admin' && currentSchemes.length === 0 && (
                 <button
                   onClick={async () => {
@@ -4209,23 +4215,23 @@ export default function App() {
                   Install
                 </button>
               )}
-              <div className="flex items-center gap-3 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 ml-2">
-                <div className="flex items-center gap-2">
-                  <div className="bg-emerald-100 p-1.5 rounded-full">
-                    <User className="w-4 h-4 text-emerald-600" />
+              <div className="flex items-center gap-2 bg-gray-50 px-2 md:px-3 py-1.5 rounded-lg border border-gray-200">
+                <div className="flex items-center gap-1.5 md:gap-2">
+                  <div className="bg-emerald-100 p-1 md:p-1.5 rounded-full">
+                    <User className="w-3 h-3 md:w-4 md:h-4 text-emerald-600" />
                   </div>
                   <div className="flex flex-col">
-                    <span className="text-sm font-bold text-gray-800 leading-none">{user.displayName || user.email?.split('@')[0]}</span>
-                    <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wider">{userRole}</span>
+                    <span className="text-xs md:text-sm font-bold text-gray-800 leading-none truncate max-w-[80px] md:max-w-none">{user.displayName || user.email?.split('@')[0]}</span>
+                    <span className="text-[8px] md:text-[10px] font-medium text-gray-500 uppercase tracking-wider">{userRole}</span>
                   </div>
                 </div>
-                <div className="w-px h-6 bg-gray-300 mx-1"></div>
+                <div className="w-px h-5 md:h-6 bg-gray-300 mx-0.5 md:mx-1"></div>
                 <button 
                   onClick={handleLogout}
-                  className="flex items-center gap-1 text-gray-500 hover:text-red-600 transition-colors text-sm font-medium"
+                  className="flex items-center gap-1 text-gray-500 hover:text-red-600 transition-colors text-xs md:text-sm font-medium"
                   title="Logout"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-3.5 h-3.5 md:w-4 md:h-4" />
                 </button>
               </div>
             </div>
@@ -4248,8 +4254,10 @@ export default function App() {
             {(userRole === 'admin' ? [
               'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
               'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports', 'Users'
-            ] : [
+            ] : userRole === 'DA' ? [
               'Dashboard', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports'
+            ] : [
+              'Dashboard', 'Allocations', 'Expenditures', 'Ledger', 'Reports'
             ]).map((item) => (
               <button 
                 key={item} 
@@ -4424,7 +4432,7 @@ export default function App() {
         {activeTab === 'SOE Heads' && renderSOEHeads()}
         {activeTab === 'Allocations' && (
           <div className="space-y-6">
-            {renderBudgetTracker()}
+            {!userRangeId && renderBudgetTracker()}
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
               <div className="flex items-center justify-between border-b pb-2">
                 <div className="flex items-center gap-2">
@@ -4469,11 +4477,12 @@ export default function App() {
                     <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Range</label>
                     <select 
                       value={allocFilters.rangeId} 
+                      disabled={!!userRangeId}
                       onChange={(e) => setAllocFilters(prev => ({ ...prev, rangeId: e.target.value }))}
-                      className="w-full p-2 border rounded text-sm"
+                      className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
                     >
                       <option value="">All Ranges</option>
-                      {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                      {ranges.filter(r => !userRangeId || r.id === userRangeId).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                     </select>
                   </div>
                 </div>
@@ -4690,7 +4699,7 @@ export default function App() {
               undefined,
               (item) => (
                 <div className="flex gap-1">
-                  {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin') && (
+                  {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin' || userRole === 'DA') && (
                     <button 
                       onClick={() => {
                         setSelectedExpenseForApproval(item);

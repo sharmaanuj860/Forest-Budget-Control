@@ -29,6 +29,11 @@ service cloud.firestore {
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver'));
     }
 
+    function isDA() {
+      return isAuthenticated() && 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'DA');
+    }
+
     function canWrite() {
       return isAdmin() || isDEO();
     }
@@ -42,7 +47,7 @@ service cloud.firestore {
     }
 
     function canApproveExpenditure() {
-      return isAdmin() || isApprover();
+      return isAdmin() || isApprover() || isDA();
     }
 
     // ===============================================================
