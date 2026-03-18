@@ -186,6 +186,15 @@ export default function App() {
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
+  const [showScrollTop, setShowScrollTop] = useState(false);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowScrollTop(window.scrollY > 300);
+    };
+    window.addEventListener('scroll', handleScroll);
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   // --- Auth & Role Check ---
   useEffect(() => {
@@ -3760,6 +3769,7 @@ export default function App() {
               setSearchTerm('');
               setEditingItem(null);
               setIsFormExpanded(window.innerWidth > 1024);
+              window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
           >
             <img src="/logo.png" alt="Forest Budget Logo" className="h-10 w-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
@@ -3837,7 +3847,7 @@ export default function App() {
         </div>
 
         {/* Navigation */}
-        <div className="bg-gray-800 rounded-lg shadow-sm mb-6 overflow-hidden">
+        <div className="bg-gray-800 rounded-lg shadow-sm mb-6 overflow-hidden sticky top-0 z-50">
           <div className="lg:hidden flex items-center justify-between p-4 border-b border-gray-700">
             <span className="text-white font-medium">Menu: {activeTab}</span>
             <button 
@@ -3865,6 +3875,7 @@ export default function App() {
                   setMenuOpen(false);
                   setIsFormExpanded(window.innerWidth > 1024);
                   setVisibleCount(10);
+                  window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
               >
@@ -3877,6 +3888,17 @@ export default function App() {
 
         {/* Tab Content */}
         {activeTab === 'Dashboard' && renderDashboard()}
+        
+        {/* Scroll to Top Button */}
+        {showScrollTop && (
+          <button
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="fixed bottom-8 right-8 bg-emerald-600 text-white p-3 rounded-full shadow-lg hover:bg-emerald-700 transition-all z-[60] animate-in fade-in zoom-in"
+            title="Scroll to Top"
+          >
+            <ChevronUp className="w-6 h-6" />
+          </button>
+        )}
         
         {activeTab === 'Financial Years' && renderSimpleManager(
           'Financial Year', 
