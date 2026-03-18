@@ -739,8 +739,10 @@ export default function App() {
         activityId: soe.activityId,
         subActivityId: soe.subActivityId
       };
-    }).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
-  }, [currentSoes, baseAllocations, baseExpenses, schemes, sectors, activities, subActivities]);
+    })
+    .filter(item => !userRangeId || item.allocated > 0)
+    .sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+  }, [currentSoes, baseAllocations, baseExpenses, schemes, sectors, activities, subActivities, userRangeId]);
 
   const soeAbstractForAllocations = useMemo(() => {
     return soeAbstractData.filter(item => {
@@ -2274,7 +2276,7 @@ export default function App() {
               <form onSubmit={handleAddSoeName} className="space-y-4">
                 <CascadingDropdowns 
                   schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                  editingItem={editingItem} type="SOE Name"
+                  editingItem={editingItem} type="SOE Name" userRangeId={userRangeId}
                 >
                   <select 
                     name="name" 
@@ -3685,31 +3687,31 @@ export default function App() {
             <h3 className="text-lg font-semibold flex items-center gap-2">
               <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
             </h3>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-1">
               <button 
                 onClick={() => setShowReportFilters(!showReportFilters)}
-                className="bg-gray-100 text-gray-700 px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-gray-200 transition-colors"
+                className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-gray-200 transition-colors border border-gray-200"
               >
-                <Filter className="w-4 h-4" /> {showReportFilters ? 'Hide Filters' : 'Show Filters'}
-                {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                <Filter className="w-3 h-3" /> {showReportFilters ? 'Hide' : 'Show'} Filters
+                {showReportFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
               </button>
               <button 
                 onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
-                className="bg-red-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-red-700 transition-colors"
+                className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
               >
-                <Download className="w-4 h-4" /> Export PDF
+                <Download className="w-3 h-3" /> PDF
               </button>
               <button 
                 onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
-                className="bg-emerald-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-emerald-700 transition-colors"
+                className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-emerald-700 transition-colors shadow-sm"
               >
-                <Download className="w-4 h-4" /> Export Excel
+                <Download className="w-3 h-3" /> Excel
               </button>
               <button 
                 onClick={downloadZip}
-                className="bg-blue-600 text-white px-4 py-2 rounded flex items-center justify-center gap-2 hover:bg-blue-700 transition-colors"
+                className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-blue-700 transition-colors shadow-sm"
               >
-                <Download className="w-4 h-4" /> Export All Data (ZIP)
+                <Download className="w-3 h-3" /> ZIP
               </button>
             </div>
           </div>
@@ -3805,26 +3807,26 @@ export default function App() {
                   <table className="w-full text-left border-collapse border border-gray-300">
                     <thead>
                       <tr className="bg-emerald-50 border-b border-gray-300">
-                        {abstractHeaders.map(h => <th key={h} className="p-3 text-xs font-bold text-emerald-900 border border-gray-300 uppercase tracking-wider">{h}</th>)}
+                        {abstractHeaders.map(h => <th key={h} className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase tracking-tight">{h}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {abstractRows.map((row, i) => (
                         <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
-                          <td className="p-3 text-xs border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
-                          <td className="p-3 text-xs border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                          <td className="p-3 text-xs border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
                         </tr>
                       ))}
                       {abstractRows.length === 0 && (
                         <tr>
-                          <td colSpan={9} className="p-8 text-center text-gray-500 border border-gray-300">No abstract data available.</td>
+                          <td colSpan={9} className="p-4 text-center text-gray-500 border border-gray-300 text-xs">No abstract data available.</td>
                         </tr>
                       )}
                     </tbody>
@@ -3844,13 +3846,15 @@ export default function App() {
             <table className="w-full text-left border-collapse border border-gray-300">
               <thead>
                 <tr className="bg-gray-100 border-b border-gray-300">
-                  {detailedHeaders.map(h => <th key={h} className="p-3 text-sm font-semibold text-gray-700 border border-gray-300">{h}</th>)}
+                  {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
                 </tr>
               </thead>
               <tbody>
                 {groupedData.map((row, i) => {
                   let rowClass = "border-b border-gray-300 hover:bg-gray-50";
+                  let textClass = "text-[10px]";
                   if (row.isTotal) {
+                    textClass = "text-[9px] uppercase tracking-tight";
                     if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
                     else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
                     else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
@@ -3860,17 +3864,17 @@ export default function App() {
 
                   return (
                     <tr key={i} className={rowClass}>
-                      <td className="p-3 text-sm border border-gray-300">{row.range}</td>
-                      <td className="p-3 text-sm border border-gray-300">{row.scheme}</td>
-                      <td className="p-3 text-sm border border-gray-300">{row.sector}</td>
-                      <td className="p-3 text-sm border border-gray-300">{row.activity}</td>
-                      <td className="p-3 text-sm border border-gray-300">{row.subActivity}</td>
-                      <td className="p-3 text-sm font-medium border border-gray-300">{row.soe}</td>
-                      {!userRangeId && <td className={`p-3 text-sm text-right border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
-                      <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
-                      {isGlobalUser && <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
-                      <td className={`p-3 text-sm text-right font-medium border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
-                      <td className={`p-3 text-sm text-right font-bold border border-gray-300 ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
+                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
+                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
+                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
+                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
+                      <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
+                      {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
+                      <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
+                      {isGlobalUser && <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
+                      <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
+                      <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
                     </tr>
                   );
                 })}
@@ -4422,7 +4426,7 @@ export default function App() {
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
             schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Sub-Activity"
+            editingItem={editingItem} type="Sub-Activity" userRangeId={userRangeId}
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-1.5 border rounded text-sm" />
           </CascadingDropdowns>,
@@ -4433,61 +4437,6 @@ export default function App() {
         {activeTab === 'Allocations' && (
           <div className="space-y-6">
             {!userRangeId && renderBudgetTracker()}
-            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
-              <div className="flex items-center justify-between border-b pb-2">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-emerald-600" />
-                  <h3 className="font-bold text-gray-700">Filters</h3>
-                </div>
-                <button 
-                  onClick={() => setIsAllocFilterExpanded(!isAllocFilterExpanded)}
-                  className="text-emerald-600 hover:text-emerald-700 flex items-center gap-1 text-sm font-medium"
-                >
-                  {isAllocFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                  {isAllocFilterExpanded ? 'Collapse' : 'Expand'}
-                </button>
-              </div>
-
-              {isAllocFilterExpanded && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in slide-in-from-top-2 duration-200">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Scheme</label>
-                    <select 
-                      value={allocFilters.schemeId} 
-                      onChange={(e) => setAllocFilters(prev => ({ ...prev, schemeId: e.target.value, activityId: '' }))}
-                      className="w-full p-2 border rounded text-sm"
-                    >
-                      <option value="">All Schemes</option>
-                      {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Activity</label>
-                    <select 
-                      value={allocFilters.activityId} 
-                      disabled={!allocFilters.schemeId}
-                      onChange={(e) => setAllocFilters(prev => ({ ...prev, activityId: e.target.value }))}
-                      className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                    >
-                      <option value="">All Activities</option>
-                      {currentActivities.filter(a => a.schemeId === allocFilters.schemeId).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Range</label>
-                    <select 
-                      value={allocFilters.rangeId} 
-                      disabled={!!userRangeId}
-                      onChange={(e) => setAllocFilters(prev => ({ ...prev, rangeId: e.target.value }))}
-                      className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                    >
-                      <option value="">All Ranges</option>
-                      {ranges.filter(r => !userRangeId || r.id === userRangeId).map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-              )}
-            </div>
             {renderSimpleManager(
               'Allocation', 
               currentAllocations, 
@@ -4546,7 +4495,7 @@ export default function App() {
               (id) => handleDelete('allocations', id), 
               <CascadingDropdowns 
                 schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                editingItem={editingItem} type="Allocation"
+                editingItem={editingItem} type="Allocation" userRangeId={userRangeId}
                 onSelectionChange={setAllocationFormFilters}
               >
                 <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
@@ -4679,7 +4628,7 @@ export default function App() {
               (id) => handleDelete('expenditures', id), 
               <CascadingDropdowns 
                 schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                editingItem={editingItem} type="Expenditure"
+                editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
               >
                 <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
                 <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
@@ -4891,7 +4840,7 @@ export default function App() {
 
 function CascadingDropdowns({ 
   schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, ranges, expenses,
-  editingItem, type, children, onSelectionChange 
+  editingItem, type, children, onSelectionChange, userRangeId 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -4988,7 +4937,9 @@ function CascadingDropdowns({
     }
   }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
 
-  const filteredSchemes = schemes;
+  const filteredSchemes = type === 'Expenditure' 
+    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
+    : schemes;
 
   // Deduplicate by name to remove repeated items
   const getUniqueByName = (items: any[]) => {
@@ -5003,7 +4954,9 @@ function CascadingDropdowns({
 
   const filteredSectors = sectors.filter((s: any) => {
     if (!schemeId) return false;
-    return s.schemeId === schemeId;
+    if (s.schemeId !== schemeId) return false;
+    if (type === 'Expenditure' && !allocations.some((a: any) => a.sectorId === s.id)) return false;
+    return true;
   });
 
   const filteredActivities = activities.filter((a: any) => {
@@ -5015,12 +4968,32 @@ function CascadingDropdowns({
       const sec = sectors.find((s: any) => s.id === a.sectorId);
       if (sec && sec.schemeId !== schemeId) return false;
     }
+    if (type === 'Expenditure' && !allocations.some((al: any) => al.activityId === a.id)) return false;
     return true;
   });
 
   const filteredSubActivities = subActivities.filter((sa: any) => {
     if (!activityId) return false;
-    return sa.activityId === activityId;
+    if (sa.activityId !== activityId) return false;
+    if (type === 'Expenditure' && !allocations.some((al: any) => al.subActivityId === sa.id)) return false;
+    return true;
+  });
+
+  const filteredSoes = soes.filter((s: any) => {
+    if (!schemeId) return false;
+    if (s.schemeId && s.schemeId !== schemeId) return false;
+    if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
+    if (activityId && s.activityId && s.activityId !== activityId) return false;
+    if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+    // Relaxed Expenditure check to show all SOEs matching the hierarchy
+    return true;
+  });
+  const filteredAllocations = allocations.filter((a: any) => {
+    if (schemeId && a.schemeId !== schemeId) return false;
+    if (sectorId && a.sectorId !== sectorId) return false;
+    if (activityId && a.activityId !== activityId) return false;
+    if (subActivityId && a.subActivityId !== subActivityId) return false;
+    return true;
   });
 
   // Auto-selection logic
@@ -5042,22 +5015,22 @@ function CascadingDropdowns({
     }
   }, [filteredSubActivities, subActivityId, activityId, editingItem]);
 
-  const filteredSoes = soes.filter((s: any) => {
-    if (!schemeId) return false;
-    if (s.schemeId && s.schemeId !== schemeId) return false;
-    if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
-    if (activityId && s.activityId && s.activityId !== activityId) return false;
-    if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
-    // Relaxed Expenditure check to show all SOEs matching the hierarchy
-    return true;
-  });
-  const filteredAllocations = allocations.filter((a: any) => {
-    if (schemeId && a.schemeId !== schemeId) return false;
-    if (sectorId && a.sectorId !== sectorId) return false;
-    if (activityId && a.activityId !== activityId) return false;
-    if (subActivityId && a.subActivityId !== subActivityId) return false;
-    return true;
-  });
+  // Auto-selection for allocationId (Expenditure only)
+  useEffect(() => {
+    if (type === 'Expenditure' && filteredAllocations.length === 1 && !allocationId && !editingItem) {
+      setAllocationId(filteredAllocations[0].id);
+    }
+  }, [filteredAllocations, allocationId, type, editingItem]);
+
+  // Auto-selection for soeId (Expenditure only)
+  useEffect(() => {
+    if (type === 'Expenditure' && allocationId) {
+      const alloc = allocations.find((a: any) => a.id === allocationId);
+      if (alloc && alloc.fundedSOEs && alloc.fundedSOEs.length === 1 && !soeId && !editingItem) {
+        setSoeId(alloc.fundedSOEs[0].soeId);
+      }
+    }
+  }, [allocationId, soeId, type, allocations, editingItem]);
 
   return (
     <>
@@ -5200,22 +5173,34 @@ function CascadingDropdowns({
 
       {type === 'Expenditure' && (
         <div className="space-y-2">
-          <div className="flex gap-2">
-            <select 
-              name="allocationId"
-              className="w-full p-1.5 border rounded text-sm" 
-              value={allocationId} 
-              onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
-              required
-            >
-              <option value="">Select Allocation (Range)</option>
-              {filteredAllocations.map((a: any) => {
-                const r = ranges.find((r: any) => r.id === a.rangeId);
-                return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
-              })}
-            </select>
-            <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
-          </div>
+          {(!userRangeId || filteredAllocations.length > 1) ? (
+            <div className="flex gap-2">
+              <select 
+                name="allocationId"
+                className="w-full p-1.5 border rounded text-sm" 
+                value={allocationId} 
+                onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
+                required
+              >
+                <option value="">Select Allocation (Range)</option>
+                {filteredAllocations.map((a: any) => {
+                  const r = ranges.find((r: any) => r.id === a.rangeId);
+                  return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
+                })}
+              </select>
+              <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
+            </div>
+          ) : (
+            <>
+              <input type="hidden" name="allocationId" value={allocationId} />
+              {allocationId && (
+                <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
+                  <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
+                  <span>Limit: ₹{allocations.find((a: any) => a.id === allocationId)?.amount.toLocaleString()}</span>
+                </div>
+              )}
+            </>
+          )}
 
           {allocationId && (
             <div className="flex flex-col gap-1">
