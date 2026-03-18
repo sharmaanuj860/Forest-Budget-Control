@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -41,7 +41,7 @@ type SOE = {
 
 type Allocation = { id: string; rangeId: string; schemeId: string; sectorId?: string; activityId?: string; subActivityId?: string; amount: number; status: 'Pending SOE Funds' | 'Funded'; fundedSOEs: { soeId: string; amount: number }[]; fyId?: string; financialYear?: string; remarks?: string };
 type Expense = { id: string; allocationId: string; soeId: string; amount: number; date: string; description: string; fyId?: string; financialYear?: string; status: 'pending' | 'approved' | 'rejected'; isLocked: boolean; approvalId?: number };
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
 
 enum OperationType {
   CREATE = 'create',
@@ -130,11 +130,15 @@ const getReceivedInTry = (s: any) => {
   return Number(val) || 0;
 };
 
+const ALLOWED_SOES = ['20 OC', '21 Maint', '30MV', '33M&S', '36M&W', 'Provisional'];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [allocationAmount, setAllocationAmount] = useState<string>('');
+  const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [visibleCount, setVisibleCount] = useState(10);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
   const [rangeSearch, setRangeSearch] = useState('');
@@ -166,6 +170,7 @@ export default function App() {
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
+  const [visiblePasswords, setVisiblePasswords] = useState<{[key: string]: boolean}>({});
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -175,7 +180,7 @@ export default function App() {
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
-  const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '' });
+  const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
   const [reconSchemeId, setReconSchemeId] = useState('');
   const [reconData, setReconData] = useState<any>({});
 
@@ -484,7 +489,6 @@ export default function App() {
   }, [user]);
 
   // --- Derived Data / Helpers ---
-  const ALLOWED_SOES = ['20 OC', '21 Maint', '30MV', '33M&S', '36M&W', 'Provisional'];
   const currentSchemes = schemes;
   const currentSectors = sectors;
   const currentActivities = activities;
@@ -748,8 +752,8 @@ export default function App() {
     });
 
     const soeDashboardSummary = soeAbstractData.filter(item => {
-      if (dashboardSearch) {
-        const lowerSearch = dashboardSearch.toLowerCase();
+      const lowerSearch = (dashboardSearch || searchTerm).toLowerCase();
+      if (lowerSearch) {
         return item.soeName.toLowerCase().includes(lowerSearch) || item.hierarchy.toLowerCase().includes(lowerSearch);
       }
       return true;
@@ -832,11 +836,17 @@ export default function App() {
               </thead>
               <tbody>
                 {activitySummary
-                  .filter(act => 
-                    act.scheme.toLowerCase().includes(dashboardSearch.toLowerCase()) ||
-                    act.sector.toLowerCase().includes(dashboardSearch.toLowerCase()) ||
-                    act.name.toLowerCase().includes(dashboardSearch.toLowerCase())
-                  )
+                  .filter(act => {
+                    const searchStr = (dashboardSearch || searchTerm).toLowerCase();
+                    return (
+                      act.scheme.toLowerCase().includes(searchStr) ||
+                      act.sector.toLowerCase().includes(searchStr) ||
+                      act.name.toLowerCase().includes(searchStr) ||
+                      act.allocated.toString().includes(searchStr) ||
+                      act.spent.toString().includes(searchStr) ||
+                      act.balance.toString().includes(searchStr)
+                    );
+                  })
                   .slice(0, showAllBudget ? undefined : 5)
                   .map((act, idx) => (
                     <tr key={idx} className="border-b hover:bg-gray-50 transition-colors">
@@ -1250,7 +1260,7 @@ export default function App() {
     </div>
   );
 
-  const renderHierarchy = (item: any) => {
+  const getHierarchyText = (item: any) => {
     let hierarchy = '';
     if (item.subActivityId) {
       const sa = subActivities.find(sa => sa.id === item.subActivityId);
@@ -1271,7 +1281,11 @@ export default function App() {
       const sch = schemes.find(sc => sc.id === item.schemeId);
       hierarchy = sch?.name || '';
     }
-    return <span className="text-xs text-gray-500">{hierarchy || 'Global (No Hierarchy)'}</span>;
+    return hierarchy || 'Global (No Hierarchy)';
+  };
+
+  const renderHierarchy = (item: any) => {
+    return <span className="text-xs text-gray-500">{getHierarchyText(item)}</span>;
   };
 
 
@@ -1309,48 +1323,41 @@ export default function App() {
   };
 
   const renderBudgetTracker = () => {
-    const summary = currentSchemes.map(sch => {
-      const schSoes = currentSoes.filter(s => s.schemeId === sch.id);
-      const schAllocations = baseAllocations.filter(a => a.schemeId === sch.id);
+    // Flatten all SOEs with their hierarchy for the table
+    const flattenedData = currentSoes.map(soe => {
+      const scheme = currentSchemes.find(s => s.id === soe.schemeId);
+      const sector = currentSectors.find(s => s.id === soe.sectorId);
       
-      const totalSoeBudget = schSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      const allocatedBudget = schAllocations.reduce((sum, a) => sum + a.amount, 0);
-      const toBeAllocated = totalSoeBudget - allocatedBudget;
-
-      const sectorsSummary = currentSectors.filter(sec => sec.schemeId === sch.id).map(sec => {
-        const secSoes = schSoes.filter(s => s.sectorId === sec.id);
-        const secAllocations = schAllocations.filter(a => a.sectorId === sec.id);
-        
-        const secTotalSoe = secSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-        const secAllocated = secAllocations.reduce((sum, a) => sum + a.amount, 0);
-        
-        const soeBreakdown = secSoes.map(soe => {
-          const allocated = getSoeAllocated(soe.id);
-          return {
-            name: soe.name,
-            total: getReceivedInTry(soe),
-            allocated: allocated,
-            balance: getReceivedInTry(soe) - allocated
-          };
-        }).filter(s => s.total > 0 || s.allocated > 0);
-
-        return {
-          name: sec.name,
-          total: secTotalSoe,
-          allocated: secAllocated,
-          balance: secTotalSoe - secAllocated,
-          soeBreakdown
-        };
-      }).filter(s => s.total > 0 || s.allocated > 0);
+      const sanctioned = getApprovedBudget(soe);
+      const approved = getReceivedInTry(soe);
+      const allocated = getSoeAllocated(soe.id);
+      const balance = approved - allocated;
 
       return {
-        name: sch.name,
-        total: totalSoeBudget,
-        allocated: allocatedBudget,
-        balance: toBeAllocated,
-        sectors: sectorsSummary
+        id: soe.id,
+        schemeName: scheme?.name || 'Unknown Scheme',
+        sectorName: sector?.name || 'Unknown Sector',
+        soeName: soe.name,
+        sanctioned,
+        approved,
+        allocated,
+        balance
       };
-    }).filter(s => s.total > 0 || s.allocated > 0);
+    }).filter(item => item.sanctioned > 0 || item.approved > 0 || item.allocated > 0);
+
+    // Apply search filter
+    const filteredData = flattenedData.filter(item => {
+      const searchStr = trackerSearch.toLowerCase() || searchTerm.toLowerCase();
+      return (
+        item.schemeName.toLowerCase().includes(searchStr) ||
+        item.sectorName.toLowerCase().includes(searchStr) ||
+        item.soeName.toLowerCase().includes(searchStr) ||
+        item.sanctioned.toString().includes(searchStr) ||
+        item.approved.toString().includes(searchStr) ||
+        item.allocated.toString().includes(searchStr) ||
+        item.balance.toString().includes(searchStr)
+      );
+    });
 
     return (
       <div className="bg-white rounded-xl shadow-sm border border-emerald-100 overflow-hidden mb-6">
@@ -1363,73 +1370,75 @@ export default function App() {
               <TrendingDown className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="font-bold text-emerald-900 text-sm">Live Budget Tracker</h3>
-              <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Real-time Scheme & Sector Availability</p>
+              <h3 className="font-bold text-emerald-900 text-sm">Live Budget Tracker (Abstract Table)</h3>
+              <p className="text-[10px] text-emerald-600 font-medium uppercase tracking-wider">Real-time SOE-wise Allocation Status</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <div className="relative" onClick={(e) => e.stopPropagation()}>
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-emerald-500" />
+              <input
+                type="text"
+                placeholder="Search budget details..."
+                value={trackerSearch}
+                onChange={(e) => setTrackerSearch(e.target.value)}
+                className="pl-8 pr-3 py-1.5 text-xs border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 w-48 md:w-64 bg-white"
+              />
+            </div>
             <span className="text-[10px] bg-emerald-200 text-emerald-800 px-2 py-0.5 rounded-full font-bold">
-              {summary.length} Schemes Active
+              {filteredData.length} Records
             </span>
             {isSoeTrackerExpanded ? <ChevronUp className="w-5 h-5 text-emerald-600" /> : <ChevronDown className="w-5 h-5 text-emerald-600" />}
           </div>
         </div>
 
         {isSoeTrackerExpanded && (
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
-            {summary.map(sch => (
-              <div key={sch.name} className="bg-white p-4 rounded-xl border border-gray-100 hover:border-emerald-200 hover:shadow-md transition-all group">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-bold text-emerald-900 truncate text-sm group-hover:text-emerald-700" title={sch.name}>{sch.name}</h4>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Total SOE Budget:</span>
-                    <span className="font-semibold text-gray-900">₹{sch.total.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-xs">
-                    <span className="text-gray-500">Allocated to Ranges:</span>
-                    <span className="font-semibold text-blue-600">₹{sch.allocated.toLocaleString()}</span>
-                  </div>
-                  <div className="flex justify-between text-xs pt-1 border-t border-gray-50">
-                    <span className="text-gray-500 font-medium">Balance to Allocate:</span>
-                    <span className={`font-bold ${sch.balance > 0 ? 'text-orange-600' : 'text-emerald-600'}`}>
-                      ₹{sch.balance.toLocaleString()}
-                    </span>
-                  </div>
-                  
-                  {sch.sectors.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-gray-100">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase mb-2">Sector Breakdown</p>
-                      <div className="max-h-32 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
-                        {sch.sectors.map(sec => (
-                          <div key={sec.name} className="flex flex-col p-1.5 bg-gray-50 rounded text-[10px] hover:bg-emerald-50 transition-colors">
-                            <div className="flex justify-between font-medium mb-1">
-                              <span className="truncate w-2/3">{sec.name}</span>
-                              <span className="text-emerald-700">₹{sec.total.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-500 mb-1">
-                              <span>Allocated: ₹{sec.allocated.toLocaleString()}</span>
-                              <span className={sec.balance > 0 ? 'text-orange-500' : 'text-gray-400'}>Bal: ₹{sec.balance.toLocaleString()}</span>
-                            </div>
-                            {sec.soeBreakdown.length > 0 && (
-                              <div className="mt-1 pl-2 border-l-2 border-emerald-200 space-y-1">
-                                {sec.soeBreakdown.map(soe => (
-                                  <div key={soe.name} className="flex justify-between text-[9px] text-gray-500">
-                                    <span className="truncate w-1/2">{soe.name}</span>
-                                    <span>Bal: <span className={soe.balance > 0 ? 'text-emerald-600 font-medium' : 'text-gray-400'}>₹{soe.balance.toLocaleString()}</span></span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+          <div className="p-0 overflow-x-auto animate-in fade-in slide-in-from-top-2 duration-300">
+            <table className="w-full text-left border-collapse min-w-[1000px]">
+              <thead>
+                <tr className="bg-emerald-600 text-white text-[11px] uppercase tracking-wider">
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500">Scheme</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500">Sector</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500">SOE Head</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Total Sanction (Approved)</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Received Budget (Try)</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Allocated to Ranges</th>
+                  <th className="px-4 py-3 font-bold text-right">Balance to Allocate</th>
+                </tr>
+              </thead>
+              <tbody className="text-[11px]">
+                {filteredData.length > 0 ? (
+                  filteredData.map((item, idx) => (
+                    <tr key={item.id} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-emerald-50/30'} hover:bg-emerald-100/50 transition-colors border-b border-emerald-50`}>
+                      <td className="px-4 py-2.5 font-medium text-gray-900 border-r border-emerald-50 min-w-[150px]">{item.schemeName}</td>
+                      <td className="px-4 py-2.5 text-gray-600 border-r border-emerald-50 min-w-[150px]">{item.sectorName}</td>
+                      <td className="px-4 py-2.5 font-bold text-emerald-800 border-r border-emerald-50">{item.soeName}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-gray-500 border-r border-emerald-50">₹{item.sanctioned.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-gray-900 border-r border-emerald-50">₹{item.approved.toLocaleString()}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold text-blue-600 border-r border-emerald-50">₹{item.allocated.toLocaleString()}</td>
+                      <td className={`px-4 py-2.5 text-right font-bold ${item.balance > 0 ? 'text-orange-600' : 'text-emerald-600'}`}>
+                        ₹{item.balance.toLocaleString()}
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={7} className="px-4 py-8 text-center text-gray-400 italic">
+                      No budget records found matching your search.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+              <tfoot className="bg-emerald-50 font-bold text-emerald-900 text-[11px]">
+                <tr>
+                  <td colSpan={3} className="px-4 py-3 text-right uppercase tracking-wider border-r border-emerald-100">Grand Total</td>
+                  <td className="px-4 py-3 text-right border-r border-emerald-100">₹{filteredData.reduce((sum, i) => sum + i.sanctioned, 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right border-r border-emerald-100">₹{filteredData.reduce((sum, i) => sum + i.approved, 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right border-r border-emerald-100">₹{filteredData.reduce((sum, i) => sum + i.allocated, 0).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">₹{filteredData.reduce((sum, i) => sum + i.balance, 0).toLocaleString()}</td>
+                </tr>
+              </tfoot>
+            </table>
           </div>
         )}
       </div>
@@ -1952,10 +1961,15 @@ export default function App() {
   };
 
   const renderSOEHeads = () => {
-    const filteredItems = currentSoes.filter(s => 
-      (s.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (s.schemeId && schemes.find(sch => sch.id === s.schemeId)?.name.toLowerCase().includes(searchTerm.toLowerCase()))
-    );
+    const filteredItems = currentSoes.filter(s => {
+      const search = searchTerm.toLowerCase();
+      const nameMatch = (s.name || '').toLowerCase().includes(search);
+      const schemeMatch = s.schemeId && schemes.find(sch => sch.id === s.schemeId)?.name.toLowerCase().includes(search);
+      const sectorMatch = s.sectorId && sectors.find(sec => sec.id === s.sectorId)?.name.toLowerCase().includes(search);
+      const activityMatch = s.activityId && activities.find(act => act.id === s.activityId)?.name.toLowerCase().includes(search);
+      const subActivityMatch = s.subActivityId && subActivities.find(sub => sub.id === s.subActivityId)?.name.toLowerCase().includes(search);
+      return nameMatch || schemeMatch || sectorMatch || activityMatch || subActivityMatch;
+    });
 
     return (
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -2042,8 +2056,8 @@ export default function App() {
                   <th className="px-4 py-4 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {filteredItems.map(s => {
+            <tbody className="divide-y divide-gray-100">
+                {filteredItems.slice(0, visibleCount).map(s => {
                   const allocated = allocations.reduce((sum, a) => {
                     const funded = a.fundedSOEs?.find(f => f.soeId === s.id);
                     return sum + (funded?.amount || 0);
@@ -2065,7 +2079,11 @@ export default function App() {
                       <td className="px-4 py-4 text-right font-medium text-emerald-600">₹{allocated.toLocaleString()}</td>
                       <td className="px-4 py-4 text-right font-medium text-orange-600">₹{toBeAllocated.toLocaleString()}</td>
                       <td className="px-4 py-4 text-right space-x-2">
-                        <button onClick={() => setEditingItem({ type: 'SOE Name', item: s })} className="text-blue-600 hover:text-blue-800"><Edit2 className="w-4 h-4" /></button>
+                        <button onClick={() => {
+                          setEditingItem({ type: 'SOE Name', item: s });
+                          setIsFormExpanded(true);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                        }} className="text-blue-600 hover:text-blue-800"><Edit2 className="w-4 h-4" /></button>
                         <button onClick={() => handleDelete('soeHeads', s.id)} className="text-red-600 hover:text-red-800"><Trash2 className="w-4 h-4" /></button>
                       </td>
                     </tr>
@@ -2074,6 +2092,17 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {filteredItems.length > visibleCount && (
+            <div className="mt-4 text-center border-t pt-4 p-4">
+              <button 
+                onClick={() => setVisibleCount(prev => prev + 10)}
+                className="px-6 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium transition-colors flex items-center gap-2 mx-auto"
+              >
+                <ChevronDown className="w-4 h-4" />
+                Read More / Load More...
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -2113,47 +2142,47 @@ export default function App() {
     }
 
     return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
       {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) && (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 h-fit lg:sticky lg:top-6">
+        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto custom-scrollbar">
           <div 
-            className="flex justify-between items-center mb-4 border-b pb-2 cursor-pointer hover:bg-gray-50 -mx-6 px-6 pt-2" 
+            className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
             onClick={() => setIsFormExpanded(!isFormExpanded)}
           >
             <div className="flex items-center gap-2">
-              <h3 className="text-lg font-semibold">
+              <h3 className="text-sm font-semibold">
                 {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
               </h3>
               {editingItem?.type === title && (
                 <button 
                   onClick={(e) => { e.stopPropagation(); setEditingItem(null); }}
-                  className="text-[10px] bg-blue-50 text-blue-600 px-2 py-0.5 rounded hover:bg-blue-100 font-bold uppercase"
+                  className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-100 font-bold uppercase"
                 >
                   New
                 </button>
               )}
             </div>
             <button type="button" className="text-gray-500 hover:text-gray-700">
-              {isFormExpanded ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              {isFormExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </button>
           </div>
-          <div className={`${isFormExpanded ? 'block' : 'hidden'}`}>
-            <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-4">
+          <div className={`${isFormExpanded ? 'block' : 'hidden'} pb-2`}>
+            <form key={editingItem?.item?.id || 'new'} onSubmit={onAdd} className="space-y-2">
               {formContent}
-              <div className="flex gap-2">
+              <div className="flex gap-2 pt-2 border-t mt-2 sticky bottom-0 bg-white pb-1">
                 <button 
                   type="submit" 
                   disabled={isSubmitDisabled}
-                  className={`flex-1 py-2 rounded font-medium flex items-center justify-center gap-2 transition-colors ${isSubmitDisabled ? 'bg-gray-300 cursor-not-allowed text-gray-500' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
+                  className={`flex-1 py-1.5 rounded text-sm font-medium flex items-center justify-center gap-2 transition-colors ${isSubmitDisabled ? 'bg-gray-300 cursor-not-allowed text-gray-500' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}
                 >
-                  {editingItem?.type === title ? <Activity className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                  {editingItem?.type === title ? <Activity className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
                   {editingItem?.type === title ? 'Update' : 'Add'}
                 </button>
                 {editingItem?.type === title && (
                   <button 
                     type="button" 
                     onClick={() => setEditingItem(null)}
-                    className="px-4 py-2 border border-gray-300 rounded text-gray-600 hover:bg-gray-50"
+                    className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50"
                   >
                     Cancel
                   </button>
@@ -2188,7 +2217,7 @@ export default function App() {
               </tr>
             </thead>
             <tbody>
-              {filteredItems.map(item => (
+              {filteredItems.slice(0, visibleCount).map(item => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
                   {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
@@ -2200,6 +2229,7 @@ export default function App() {
                             onClick={() => {
                               onEdit(item);
                               setIsFormExpanded(true);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
                             }} 
                             className="text-blue-500 hover:text-blue-700 p-1"
                             title="Edit"
@@ -2223,6 +2253,17 @@ export default function App() {
             </tbody>
           </table>
         </div>
+        {filteredItems.length > visibleCount && (
+          <div className="mt-4 text-center border-t pt-4">
+            <button 
+              onClick={() => setVisibleCount(prev => prev + 10)}
+              className="px-6 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium transition-colors flex items-center gap-2 mx-auto"
+            >
+              <ChevronDown className="w-4 h-4" />
+              Read More / Load More...
+            </button>
+          </div>
+        )}
       </div>
     </div>
     </div>
@@ -2430,22 +2471,37 @@ export default function App() {
     const amount = parseFloat(allocationAmount);
     if (isNaN(amount) || amount <= 0) return false;
 
-    const availableBudget = currentSoes.filter(s => 
-      s.schemeId === allocationFormFilters.schemeId && 
-      (s.sectorId || null) === (allocationFormFilters.sectorId || null) && 
-      (s.activityId || null) === (allocationFormFilters.activityId || null) && 
-      (s.subActivityId || null) === (allocationFormFilters.subActivityId || null)
-    ).reduce((sum, s) => sum + getReceivedInTry(s), 0);
+    const { schemeId, sectorId, activityId, subActivityId, fundingSoeName } = allocationFormFilters;
 
-    const currentAllocated = baseAllocations
-      .filter(a => 
-        a.schemeId === allocationFormFilters.schemeId && 
-        (a.sectorId || null) === (allocationFormFilters.sectorId || null) && 
-        (a.activityId || null) === (allocationFormFilters.activityId || null) && 
-        (a.subActivityId || null) === (allocationFormFilters.subActivityId || null) &&
-        (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
-      )
-      .reduce((sum, a) => sum + a.amount, 0);
+    // Get all SOEs in this Sector (or Scheme if no sector)
+    const sectorSoes = currentSoes.filter((s: any) => 
+      s.schemeId === schemeId && 
+      (s.sectorId || null) === (sectorId || null)
+    );
+
+    let availableBudget = 0;
+    let currentAllocated = 0;
+
+    if (fundingSoeName) {
+      // Validate against the specific SOE's sector-wide balance
+      const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
+      availableBudget = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      currentAllocated = baseAllocations.reduce((sum, a) => {
+        const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
+        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        if (a.id === currentAllocId) return sum;
+        return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
+      }, 0);
+    } else {
+      // Fallback to sector-wide validation if no SOE selected yet
+      availableBudget = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      currentAllocated = baseAllocations.reduce((sum, a) => {
+        if (a.schemeId !== schemeId || (a.sectorId || null) !== (sectorId || null)) return sum;
+        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        if (a.id === currentAllocId) return sum;
+        return sum + a.amount;
+      }, 0);
+    }
 
     return amount > (availableBudget - currentAllocated);
   }, [activeTab, allocationAmount, allocationFormFilters, currentSoes, baseAllocations, editingItem]);
@@ -2461,48 +2517,131 @@ export default function App() {
     const subActivityId = e.target.subActivityId.value || null;
     const targetFyId = selectedFY;
     
+    const fundingSoeName = e.target.fundingSoeName?.value || null;
+    
     if (isNaN(amount) || amount <= 0) {
       alert("Please enter a valid positive amount.");
       return;
     }
     
-    // Validation: Check against Received Budget (to prevent negative balances in tracker)
-    const availableBudget = currentSoes.filter(s => 
+    // Validation: Check against Sector-wide Received Budget
+    const sectorSoes = currentSoes.filter(s => 
       s.schemeId === schemeId && 
-      (s.sectorId || null) === sectorId && 
-      (s.activityId || null) === activityId && 
-      (s.subActivityId || null) === subActivityId
-    ).reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      (s.sectorId || null) === sectorId
+    );
+    
+    // If a specific SOE name is selected, validate against that SOE's balance in the sector
+    if (fundingSoeName) {
+      const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
+      const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      const allocated = baseAllocations.reduce((sum, a) => {
+        const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
+        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        if (a.id === currentAllocId) return sum;
+        return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
+      }, 0);
+      const remaining = received - allocated;
 
-    const currentAllocated = baseAllocations
-      .filter(a => 
-        a.schemeId === schemeId && 
-        (a.sectorId || null) === sectorId && 
-        (a.activityId || null) === activityId && 
-        (a.subActivityId || null) === subActivityId &&
-        (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
-      )
-      .reduce((sum, a) => sum + a.amount, 0);
+      if (amount > remaining) {
+        alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining balance of SOE ${fundingSoeName} (₹${remaining.toLocaleString()}).`);
+        return;
+      }
+    } else {
+      // General sector-wide validation
+      const totalReceivedInSector = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      const totalAllocatedInSector = baseAllocations
+        .filter(a => 
+          a.schemeId === schemeId && 
+          (a.sectorId || null) === sectorId &&
+          (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
+        )
+        .reduce((sum, a) => sum + a.amount, 0);
 
-    const remainingAvailable = availableBudget - currentAllocated;
+      const remainingInSector = totalReceivedInSector - totalAllocatedInSector;
 
-    if (amount > remainingAvailable) {
-      alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Available Budget (Received) of ₹${remainingAvailable.toLocaleString()}.`);
-      return;
+      if (amount > remainingInSector) {
+        alert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Sector-wide Available Budget of ₹${remainingInSector.toLocaleString()}.`);
+        return;
+      }
     }
 
     try {
+      let fundedSOEs: any[] = [];
+      let status = 'Pending SOE Funds';
+
+      if (fundingSoeName) {
+        const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
+        let remainingToFund = amount;
+        
+        for (const soe of matchedSoes) {
+          if (remainingToFund <= 0) break;
+          const received = getReceivedInTry(soe);
+          const allocated = baseAllocations.reduce((sum, a) => {
+            const fundedFromThis = a.fundedSOEs?.find((f: any) => f.soeId === soe.id);
+            const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+            if (a.id === currentAllocId) return sum;
+            return sum + (fundedFromThis?.amount || 0);
+          }, 0);
+          const available = received - allocated;
+          
+          if (available > 0) {
+            const fundAmount = Math.min(available, remainingToFund);
+            fundedSOEs.push({ soeId: soe.id, amount: fundAmount });
+            remainingToFund -= fundAmount;
+          }
+        }
+        
+        if (remainingToFund <= 0) {
+          status = 'Funded';
+        }
+      }
+
       if (editingItem?.type === 'Allocation') {
         await updateDoc(doc(db, 'allocations', editingItem.item.id), { 
-          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId 
+          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
+          status, fundedSOEs
         });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'allocations'), { 
-          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
-          status: 'Pending SOE Funds',
-          fundedSOEs: []
-        });
+        // Check if an allocation for the same hierarchy already exists
+        const existingAlloc = baseAllocations.find(a => 
+          a.rangeId === rangeId && 
+          a.schemeId === schemeId && 
+          (a.sectorId || null) === (sectorId || null) && 
+          (a.activityId || null) === (activityId || null) && 
+          (a.subActivityId || null) === (subActivityId || null) &&
+          a.financialYear === targetFyId
+        );
+
+        if (existingAlloc) {
+          // Merge with existing
+          const updatedFundedSOEs = [...(existingAlloc.fundedSOEs || [])];
+          fundedSOEs.forEach(newSoe => {
+            const idx = updatedFundedSOEs.findIndex(f => f.soeId === newSoe.soeId);
+            if (idx >= 0) {
+              updatedFundedSOEs[idx].amount += newSoe.amount;
+            } else {
+              updatedFundedSOEs.push(newSoe);
+            }
+          });
+          
+          const newTotalAmount = existingAlloc.amount + amount;
+          const totalFundedNow = updatedFundedSOEs.reduce((sum, f) => sum + f.amount, 0);
+          const newStatus = totalFundedNow >= newTotalAmount ? 'Funded' : 'Pending SOE Funds';
+
+          await updateDoc(doc(db, 'allocations', existingAlloc.id), { 
+            amount: newTotalAmount,
+            status: newStatus,
+            fundedSOEs: updatedFundedSOEs,
+            remarks: existingAlloc.remarks ? `${existingAlloc.remarks}\n${remarks}` : remarks
+          });
+        } else {
+          await addDoc(collection(db, 'allocations'), { 
+            rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
+            status,
+            fundedSOEs
+          });
+        }
       }
       e.target.reset();
       setAllocationAmount('');
@@ -2716,7 +2855,8 @@ export default function App() {
       // Add user to firestore
       await setDoc(doc(db, 'users', userCredential.user.uid), {
         email: emailToUse,
-        role: newUserRole
+        role: newUserRole,
+        password: newUserPassword
       });
       
       // Sign out the secondary app
@@ -2797,6 +2937,7 @@ export default function App() {
             <tr className="bg-gray-50 text-gray-600 text-sm">
               <th className="p-3 border-b">User ID</th>
               <th className="p-3 border-b">Email</th>
+              <th className="p-3 border-b">Password</th>
               <th className="p-3 border-b">Role</th>
               <th className="p-3 border-b text-right">Actions</th>
             </tr>
@@ -2806,6 +2947,22 @@ export default function App() {
               <tr key={u.id} className="border-b hover:bg-gray-50">
                 <td className="p-3 font-mono text-xs text-gray-500">{u.id}</td>
                 <td className="p-3">{u.email}</td>
+                <td className="p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-sm">
+                      {visiblePasswords[u.id] ? (u.password || 'Not Set') : '********'}
+                    </span>
+                    {(userRole === 'admin' || user?.email?.toLowerCase() === 'admin@rajgarhforest.app' || user?.email?.toLowerCase() === 'sharmaanuj860@gmail.com') && (
+                      <button 
+                        onClick={() => setVisiblePasswords(prev => ({ ...prev, [u.id]: !prev[u.id] }))}
+                        className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
+                        title={visiblePasswords[u.id] ? "Hide Password" : "Show Password"}
+                      >
+                        {visiblePasswords[u.id] ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                      </button>
+                    )}
+                  </div>
+                </td>
                 <td className="p-3">
                   <select 
                     value={u.role} 
@@ -3626,6 +3783,16 @@ export default function App() {
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Global Search..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 w-48 md:w-64 bg-white shadow-sm"
+                />
+              </div>
               {userRole === 'admin' && currentSchemes.length === 0 && (
                 <button
                   onClick={async () => {
@@ -3697,6 +3864,7 @@ export default function App() {
                   setEditingItem(null);
                   setMenuOpen(false);
                   setIsFormExpanded(window.innerWidth > 1024);
+                  setVisibleCount(10);
                 }}
                 className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
               >
@@ -3726,7 +3894,7 @@ export default function App() {
           [{key: 'name', label: 'Range Name'}], 
           handleAddRange, 
           (id) => handleDelete('ranges', id), 
-          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Range Name" className="w-full p-2 border rounded" />,
+          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Range Name" className="w-full p-1.5 border rounded text-sm" />,
           (item) => setEditingItem({ type: 'Range', item })
         )}
 
@@ -3739,7 +3907,7 @@ export default function App() {
           handleAddScheme, 
           (id) => handleDelete('schemes', id), 
           <>
-            <input name="name" required defaultValue={editingItem?.type === 'Scheme' ? editingItem.item.name : ''} placeholder="Scheme Name" className="w-full p-2 border rounded" />
+            <input name="name" required defaultValue={editingItem?.type === 'Scheme' ? editingItem.item.name : ''} placeholder="Scheme Name" className="w-full p-1.5 border rounded text-sm" />
           </>,
           (item) => setEditingItem({ type: 'Scheme', item })
         )}
@@ -3758,13 +3926,13 @@ export default function App() {
           (id) => handleDelete('sectors', id), 
           <>
             <div className="flex gap-2">
-              <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-2 border rounded">
+              <select name="schemeId" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.schemeId : ''} className="w-full p-1.5 border rounded text-sm">
                 <option value="">Select Scheme</option>
                 {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
               </select>
-              <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+              <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
             </div>
-            <input name="name" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.name : ''} placeholder="Sector Name (e.g. CA, NPV)" className="w-full p-2 border rounded" />
+            <input name="name" required defaultValue={editingItem?.type === 'Sector' ? editingItem.item.name : ''} placeholder="Sector Name (e.g. CA, NPV)" className="w-full p-1.5 border rounded text-sm" />
           </>,
           (item) => setEditingItem({ type: 'Sector', item })
         )}
@@ -3840,7 +4008,7 @@ export default function App() {
             schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
             editingItem={editingItem} type="Sub-Activity"
           >
-            <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-2 border rounded" />
+            <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-1.5 border rounded text-sm" />
           </CascadingDropdowns>,
           (item) => setEditingItem({ type: 'Sub-Activity', item })
         )}
@@ -3853,16 +4021,30 @@ export default function App() {
               'Allocation', 
               currentAllocations, 
               [
-                {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item)},
-                {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name},
-                {key: 'amount', label: 'Sanctioned Amount', render: (val) => `₹${val.toLocaleString()}`},
+                {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item), searchableText: (_, item) => getHierarchyText(item)},
+                {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
+                {key: 'amount', label: 'Sanctioned Amount', render: (val, item) => (
+                  <div className="flex flex-col">
+                    <span className="font-medium">₹{val.toLocaleString()}</span>
+                    {item.fundedSOEs && item.fundedSOEs.length > 0 && (
+                      <div className="mt-1 space-y-0.5 border-t pt-1">
+                        {item.fundedSOEs.map((f: any, idx: number) => (
+                          <div key={idx} className="text-[9px] text-gray-400 flex justify-between gap-1">
+                            <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
+                            <span>₹{f.amount.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )},
                 {key: 'remarks', label: 'Description / Remarks', render: (val) => val || '-'},
                 {key: 'status', label: 'Funding Status', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
                       {val}
                     </span>
-                    {val === 'Funded' && item.fundedSOEs && (
+                    {item.fundedSOEs && item.fundedSOEs.length > 0 && (
                       <div className="mt-1 space-y-1">
                         {item.fundedSOEs.map((f: any, idx: number) => (
                           <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
@@ -3892,7 +4074,7 @@ export default function App() {
                 editingItem={editingItem} type="Allocation"
                 onSelectionChange={setAllocationFormFilters}
               >
-                <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
+                <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
                   <option value="">Select Range</option>
                   {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
                 </select>
@@ -3903,12 +4085,12 @@ export default function App() {
                   value={allocationAmount}
                   onChange={(e) => setAllocationAmount(e.target.value)}
                   placeholder="Amount (₹)" 
-                  className={`w-full p-2 border rounded ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                  className={`w-full p-1.5 border rounded text-sm ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
                 />
                 {isAllocationInvalid && (
                   <p className="text-[10px] text-red-600 font-bold px-1">Amount exceeds available budget!</p>
                 )}
-                <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-2 border rounded text-sm" rows={2} />
+                <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-1.5 border rounded text-sm" rows={2} />
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Allocation', item }),
               (item) => userRole === 'admin' || userRole === 'deo',
@@ -4253,13 +4435,14 @@ function CascadingDropdowns({
   const [subActivityId, setSubActivityId] = useState('');
   const [soeId, setSoeId] = useState('');
   const [allocationId, setAllocationId] = useState('');
+  const [fundingSoeName, setFundingSoeName] = useState('');
 
   // Notify parent of selection changes
   useEffect(() => {
     if (onSelectionChange) {
-      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId });
+      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName });
     }
-  }, [schemeId, sectorId, activityId, subActivityId, soeId, onSelectionChange]);
+  }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, onSelectionChange]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -4285,6 +4468,14 @@ function CascadingDropdowns({
         currentActivityId = item.activityId || '';
         currentSectorId = item.sectorId || '';
         currentSchemeId = item.schemeId || '';
+        
+        // Initialize fundingSoeName if it's an allocation with funded SOEs
+        if (item.fundedSOEs && item.fundedSOEs.length > 0) {
+          const firstSoe = soes.find((s: any) => s.id === item.fundedSOEs[0].soeId);
+          if (firstSoe) {
+            setFundingSoeName(firstSoe.name);
+          }
+        }
       } else if (type === 'Sub-Activity') {
         currentActivityId = item.activityId;
       } else if (type === 'SOE Name') {
@@ -4333,9 +4524,7 @@ function CascadingDropdowns({
     }
   }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
 
-  const filteredSchemes = type === 'Expenditure' 
-    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
-    : schemes;
+  const filteredSchemes = schemes;
 
   // Deduplicate by name to remove repeated items
   const getUniqueByName = (items: any[]) => {
@@ -4348,30 +4537,27 @@ function CascadingDropdowns({
     });
   };
 
-  const filteredSectors = getUniqueByName(sectors.filter((s: any) => {
-    if (s.schemeId !== schemeId) return false;
-    if (type === 'Expenditure') {
-      return soes.some((soe: any) => soe.sectorId === s.id) || allocations.some((a: any) => a.sectorId === s.id);
-    }
-    return true;
-  }));
+  const filteredSectors = sectors.filter((s: any) => {
+    if (!schemeId) return false;
+    return s.schemeId === schemeId;
+  });
 
-  const filteredActivities = getUniqueByName(activities.filter((a: any) => {
+  const filteredActivities = activities.filter((a: any) => {
+    if (!schemeId) return false;
+    if (a.schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
-    if (schemeId && a.schemeId !== schemeId) return false;
-    if (type === 'Expenditure') {
-      return soes.some((soe: any) => soe.activityId === a.id) || allocations.some((al: any) => al.activityId === a.id);
+    // If activity has no schemeId but has sectorId, check sector's scheme
+    if (!a.schemeId && a.sectorId) {
+      const sec = sectors.find((s: any) => s.id === a.sectorId);
+      if (sec && sec.schemeId !== schemeId) return false;
     }
     return true;
-  }));
+  });
 
-  const filteredSubActivities = getUniqueByName(subActivities.filter((sa: any) => {
-    if (sa.activityId !== activityId) return false;
-    if (type === 'Expenditure') {
-      return soes.some((soe: any) => soe.subActivityId === sa.id) || allocations.some((al: any) => al.subActivityId === sa.id);
-    }
-    return true;
-  }));
+  const filteredSubActivities = subActivities.filter((sa: any) => {
+    if (!activityId) return false;
+    return sa.activityId === activityId;
+  });
 
   // Auto-selection logic
   useEffect(() => {
@@ -4393,15 +4579,12 @@ function CascadingDropdowns({
   }, [filteredSubActivities, subActivityId, activityId, editingItem]);
 
   const filteredSoes = soes.filter((s: any) => {
-    if (schemeId && s.schemeId && s.schemeId !== schemeId) return false;
+    if (!schemeId) return false;
+    if (s.schemeId && s.schemeId !== schemeId) return false;
     if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
     if (activityId && s.activityId && s.activityId !== activityId) return false;
     if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
-    if (type === 'Expenditure') {
-      if (!allocationId) return false;
-      const alloc = allocations.find((a: any) => a.id === allocationId);
-      return alloc?.fundedSOEs?.some((f: any) => f.soeId === s.id);
-    }
+    // Relaxed Expenditure check to show all SOEs matching the hierarchy
     return true;
   });
   const filteredAllocations = allocations.filter((a: any) => {
@@ -4416,7 +4599,7 @@ function CascadingDropdowns({
     <>
       <div className="flex gap-2">
         <select 
-          className="w-full p-2 border rounded" 
+          className="w-full p-1.5 border rounded text-sm" 
           value={schemeId} 
           onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
           required={type !== 'Activity'}
@@ -4424,27 +4607,27 @@ function CascadingDropdowns({
           <option value="">Select Scheme</option>
           {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
       </div>
 
       {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
-            className="w-full p-2 border rounded" 
+            className="w-full p-1.5 border rounded text-sm" 
             value={sectorId} 
             onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
           >
             <option value="">Select Sector (Optional)</option>
             {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
-          <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
+          <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Sector">+</button>
         </div>
       )}
 
       {(type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
-            className="w-full p-2 border rounded" 
+            className="w-full p-1.5 border rounded text-sm" 
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
             required={type !== 'SOE Name' && type !== 'Allocation'}
@@ -4452,21 +4635,21 @@ function CascadingDropdowns({
             <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation') ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
-          <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Activity">+</button>
+          <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Activity">+</button>
         </div>
       )}
 
       {(type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
         <div className="flex gap-2">
           <select 
-            className="w-full p-2 border rounded" 
+            className="w-full p-1.5 border rounded text-sm" 
             value={subActivityId} 
             onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
           >
             <option value="">Select Sub-Activity (Optional)</option>
             {filteredSubActivities.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
           </select>
-          <button type="button" onClick={() => document.getElementById('tab-Sub-Activities')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sub-Activity">+</button>
+          <button type="button" onClick={() => document.getElementById('tab-Sub-Activities')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Sub-Activity">+</button>
         </div>
       )}
       
@@ -4477,39 +4660,86 @@ function CascadingDropdowns({
       <input type="hidden" name="subActivityId" value={subActivityId} />
 
       {type === 'Allocation' && (
-        <div className="flex flex-col gap-1">
-          <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+        <div className="flex flex-col gap-2">
+          <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-2 rounded border border-blue-100">
             {(() => {
-              const availableBudget = soes.filter((s: any) => 
+              // Get all SOEs in this Sector (or Scheme if no sector)
+              const sectorSoes = soes.filter((s: any) => 
                 s.schemeId === schemeId && 
-                (s.sectorId || null) === (sectorId || null) && 
-                (s.activityId || null) === (activityId || null) && 
-                (s.subActivityId || null) === (subActivityId || null)
-              ).reduce((sum: number, s: any) => sum + getReceivedInTry(s), 0);
+                (s.sectorId || null) === (sectorId || null)
+              );
               
-              const totalAllocated = allocations
-                .filter((a: any) => 
-                  a.schemeId === schemeId && 
-                  (a.sectorId || null) === (sectorId || null) && 
-                  (a.activityId || null) === (activityId || null) && 
-                  (a.subActivityId || null) === (subActivityId || null) &&
-                  (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
-                )
-                .reduce((sum: number, a: any) => sum + a.amount, 0);
-              
-              const remaining = availableBudget - totalAllocated;
-              return `Available Budget (Received): ₹${availableBudget.toLocaleString()} | Total Allocated: ₹${totalAllocated.toLocaleString()} | Remaining to Allocate: ₹${remaining.toLocaleString()}`;
+              const balances = ALLOWED_SOES.map(name => {
+                const matchedSoes = sectorSoes.filter(s => s.name === name);
+                const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+                const allocated = allocations.reduce((sum, a) => {
+                  const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+                  if (a.id === currentAllocId) return sum;
+                  const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
+                  return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
+                }, 0);
+                return { name, remaining: received - allocated };
+              }).filter(b => b.remaining > 0);
+
+              if (balances.length === 0) return "No budget available in this Sector/Scheme.";
+
+              return (
+                <div className="space-y-1">
+                  <div className="font-bold border-b border-blue-200 pb-0.5 mb-1">Sector-wide Available SOE Budgets:</div>
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                    {balances.map(b => (
+                      <div key={b.name} className="flex justify-between">
+                        <span>{b.name}:</span>
+                        <span className="font-bold">₹{b.remaining.toLocaleString()}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-1 pt-1 border-t border-blue-200 text-[10px] italic">
+                    Total Sector Pool: ₹{balances.reduce((s, b) => s + b.remaining, 0).toLocaleString()}
+                  </div>
+                </div>
+              );
             })()}
           </div>
+          
+          <select 
+            name="fundingSoeName" 
+            className="w-full p-1.5 border rounded bg-blue-50 border-blue-200 text-blue-800 font-medium text-sm"
+            required
+            value={fundingSoeName}
+            onChange={(e) => setFundingSoeName(e.target.value)}
+          >
+            <option value="">Select SOE to Fund From</option>
+            {(() => {
+              const sectorSoes = soes.filter((s: any) => 
+                s.schemeId === schemeId && 
+                (s.sectorId || null) === (sectorId || null)
+              );
+              return ALLOWED_SOES.map(name => {
+                const matchedSoes = sectorSoes.filter(s => s.name === name);
+                const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+                const allocated = allocations.reduce((sum, a) => {
+                  const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+                  if (a.id === currentAllocId) return sum;
+                  const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
+                  return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
+                }, 0);
+                const remaining = received - allocated;
+                return { name, remaining };
+              }).filter(b => b.remaining > 0).map(b => (
+                <option key={b.name} value={b.name}>{b.name} (Available: ₹{b.remaining.toLocaleString()})</option>
+              ));
+            })()}
+          </select>
         </div>
       )}
 
       {type === 'Expenditure' && (
-        <div className="space-y-3">
+        <div className="space-y-2">
           <div className="flex gap-2">
             <select 
               name="allocationId"
-              className="w-full p-2 border rounded" 
+              className="w-full p-1.5 border rounded text-sm" 
               value={allocationId} 
               onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
               required
@@ -4520,7 +4750,7 @@ function CascadingDropdowns({
                 return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
               })}
             </select>
-            <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Allocation">+</button>
+            <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
           </div>
 
           {allocationId && (
@@ -4528,7 +4758,7 @@ function CascadingDropdowns({
               <div className="flex gap-2">
                 <select 
                   name="soeId"
-                  className="w-full p-2 border rounded" 
+                  className="w-full p-1.5 border rounded text-sm" 
                   value={soeId} 
                   onChange={(e) => setSoeId(e.target.value)}
                   required
@@ -4536,7 +4766,7 @@ function CascadingDropdowns({
                   <option value="">Select Funded SOE</option>
                   {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>)}
                 </select>
-                <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Manage SOE Heads">+</button>
+                <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Manage SOE Heads">+</button>
               </div>
               
               {soeId && (
@@ -4574,25 +4804,25 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
           required 
           value={selectedSchemeId}
           onChange={(e) => setSelectedSchemeId(e.target.value)}
-          className="w-full p-2 border rounded"
+          className="w-full p-1.5 border rounded text-sm"
         >
           <option value="">Select Scheme</option>
           {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
-        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Scheme">+</button>
+        <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
       </div>
       
       <div className="flex gap-2">
-        <select name="sectorId" defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-2 border rounded">
+        <select name="sectorId" defaultValue={editingItem?.item?.sectorId || ''} className="w-full p-1.5 border rounded text-sm">
           <option value="">Select Sector (Optional)</option>
           {sectors.filter(s => s.schemeId === selectedSchemeId).map(sec => (
             <option key={sec.id} value={sec.id}>{sec.name}</option>
           ))}
         </select>
-        <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-3 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600" title="Add Sector">+</button>
+        <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Sector">+</button>
       </div>
       
-      <input name="name" required defaultValue={editingItem?.type === 'Activity' ? editingItem.item.name : ''} placeholder="Activity Name" className="w-full p-2 border rounded" />
+      <input name="name" required defaultValue={editingItem?.type === 'Activity' ? editingItem.item.name : ''} placeholder="Activity Name" className="w-full p-1.5 border rounded text-sm" />
     </>
   );
 }

@@ -21,21 +21,22 @@
   }
 }
 
-/* Custom scrollbar for horizontal tables */
-.overflow-x-auto {
+/* Custom scrollbar for horizontal tables and vertical forms */
+.overflow-x-auto, .custom-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: #10b981 #f3f4f6;
 }
 
-.overflow-x-auto::-webkit-scrollbar {
+.overflow-x-auto::-webkit-scrollbar, .custom-scrollbar::-webkit-scrollbar {
   height: 6px;
+  width: 6px;
 }
 
-.overflow-x-auto::-webkit-scrollbar-track {
+.overflow-x-auto::-webkit-scrollbar-track, .custom-scrollbar::-webkit-scrollbar-track {
   background: #f3f4f6;
 }
 
-.overflow-x-auto::-webkit-scrollbar-thumb {
+.overflow-x-auto::-webkit-scrollbar-thumb, .custom-scrollbar::-webkit-scrollbar-thumb {
   background-color: #10b981;
   border-radius: 20px;
 }
