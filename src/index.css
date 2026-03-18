@@ -6,8 +6,11 @@
 }
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
   body {
-    @apply antialiased text-gray-800 bg-gray-50;
+    @apply antialiased text-gray-800 bg-gray-50 overflow-x-hidden;
   }
 }
 

@@ -12,7 +12,7 @@ export const preloadDatabase = async (selectedFyId?: string) => {
     }
     const snap = await getDocs(q);
     if (snap.empty) {
-      return await addDoc(collection(db, colName), data);
+      return await addDoc(collection(db, colName), { ...data, createdAt: Date.now(), updatedAt: Date.now() });
     }
     return snap.docs[0];
   };

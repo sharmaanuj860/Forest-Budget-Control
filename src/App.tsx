@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -171,6 +171,8 @@ export default function App() {
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
   const [visiblePasswords, setVisiblePasswords] = useState<{[key: string]: boolean}>({});
+  const [editingPasswordId, setEditingPasswordId] = useState<string | null>(null);
+  const [newPasswordInput, setNewPasswordInput] = useState('');
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -178,6 +180,18 @@ export default function App() {
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
 
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
+  const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
+  const [selectedExpenseForApproval, setSelectedExpenseForApproval] = useState<Expense | null>(null);
+  const [approvalStatus, setApprovalStatus] = useState<'approved' | 'rejected'>('approved');
+  const [approvalReason, setApprovalReason] = useState('');
+  const [isExpFilterExpanded, setIsExpFilterExpanded] = useState(false);
+  const [isAllocFilterExpanded, setIsAllocFilterExpanded] = useState(false);
+
+  // Auto-collapse filters on tab change
+  useEffect(() => {
+    setIsExpFilterExpanded(false);
+    setIsAllocFilterExpanded(false);
+  }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
@@ -275,31 +289,37 @@ export default function App() {
 
     const unsubFys = onSnapshot(collection(db, 'financialYears'), (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialYear));
-      setFys(data);
+      setFys(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'financialYears'));
 
     const unsubRanges = onSnapshot(collection(db, 'ranges'), (snap) => {
-      setRanges(snap.docs.map(d => ({ id: d.id, ...d.data() } as Range)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Range));
+      setRanges(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'ranges'));
 
     const unsubSchemes = onSnapshot(collection(db, 'schemes'), (snap) => {
-      setSchemes(snap.docs.map(d => ({ id: d.id, ...d.data() } as Scheme)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Scheme));
+      setSchemes(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'schemes'));
 
     const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
-      setSectors(snap.docs.map(d => ({ id: d.id, ...d.data() } as Sector)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Sector));
+      setSectors(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sectors'));
 
     const unsubActivities = onSnapshot(collection(db, 'activities'), (snap) => {
-      setActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem));
+      setActivities(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'activities'));
 
     const unsubSubActivities = onSnapshot(collection(db, 'subActivities'), (snap) => {
-      setSubActivities(snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity));
+      setSubActivities(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'subActivities'));
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser));
+      setUsers(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
     return () => {
@@ -322,7 +342,8 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubSoes = onSnapshot(soesQuery, (snap) => {
-      setSoes(snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE));
+      setSoes(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
       setIsSoesLoaded(true);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
 
@@ -333,7 +354,7 @@ export default function App() {
     const unsubAllocations = onSnapshot(allocsQuery, (snap) => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation));
       console.log('Fetched allocations for FY:', fyQueryValues, 'Count:', data.length);
-      setAllocations(data);
+      setAllocations(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
 
     const expensesQuery = query(
@@ -341,7 +362,8 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubExpenses = onSnapshot(expensesQuery, (snap) => {
-      setExpenses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense)));
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
+      setExpenses(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
 
     return () => {
@@ -1495,6 +1517,66 @@ export default function App() {
     }
   };
 
+  const renderApprovalModal = () => {
+    if (!isApprovalModalOpen || !selectedExpenseForApproval) return null;
+
+    const handleConfirm = async () => {
+      if (window.confirm(`Are you sure you want to ${approvalStatus} this expenditure? This action will lock the entry.`)) {
+        await handleUpdateExpenseStatus(selectedExpenseForApproval.id, approvalStatus, true, approvalReason);
+        setIsApprovalModalOpen(false);
+        setSelectedExpenseForApproval(null);
+        setApprovalReason('');
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+          <div className="bg-emerald-600 p-4 text-white flex justify-between items-center">
+            <h3 className="font-bold">Expenditure Action</h3>
+            <button onClick={() => setIsApprovalModalOpen(false)}><X className="w-5 h-5" /></button>
+          </div>
+          <div className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Action</label>
+              <select 
+                value={approvalStatus} 
+                onChange={(e) => setApprovalStatus(e.target.value as 'approved' | 'rejected')}
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+              >
+                <option value="approved">Accept / Approve</option>
+                <option value="rejected">Reject</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Reason / Remarks</label>
+              <textarea 
+                value={approvalReason}
+                onChange={(e) => setApprovalReason(e.target.value)}
+                placeholder="Enter reason for this action..."
+                className="w-full p-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none min-h-[100px]"
+              />
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button 
+                onClick={handleConfirm}
+                className={`flex-1 py-2 rounded-lg font-bold text-white transition-colors ${approvalStatus === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700'}`}
+              >
+                Confirm {approvalStatus === 'approved' ? 'Approval' : 'Rejection'}
+              </button>
+              <button 
+                onClick={() => setIsApprovalModalOpen(false)}
+                className="flex-1 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-bold transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderFundingModal = () => {
     if (!fundingAllocation) return null;
 
@@ -2317,10 +2399,10 @@ export default function App() {
     const name = e.target.name.value;
     try {
       if (editingItem?.type === 'Financial Year') {
-        await updateDoc(doc(db, 'financialYears', editingItem.item.id), { name });
+        await updateDoc(doc(db, 'financialYears', editingItem.item.id), { name, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'financialYears'), { name });
+        await addDoc(collection(db, 'financialYears'), { name, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2333,10 +2415,10 @@ export default function App() {
     const name = e.target.name.value;
     try {
       if (editingItem?.type === 'Range') {
-        await updateDoc(doc(db, 'ranges', editingItem.item.id), { name });
+        await updateDoc(doc(db, 'ranges', editingItem.item.id), { name, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'ranges'), { name });
+        await addDoc(collection(db, 'ranges'), { name, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2349,10 +2431,10 @@ export default function App() {
     const name = e.target.name.value;
     try {
       if (editingItem?.type === 'Scheme') {
-        await updateDoc(doc(db, 'schemes', editingItem.item.id), { name });
+        await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'schemes'), { name });
+        await addDoc(collection(db, 'schemes'), { name, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2366,10 +2448,10 @@ export default function App() {
     const schemeId = e.target.schemeId.value;
     try {
       if (editingItem?.type === 'Sector') {
-        await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId });
+        await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'sectors'), { name, schemeId });
+        await addDoc(collection(db, 'sectors'), { name, schemeId, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2390,10 +2472,10 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Activity') {
-        await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId });
+        await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'activities'), { sectorId, schemeId, name });
+        await addDoc(collection(db, 'activities'), { sectorId, schemeId, name, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2407,10 +2489,10 @@ export default function App() {
     const activityId = e.target.activityId.value;
     try {
       if (editingItem?.type === 'Sub-Activity') {
-        await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId });
+        await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId, updatedAt: Date.now() });
         setEditingItem(null);
       } else {
-        await addDoc(collection(db, 'subActivities'), { activityId, name });
+        await addDoc(collection(db, 'subActivities'), { activityId, name, createdAt: Date.now(), updatedAt: Date.now() });
       }
       e.target.reset();
     } catch (error) {
@@ -2608,7 +2690,8 @@ export default function App() {
       if (editingItem?.type === 'Allocation') {
         await updateDoc(doc(db, 'allocations', editingItem.item.id), { 
           rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
-          status, fundedSOEs
+          status, fundedSOEs,
+          updatedAt: Date.now()
         });
         setEditingItem(null);
       } else {
@@ -2642,13 +2725,16 @@ export default function App() {
             amount: newTotalAmount,
             status: newStatus,
             fundedSOEs: updatedFundedSOEs,
-            remarks: existingAlloc.remarks ? `${existingAlloc.remarks}\n${remarks}` : remarks
+            remarks: existingAlloc.remarks ? `${existingAlloc.remarks}\n${remarks}` : remarks,
+            updatedAt: Date.now()
           });
         } else {
           await addDoc(collection(db, 'allocations'), { 
             rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
             status,
-            fundedSOEs
+            fundedSOEs,
+            createdAt: Date.now(),
+            updatedAt: Date.now()
           });
         }
       }
@@ -2713,7 +2799,8 @@ export default function App() {
 
       await updateDoc(doc(db, 'allocations', fundingAllocation.id), {
         fundedSOEs: updatedFundedSOEs,
-        status: newStatus
+        status: newStatus,
+        updatedAt: Date.now()
       });
 
       setFundingAllocation(null);
@@ -2722,7 +2809,7 @@ export default function App() {
     }
   };
 
-  const handleUpdateExpenseStatus = async (expenseId: string, status: 'approved' | 'rejected' | 'pending', isLocked: boolean) => {
+  const handleUpdateExpenseStatus = async (expenseId: string, status: 'approved' | 'rejected' | 'pending', isLocked: boolean, reason?: string) => {
     try {
       if (status === 'approved') {
         await runTransaction(db, async (transaction) => {
@@ -2738,13 +2825,17 @@ export default function App() {
           transaction.update(doc(db, 'expenditures', expenseId), { 
             status, 
             isLocked, 
-            approvalId: nextId 
+            approvalId: nextId,
+            approvalReason: reason || '',
+            updatedAt: Date.now()
           });
         });
       } else {
         await updateDoc(doc(db, 'expenditures', expenseId), { 
           status, 
           isLocked,
+          approvalReason: reason || '',
+          updatedAt: Date.now(),
           ...(status === 'pending' ? { approvalId: null } : {})
         });
       }
@@ -2772,11 +2863,6 @@ export default function App() {
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
 
-    if (alloc.status === 'Pending SOE Funds') {
-      alert("Cannot book expenditure against an allocation that is pending SOE funds.");
-      return;
-    }
-
     const fundedSoe = alloc.fundedSOEs.find(f => f.soeId === soeId);
     if (!fundedSoe) {
       alert("Selected SOE is not funded for this allocation.");
@@ -2798,6 +2884,7 @@ export default function App() {
           allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId 
         });
         setEditingItem(null);
+        e.target.reset();
       } else {
         await addDoc(collection(db, 'expenditures'), { 
           allocationId, soeId, amount, date, description, financialYear: targetFyId,
@@ -2806,8 +2893,9 @@ export default function App() {
           status: 'pending',
           isLocked: false
         });
+        // Clear only the amount field to allow quick entry for same activity/SOE
+        if (e.target.amount) e.target.amount.value = '';
       }
-      e.target.reset();
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
     }
@@ -2828,7 +2916,7 @@ export default function App() {
 
   const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
     try {
-      await updateDoc(doc(db, 'users', userId), { role: newRole });
+      await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: Date.now() });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'users');
     }
@@ -2881,6 +2969,21 @@ export default function App() {
       } else {
         alert(`Error creating user: ${error.message}`);
       }
+    }
+  };
+
+  const handleUpdatePassword = async (userId: string) => {
+    if (!newPasswordInput) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        password: newPasswordInput,
+        updatedAt: Date.now()
+      });
+      setEditingPasswordId(null);
+      setNewPasswordInput('');
+      alert('Password updated in system records. Note: This does not change the actual login password in Firebase Auth. The user should use the forgot password link if they cannot log in.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
     }
   };
 
@@ -2958,17 +3061,43 @@ export default function App() {
                 <td className="p-3">{u.email}</td>
                 <td className="p-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm">
-                      {visiblePasswords[u.id] ? (u.password || 'Not Set') : '********'}
-                    </span>
-                    {(userRole === 'admin' || user?.email?.toLowerCase() === 'admin@rajgarhforest.app' || user?.email?.toLowerCase() === 'sharmaanuj860@gmail.com') && (
-                      <button 
-                        onClick={() => setVisiblePasswords(prev => ({ ...prev, [u.id]: !prev[u.id] }))}
-                        className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
-                        title={visiblePasswords[u.id] ? "Hide Password" : "Show Password"}
-                      >
-                        {visiblePasswords[u.id] ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-                      </button>
+                    {editingPasswordId === u.id ? (
+                      <div className="flex items-center gap-1">
+                        <input 
+                          type="text" 
+                          value={newPasswordInput} 
+                          onChange={(e) => setNewPasswordInput(e.target.value)}
+                          className="p-1 border rounded text-xs w-24"
+                          placeholder="New Pwd"
+                        />
+                        <button 
+                          onClick={() => handleUpdatePassword(u.id)}
+                          className="bg-emerald-600 text-white px-2 py-1 rounded text-[10px]"
+                        >
+                          Update
+                        </button>
+                        <button 
+                          onClick={() => setEditingPasswordId(null)}
+                          className="bg-gray-200 text-gray-600 px-2 py-1 rounded text-[10px]"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <span className="font-mono text-sm">
+                          {visiblePasswords[u.id] ? (u.password || 'Not Set') : '********'}
+                        </span>
+                        {(userRole === 'admin' || user?.email?.toLowerCase() === 'admin@rajgarhforest.app' || user?.email?.toLowerCase() === 'sharmaanuj860@gmail.com') && (
+                          <button 
+                            onClick={() => setVisiblePasswords(prev => ({ ...prev, [u.id]: !prev[u.id] }))}
+                            className="text-gray-400 hover:text-gray-600 p-1 rounded-full hover:bg-gray-100 transition-colors"
+                            title={visiblePasswords[u.id] ? "Hide Password" : "Show Password"}
+                          >
+                            {visiblePasswords[u.id] ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                 </td>
@@ -2988,8 +3117,17 @@ export default function App() {
                   </select>
                 </td>
                 <td className="p-3 text-right flex justify-end gap-2">
-                  <button onClick={() => handleResetPassword(u.email)} className="text-blue-500 hover:text-blue-700 text-sm border border-blue-200 px-2 py-1 rounded">
-                    Reset Password
+                  <button 
+                    onClick={() => {
+                      setEditingPasswordId(u.id);
+                      setNewPasswordInput(u.password || '');
+                    }} 
+                    className="text-blue-500 hover:text-blue-700 text-sm border border-blue-200 px-2 py-1 rounded"
+                  >
+                    Set New Password
+                  </button>
+                  <button onClick={() => handleResetPassword(u.email)} className="text-gray-500 hover:text-gray-700 text-sm border border-gray-200 px-2 py-1 rounded">
+                    Send Reset Email
                   </button>
                   <button onClick={() => handleDeleteUser(u.id)} className="text-red-500 hover:text-red-700 p-1">
                     <Trash2 className="w-4 h-4" />
@@ -3858,12 +3996,12 @@ export default function App() {
             </button>
           </div>
           
-          <div className={`${menuOpen ? 'flex' : 'hidden'} lg:flex flex-col lg:flex-row flex-wrap gap-1 p-2`}>
-            {((userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? [
+          <div className={`${menuOpen ? 'grid' : 'hidden'} lg:flex grid-cols-2 sm:grid-cols-3 lg:flex-row flex-wrap gap-1 p-2`}>
+            {(userRole === 'admin' ? [
               'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
               'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports', 'Users'
             ] : [
-              'Dashboard', 'Allocations', 'Expenditures', 'Ledger', 'Reports'
+              'Dashboard', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports'
             ]).map((item) => (
               <button 
                 key={item} 
@@ -3877,10 +4015,10 @@ export default function App() {
                   setVisibleCount(10);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className={`px-4 py-2.5 text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
               >
-                {item === 'Dashboard' && <Home className="w-4 h-4" />}
-                {item}
+                {item === 'Dashboard' && <Home className="w-3 h-3 sm:w-4 sm:h-4" />}
+                <span className="truncate">{item}</span>
               </button>
             ))}
           </div>
@@ -4039,6 +4177,60 @@ export default function App() {
         {activeTab === 'Allocations' && (
           <div className="space-y-6">
             {renderBudgetTracker()}
+            <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
+              <div className="flex items-center justify-between border-b pb-2">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-emerald-600" />
+                  <h3 className="font-bold text-gray-700">Filters</h3>
+                </div>
+                <button 
+                  onClick={() => setIsAllocFilterExpanded(!isAllocFilterExpanded)}
+                  className="text-emerald-600 hover:text-emerald-700 flex items-center gap-1 text-sm font-medium"
+                >
+                  {isAllocFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  {isAllocFilterExpanded ? 'Collapse' : 'Expand'}
+                </button>
+              </div>
+
+              {isAllocFilterExpanded && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-in slide-in-from-top-2 duration-200">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Scheme</label>
+                    <select 
+                      value={allocFilters.schemeId} 
+                      onChange={(e) => setAllocFilters(prev => ({ ...prev, schemeId: e.target.value, activityId: '' }))}
+                      className="w-full p-2 border rounded text-sm"
+                    >
+                      <option value="">All Schemes</option>
+                      {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Activity</label>
+                    <select 
+                      value={allocFilters.activityId} 
+                      disabled={!allocFilters.schemeId}
+                      onChange={(e) => setAllocFilters(prev => ({ ...prev, activityId: e.target.value }))}
+                      className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
+                    >
+                      <option value="">All Activities</option>
+                      {currentActivities.filter(a => a.schemeId === allocFilters.schemeId).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Range</label>
+                    <select 
+                      value={allocFilters.rangeId} 
+                      onChange={(e) => setAllocFilters(prev => ({ ...prev, rangeId: e.target.value }))}
+                      className="w-full p-2 border rounded text-sm"
+                    >
+                      <option value="">All Ranges</option>
+                      {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
             {renderSimpleManager(
               'Allocation', 
               currentAllocations, 
@@ -4128,77 +4320,95 @@ export default function App() {
         {activeTab === 'Expenditures' && (
           <div className="space-y-4">
             <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
-              <div className="flex flex-wrap gap-4 items-end">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
-                  <input 
-                    type="date" 
-                    value={expDateRange.start} 
-                    onChange={(e) => setExpDateRange(prev => ({ ...prev, start: e.target.value }))}
-                    className="p-2 border rounded text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
-                  <input 
-                    type="date" 
-                    value={expDateRange.end} 
-                    onChange={(e) => setExpDateRange(prev => ({ ...prev, end: e.target.value }))}
-                    className="p-2 border rounded text-sm"
-                  />
+              <div className="flex items-center justify-between border-b pb-2">
+                <div className="flex items-center gap-2">
+                  <Filter className="w-4 h-4 text-emerald-600" />
+                  <h3 className="font-bold text-gray-700">Filters</h3>
                 </div>
                 <button 
-                  onClick={() => {
-                    setExpDateRange({ start: '', end: '' });
-                    setExpFilters({ schemeId: '', sectorId: '', activityId: '' });
-                  }}
-                  className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded bg-gray-50"
+                  onClick={() => setIsExpFilterExpanded(!isExpFilterExpanded)}
+                  className="text-emerald-600 hover:text-emerald-700 flex items-center gap-1 text-sm font-medium"
                 >
-                  Clear All Filters
+                  {isExpFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  {isExpFilterExpanded ? 'Collapse' : 'Expand'}
                 </button>
               </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Scheme</label>
-                  <select 
-                    value={expFilters.schemeId} 
-                    onChange={(e) => setExpFilters(prev => ({ ...prev, schemeId: e.target.value, sectorId: '', activityId: '' }))}
-                    className="w-full p-2 border rounded text-sm"
-                  >
-                    <option value="">All Schemes</option>
-                    {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+
+              {isExpFilterExpanded && (
+                <div className="space-y-4 animate-in slide-in-from-top-2 duration-200">
+                  <div className="flex flex-wrap gap-4 items-end">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Start Date</label>
+                      <input 
+                        type="date" 
+                        value={expDateRange.start} 
+                        onChange={(e) => setExpDateRange(prev => ({ ...prev, start: e.target.value }))}
+                        className="p-2 border rounded text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">End Date</label>
+                      <input 
+                        type="date" 
+                        value={expDateRange.end} 
+                        onChange={(e) => setExpDateRange(prev => ({ ...prev, end: e.target.value }))}
+                        className="p-2 border rounded text-sm"
+                      />
+                    </div>
+                    <button 
+                      onClick={() => {
+                        setExpDateRange({ start: '', end: '' });
+                        setExpFilters({ schemeId: '', sectorId: '', activityId: '' });
+                      }}
+                      className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 border rounded bg-gray-50"
+                    >
+                      Clear All Filters
+                    </button>
+                  </div>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Scheme</label>
+                      <select 
+                        value={expFilters.schemeId} 
+                        onChange={(e) => setExpFilters(prev => ({ ...prev, schemeId: e.target.value, sectorId: '', activityId: '' }))}
+                        className="w-full p-2 border rounded text-sm"
+                      >
+                        <option value="">All Schemes</option>
+                        {currentSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Sector</label>
+                      <select 
+                        value={expFilters.sectorId} 
+                        disabled={!expFilters.schemeId}
+                        onChange={(e) => setExpFilters(prev => ({ ...prev, sectorId: e.target.value, activityId: '' }))}
+                        className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
+                      >
+                        <option value="">All Sectors</option>
+                        {currentSectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Activity</label>
+                      <select 
+                        value={expFilters.activityId} 
+                        disabled={!expFilters.schemeId}
+                        onChange={(e) => setExpFilters(prev => ({ ...prev, activityId: e.target.value }))}
+                        className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
+                      >
+                        <option value="">All Activities</option>
+                        {currentActivities.filter(a => {
+                          if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
+                          if (expFilters.schemeId) return a.schemeId === expFilters.schemeId;
+                          return true;
+                        }).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Sector</label>
-                  <select 
-                    value={expFilters.sectorId} 
-                    disabled={!expFilters.schemeId}
-                    onChange={(e) => setExpFilters(prev => ({ ...prev, sectorId: e.target.value, activityId: '' }))}
-                    className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                  >
-                    <option value="">All Sectors</option>
-                    {currentSectors.filter(s => s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Filter by Activity</label>
-                  <select 
-                    value={expFilters.activityId} 
-                    disabled={!expFilters.schemeId}
-                    onChange={(e) => setExpFilters(prev => ({ ...prev, activityId: e.target.value }))}
-                    className="w-full p-2 border rounded text-sm disabled:bg-gray-50"
-                  >
-                    <option value="">All Activities</option>
-                    {currentActivities.filter(a => {
-                      if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
-                      if (expFilters.schemeId) return a.schemeId === expFilters.schemeId;
-                      return true;
-                    }).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                  </select>
-                </div>
-              </div>
+              )}
             </div>
             {renderSimpleManager(
               'Expenditure', 
@@ -4255,7 +4465,16 @@ export default function App() {
                     </div>
                   );
                 }},
-                {key: 'description', label: 'Description'},
+                {key: 'description', label: 'Description', render: (val, item) => (
+                  <div>
+                    <div>{val}</div>
+                    {item.approvalReason && (
+                      <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
+                        Action Reason: {item.approvalReason}
+                      </div>
+                    )}
+                  </div>
+                )},
                 {key: 'status', label: 'Status', render: (val) => {
                   const colors = {
                     pending: 'bg-yellow-100 text-yellow-800',
@@ -4275,7 +4494,7 @@ export default function App() {
                     const alloc = allocations.find(a => a.id === item.allocationId);
                     if (!alloc) return 'N/A';
                     const spentUpTo = expenses
-                      .filter(e => e.allocationId === item.allocationId && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
+                      .filter(e => e.allocationId === item.allocationId && e.status !== 'rejected' && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
                       .reduce((sum, e) => sum + e.amount, 0);
                     return String(alloc.amount - spentUpTo);
                   },
@@ -4283,7 +4502,7 @@ export default function App() {
                   const alloc = allocations.find(a => a.id === item.allocationId);
                   if (!alloc) return 'N/A';
                   const spentUpTo = expenses
-                    .filter(e => e.allocationId === item.allocationId && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
+                    .filter(e => e.allocationId === item.allocationId && e.status !== 'rejected' && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
                     .reduce((sum, e) => sum + e.amount, 0);
                   return <span className="text-blue-600 font-bold">₹{(alloc.amount - spentUpTo).toLocaleString()}</span>;
                 }}
@@ -4300,7 +4519,8 @@ export default function App() {
               </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Expenditure', item }),
               (item) => {
-                if (item.isLocked) return false;
+                if (item.isLocked && userRole !== 'admin') return false;
+                if (userRole === 'approver') return false;
                 if (userRole === 'admin' || userRole === 'deo') return true;
                 if (userRangeId) {
                   const alloc = allocations.find(a => a.id === item.allocationId);
@@ -4312,30 +4532,25 @@ export default function App() {
               (item) => (
                 <div className="flex gap-1">
                   {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin') && (
-                    <>
-                      <button 
-                        onClick={() => handleUpdateExpenseStatus(item.id, 'approved', true)}
-                        className="text-green-600 hover:text-green-800 p-1"
-                        title="Approve"
-                      >
-                        <Check className="w-4 h-4" />
-                      </button>
-                      <button 
-                        onClick={() => handleUpdateExpenseStatus(item.id, 'rejected', false)}
-                        className="text-red-600 hover:text-red-800 p-1"
-                        title="Reject"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </>
+                    <button 
+                      onClick={() => {
+                        setSelectedExpenseForApproval(item);
+                        setApprovalStatus('approved');
+                        setIsApprovalModalOpen(true);
+                      }}
+                      className="text-blue-600 hover:text-blue-800 p-1 border border-blue-100 rounded bg-blue-50"
+                      title="Take Action"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                    </button>
                   )}
                   {item.isLocked && userRole === 'admin' && (
                     <button 
                       onClick={() => handleUpdateExpenseStatus(item.id, 'pending', false)}
-                      className="text-orange-600 hover:text-orange-800 p-1"
+                      className="text-orange-600 hover:text-orange-800 p-1 border border-orange-100 rounded bg-orange-50"
                       title="Unlock"
                     >
-                      <Unlock className="w-4 h-4" />
+                      <Lock className="w-4 h-4" />
                     </button>
                   )}
                 </div>
@@ -4383,7 +4598,7 @@ export default function App() {
                       hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
                     }
                     
-                    const allocExpenses = expenses.filter(e => e.allocationId === alloc.id).sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                    const allocExpenses = expenses.filter(e => e.allocationId === alloc.id && e.status !== 'rejected').sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
                     
                     let currentBalance = alloc.amount;
                     
@@ -4441,6 +4656,7 @@ export default function App() {
         {activeTab === 'Users' && userRole === 'admin' && renderUserManagement()}
 
         {renderFundingModal()}
+        {renderApprovalModal()}
 
       </div>
     </div>
@@ -4786,7 +5002,28 @@ function CascadingDropdowns({
                   required
                 >
                   <option value="">Select Funded SOE</option>
-                  {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>)}
+                  {(() => {
+                    if (type === 'Expenditure' && allocationId) {
+                      const alloc = allocations.find((a: any) => a.id === allocationId);
+                      if (alloc && alloc.fundedSOEs) {
+                        return alloc.fundedSOEs
+                          .filter((f: any) => {
+                            const spent = expenses
+                              .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                              .reduce((sum: number, e: any) => sum + e.amount, 0);
+                            return f.amount - spent > 0;
+                          })
+                          .map((f: any) => {
+                            const s = soes.find((soe: any) => soe.id === f.soeId);
+                            const spent = expenses
+                              .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                              .reduce((sum: number, e: any) => sum + e.amount, 0);
+                            return <option key={f.soeId} value={f.soeId}>{s?.name || 'Unnamed SOE'} (Available: ₹{(f.amount - spent).toLocaleString()})</option>;
+                          });
+                      }
+                    }
+                    return filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>);
+                  })()}
                 </select>
                 <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Manage SOE Heads">+</button>
               </div>
@@ -4798,7 +5035,7 @@ function CascadingDropdowns({
                     const fundedSoe = alloc?.fundedSOEs?.find((f: any) => f.soeId === soeId);
                     if (fundedSoe) {
                       const spent = expenses
-                        .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                        .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
                         .reduce((sum: number, e: any) => sum + e.amount, 0);
                       return `SOE Funding: ₹${fundedSoe.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(fundedSoe.amount - spent).toLocaleString()}`;
                     }
