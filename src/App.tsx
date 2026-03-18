@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -171,7 +171,8 @@ export default function App() {
   const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [visibleCount, setVisibleCount] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 25;
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
   const [rangeSearch, setRangeSearch] = useState('');
@@ -236,6 +237,7 @@ export default function App() {
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
   const [reconSchemeId, setReconSchemeId] = useState('');
+  const [reconSearchTerm, setReconSearchTerm] = useState('');
   const [reconData, setReconData] = useState<any>({});
 
   // --- Editing State ---
@@ -867,11 +869,18 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className={`grid grid-cols-1 md:grid-cols-2 ${userRangeId ? 'lg:grid-cols-4' : 'lg:grid-cols-5'} gap-6`}>
+        <div className={`grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-4' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-3`}>
           <StatCard title={userRangeId ? "Total Allocation" : "Total SOE Budget"} amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
+          {!userRangeId && <StatCard title="Total Received (Try)" amount={totalReceivedInTry} icon={<Landmark />} color="text-indigo-500" />}
           <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
           {!userRangeId && <StatCard title="To Be Allocated" amount={Math.max(0, totalBudget - totalAllocated)} icon={<IndianRupee />} color="text-orange-500" />}
-          <StatCard title="Total Expenditure" amount={totalSpent} icon={<TrendingDown />} color="text-red-600" />
+          <StatCard 
+            title="Total Expenditure" 
+            amount={totalSpent} 
+            icon={<TrendingDown />} 
+            color="text-red-600" 
+            subtitle={totalBudget > 0 ? `${((totalSpent / totalBudget) * 100).toFixed(1)}% of Budget` : undefined}
+          />
           <StatCard title="Remaining Balance" amount={remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
         </div>
 
@@ -911,6 +920,26 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {trendData.length > 0 && (
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-red-600" /> Spending Trend (Expenditure Over Time)
+            </h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tickFormatter={(val) => val.split('-').reverse().slice(0, 2).join('/')} />
+                  <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
+                  <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+                  <Legend />
+                  <Line type="monotone" dataKey="amount" name="Expenditure" stroke="#dc3545" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-2">
@@ -1552,8 +1581,12 @@ export default function App() {
   };
 
   const handleSaveAllReconciliation = async () => {
+    const provisionalSchemes = currentSchemes.filter(scheme => 
+      soes.some(soe => soe.schemeId === scheme.id && soe.isProvisional)
+    );
+
     const allocationsToSave = baseAllocations.filter(a => 
-      a.schemeId === reconSchemeId && a.status === 'Pending SOE Funds'
+      (reconSchemeId === 'all' ? provisionalSchemes.some(ps => ps.id === a.schemeId) : a.schemeId === reconSchemeId) && a.status === 'Pending SOE Funds'
     );
 
     // Validate all variations are 0
@@ -1761,7 +1794,7 @@ export default function App() {
     );
 
     const allocationsToReconcile = baseAllocations.filter(a => 
-      a.schemeId === reconSchemeId && a.status === 'Pending SOE Funds'
+      (reconSchemeId === 'all' ? provisionalSchemes.some(ps => ps.id === a.schemeId) : a.schemeId === reconSchemeId) && a.status === 'Pending SOE Funds'
     );
 
     // Define the 4 SOE columns as requested
@@ -1771,51 +1804,82 @@ export default function App() {
     // Hierarchical grouping
     const hierarchy: any[] = [];
     if (reconSchemeId) {
-      const scheme = currentSchemes.find(s => s.id === reconSchemeId);
-      const schemeSectors = currentSectors.filter(s => s.schemeId === reconSchemeId);
+      const schemesToProcess = reconSchemeId === 'all' 
+        ? provisionalSchemes 
+        : [currentSchemes.find(s => s.id === reconSchemeId)].filter(Boolean);
       
-      schemeSectors.forEach(sector => {
-        const sectorActivities = currentActivities.filter(a => a.sectorId === sector.id);
+      schemesToProcess.forEach(scheme => {
+        const schemeSectors = currentSectors.filter(s => s.schemeId === scheme.id);
         const sectorRows: any[] = [];
-
-        sectorActivities.forEach(activity => {
-          const activitySubActivities = currentSubActivities.filter(sa => sa.activityId === activity.id);
+        
+        schemeSectors.forEach(sector => {
+          const sectorActivities = currentActivities.filter(a => a.sectorId === sector.id);
           const activityRows: any[] = [];
 
-          activitySubActivities.forEach(subActivity => {
-            const subActivityAllocations = allocationsToReconcile.filter(a => a.subActivityId === subActivity.id);
-            if (subActivityAllocations.length > 0) {
-              // Find SOE IDs for this sub-activity
-              const subActivitySoes = currentSoes.filter(s => s.subActivityId === subActivity.id);
-              const soeMap: Record<string, string> = {};
-              targetSoeNames.forEach((name, idx) => {
-                const found = subActivitySoes.find(s => (s.name || '').includes(name.replace(/\s/g, '')));
-                if (found) soeMap[displaySoeNames[idx]] = found.id;
-              });
+          sectorActivities.forEach(activity => {
+            const activitySubActivities = currentSubActivities.filter(sa => sa.activityId === activity.id);
+            const subActivityRows: any[] = [];
 
+            activitySubActivities.forEach(subActivity => {
+              let subActivityAllocations = allocationsToReconcile.filter(a => a.subActivityId === subActivity.id);
+              
+              if (reconSearchTerm) {
+                const lowerSearch = reconSearchTerm.toLowerCase();
+                subActivityAllocations = subActivityAllocations.filter(a => {
+                  const range = ranges.find(r => r.id === a.rangeId);
+                  return (
+                    (a.remarks || '').toLowerCase().includes(lowerSearch) ||
+                    a.amount.toString().includes(lowerSearch) ||
+                    (range?.name || '').toLowerCase().includes(lowerSearch) ||
+                    subActivity.name.toLowerCase().includes(lowerSearch) ||
+                    activity.name.toLowerCase().includes(lowerSearch) ||
+                    sector.name.toLowerCase().includes(lowerSearch) ||
+                    scheme.name.toLowerCase().includes(lowerSearch)
+                  );
+                });
+              }
+
+              if (subActivityAllocations.length > 0) {
+                // Find SOE IDs for this sub-activity
+                const subActivitySoes = currentSoes.filter(s => s.subActivityId === subActivity.id);
+                const soeMap: Record<string, string> = {};
+                targetSoeNames.forEach((name, idx) => {
+                  const found = subActivitySoes.find(s => (s.name || '').includes(name.replace(/\s/g, '')));
+                  if (found) soeMap[displaySoeNames[idx]] = found.id;
+                });
+
+                subActivityRows.push({
+                  type: 'subActivity',
+                  name: subActivity.name,
+                  allocations: subActivityAllocations,
+                  soeMap
+                });
+              }
+            });
+
+            if (subActivityRows.length > 0) {
               activityRows.push({
-                type: 'subActivity',
-                name: subActivity.name,
-                allocations: subActivityAllocations,
-                soeMap
+                type: 'activity',
+                name: activity.name,
+                subActivities: subActivityRows
               });
             }
           });
 
           if (activityRows.length > 0) {
             sectorRows.push({
-              type: 'activity',
-              name: activity.name,
-              subActivities: activityRows
+              type: 'sector',
+              name: sector.name,
+              activities: activityRows
             });
           }
         });
 
         if (sectorRows.length > 0) {
           hierarchy.push({
-            type: 'sector',
-            name: sector.name,
-            activities: sectorRows
+            type: 'scheme',
+            name: scheme.name,
+            sectors: sectorRows
           });
         }
       });
@@ -1834,18 +1898,37 @@ export default function App() {
 
     const renderReconSummary = () => {
       if (!reconSchemeId) return null;
-      const scheme = currentSchemes.find(s => s.id === reconSchemeId);
-      if (!scheme) return null;
+      
+      let schemeSoes: any[] = [];
+      let schemeAllocations: any[] = [];
+      let title = "";
 
-      const schemeSoes = currentSoes.filter(s => s.schemeId === reconSchemeId);
-      const schemeAllocations = baseAllocations.filter(a => a.schemeId === reconSchemeId);
+      if (reconSchemeId === 'all') {
+        schemeSoes = currentSoes.filter(s => provisionalSchemes.some(ps => ps.id === s.schemeId));
+        schemeAllocations = baseAllocations.filter(a => provisionalSchemes.some(ps => ps.id === a.schemeId));
+        title = "All Schemes - SOE-wise Reconciliation Summary";
+      } else {
+        const scheme = currentSchemes.find(s => s.id === reconSchemeId);
+        if (!scheme) return null;
+        schemeSoes = currentSoes.filter(s => s.schemeId === reconSchemeId);
+        schemeAllocations = baseAllocations.filter(a => a.schemeId === reconSchemeId);
+        title = `${scheme.name} - SOE-wise Reconciliation Summary`;
+      }
+
+      if (reconSearchTerm) {
+        const lowerSearch = reconSearchTerm.toLowerCase();
+        schemeSoes = schemeSoes.filter(soe => {
+          const schemeName = currentSchemes.find(s => s.id === soe.schemeId)?.name || '';
+          return soe.name.toLowerCase().includes(lowerSearch) || schemeName.toLowerCase().includes(lowerSearch);
+        });
+      }
 
       return (
         <div className="animate-in fade-in duration-500">
           <div className="bg-emerald-900 text-white p-4 rounded-t-xl flex justify-between items-center">
             <h3 className="font-bold flex items-center gap-2">
               <Table className="w-5 h-5" />
-              {scheme.name} - SOE-wise Reconciliation Summary
+              {title}
             </h3>
             <span className="text-xs bg-emerald-800 px-3 py-1 rounded-full border border-emerald-700">TRY Budget vs Allocated</span>
           </div>
@@ -1854,6 +1937,7 @@ export default function App() {
               <thead>
                 <tr className="bg-gray-50 text-gray-600 border-b">
                   <th className="p-4 text-left font-bold">SOE Head</th>
+                  {reconSchemeId === 'all' && <th className="p-4 text-left font-bold">Scheme</th>}
                   <th className="p-4 text-right font-bold">TRY Budget (A)</th>
                   <th className="p-4 text-right font-bold">Total Reconciled (B)</th>
                   <th className="p-4 text-right font-bold">Balance (A - B)</th>
@@ -1869,10 +1953,12 @@ export default function App() {
                   }, 0);
                   const balance = budget - reconciled;
                   const percent = budget > 0 ? (reconciled / budget) * 100 : 0;
+                  const schemeName = currentSchemes.find(s => s.id === soe.schemeId)?.name;
 
                   return (
                     <tr key={soe.id} className="border-b hover:bg-gray-50 transition-colors">
                       <td className="p-4 font-medium text-gray-900">{soe.name}</td>
+                      {reconSchemeId === 'all' && <td className="p-4 text-gray-600 text-xs">{schemeName}</td>}
                       <td className="p-4 text-right font-mono">₹{budget.toLocaleString()}</td>
                       <td className="p-4 text-right font-mono text-blue-600">₹{reconciled.toLocaleString()}</td>
                       <td className={`p-4 text-right font-mono font-bold ${balance < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
@@ -1892,14 +1978,14 @@ export default function App() {
                 })}
                 {schemeSoes.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="p-10 text-center text-gray-400 italic">No SOE Heads found for this scheme.</td>
+                    <td colSpan={reconSchemeId === 'all' ? 6 : 5} className="p-10 text-center text-gray-400 italic">No SOE Heads found for this scheme.</td>
                   </tr>
                 )}
               </tbody>
               {schemeSoes.length > 0 && (
                 <tfoot>
                   <tr className="bg-gray-50 font-bold border-t-2 border-gray-200">
-                    <td className="p-4">GRAND TOTAL</td>
+                    <td className="p-4" colSpan={reconSchemeId === 'all' ? 2 : 1}>GRAND TOTAL</td>
                     <td className="p-4 text-right">₹{schemeSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0).toLocaleString()}</td>
                     <td className="p-4 text-right text-blue-600">
                       ₹{schemeAllocations.reduce((sum, alloc) => {
@@ -1942,6 +2028,16 @@ export default function App() {
                   Summary View
                 </button>
               </div>
+              <div className="relative w-64">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text"
+                  placeholder="Search anything..."
+                  value={reconSearchTerm}
+                  onChange={(e) => setReconSearchTerm(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
+                />
+              </div>
               <div className="w-64">
                 <select 
                   value={reconSchemeId} 
@@ -1949,6 +2045,7 @@ export default function App() {
                   className="w-full p-2 border rounded-lg shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none text-sm"
                 >
                   <option value="">-- Select Scheme --</option>
+                  <option value="all">All Schemes</option>
                   {provisionalSchemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                 </select>
               </div>
@@ -1986,106 +2083,125 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {hierarchy.map((sector, sIdx) => (
-                    <React.Fragment key={sector.name}>
-                      {/* Sector Row */}
-                      <tr className="bg-gray-200 font-bold">
-                        <td className="p-2 border border-gray-300 sticky left-0 bg-gray-200 z-10" colSpan={11}>SECTOR: {sector.name}</td>
-                      </tr>
-                      {sector.activities.map((activity: any, aIdx: number) => (
-                        <React.Fragment key={activity.name}>
-                          {/* Activity Row */}
-                          <tr className="bg-gray-100 font-semibold italic">
-                            <td className="p-2 border border-gray-300 pl-6 sticky left-0 bg-gray-100 z-10" colSpan={11}>Activity: {activity.name}</td>
+                  {hierarchy.map((schemeLevel, idx) => (
+                    <React.Fragment key={schemeLevel.name}>
+                      {/* Scheme Row */}
+                      {reconSchemeId === 'all' && (
+                        <tr className="bg-gray-300 font-bold text-sm">
+                          <td className="p-2 border border-gray-400 sticky left-0 bg-gray-300 z-10" colSpan={11}>SCHEME: {schemeLevel.name}</td>
+                        </tr>
+                      )}
+                      
+                      {schemeLevel.sectors.map((sector: any, sIdx: number) => (
+                        <React.Fragment key={sector.name}>
+                          {/* Sector Row */}
+                          <tr className="bg-gray-200 font-bold">
+                            <td className="p-2 border border-gray-300 sticky left-0 bg-gray-200 z-10" colSpan={11}>SECTOR: {sector.name}</td>
                           </tr>
-                          {activity.subActivities.map((subActivity: any, saIdx: number) => {
-                            const subActivityAllocations = subActivity.allocations;
-                            const approvedBudget = currentSoes.filter(s => s.subActivityId === subActivityAllocations[0].subActivityId).reduce((sum, s) => sum + getReceivedInTry(s), 0);
-                            
-                            return (
-                              <React.Fragment key={subActivity.name}>
-                                {subActivityAllocations.map((alloc: any, alIdx: number) => {
-                                  const distribution = reconData[alloc.id] || {};
-                                  const tryTotal = getRowTotals(alloc.id);
-                                  const variation = alloc.amount - tryTotal;
-                                  const range = ranges.find(r => r.id === alloc.rangeId);
-                                  
-                                  return (
-                                    <tr key={alloc.id} className="hover:bg-emerald-50 transition-colors">
-                                      {alIdx === 0 && (
-                                        <td className="p-2 border border-gray-300 pl-10 sticky left-0 bg-white z-10 font-medium" rowSpan={subActivityAllocations.length}>
-                                          {subActivity.name}
-                                        </td>
-                                      )}
-                                      {alIdx === 0 && (
-                                        <td className="p-2 border border-gray-300 text-right font-bold text-emerald-700" rowSpan={subActivityAllocations.length}>
-                                          ₹{approvedBudget.toLocaleString()}
-                                        </td>
-                                      )}
-                                      <td className="p-2 border border-gray-300 italic text-gray-600">{range?.name}</td>
-                                      <td className="p-2 border border-gray-300 text-right font-bold text-blue-600">₹{alloc.amount.toLocaleString()}</td>
-                                      <td className="p-2 border border-gray-300 text-right text-gray-400">₹{(approvedBudget - alloc.amount).toLocaleString()}</td>
+                          {sector.activities.map((activity: any, aIdx: number) => (
+                            <React.Fragment key={activity.name}>
+                              {/* Activity Row */}
+                              <tr className="bg-gray-100 font-semibold italic">
+                                <td className="p-2 border border-gray-300 pl-6 sticky left-0 bg-gray-100 z-10" colSpan={11}>Activity: {activity.name}</td>
+                              </tr>
+                              {activity.subActivities.map((subActivity: any, saIdx: number) => {
+                                const subActivityAllocations = subActivity.allocations;
+                                const approvedBudget = currentSoes.filter(s => s.subActivityId === subActivityAllocations[0].subActivityId).reduce((sum, s) => sum + getReceivedInTry(s), 0);
+                                
+                                return (
+                                  <React.Fragment key={subActivity.name}>
+                                    {subActivityAllocations.map((alloc: any, alIdx: number) => {
+                                      const distribution = reconData[alloc.id] || {};
+                                      const tryTotal = getRowTotals(alloc.id);
+                                      const variation = alloc.amount - tryTotal;
+                                      const range = ranges.find(r => r.id === alloc.rangeId);
                                       
-                                      {displaySoeNames.map(soeName => {
-                                        const soeId = subActivity.soeMap[soeName];
-                                        return (
-                                          <td key={soeName} className="p-1 border border-gray-300">
-                                            {soeId ? (
-                                              <input 
-                                                type="number"
-                                                value={distribution[soeId] || ''}
-                                                onChange={(e) => {
-                                                  const val = e.target.value;
-                                                  setReconData((prev: any) => ({
-                                                    ...prev,
-                                                    [alloc.id]: {
-                                                      ...(prev[alloc.id] || {}),
-                                                      [soeId]: val
-                                                    }
-                                                  }));
-                                                }}
-                                                placeholder="0"
-                                                className="w-full p-1 border-none focus:ring-1 focus:ring-emerald-500 text-right bg-transparent"
-                                              />
-                                            ) : (
-                                              <div className="text-center text-gray-300">-</div>
-                                            )}
+                                      return (
+                                        <tr key={alloc.id} className="hover:bg-emerald-50 transition-colors">
+                                          {alIdx === 0 && (
+                                            <td className="p-2 border border-gray-300 pl-10 sticky left-0 bg-white z-10 font-medium" rowSpan={subActivityAllocations.length}>
+                                              {subActivity.name}
+                                            </td>
+                                          )}
+                                          {alIdx === 0 && (
+                                            <td className="p-2 border border-gray-300 text-right font-bold text-emerald-700" rowSpan={subActivityAllocations.length}>
+                                              ₹{approvedBudget.toLocaleString()}
+                                            </td>
+                                          )}
+                                          <td className="p-2 border border-gray-300 italic text-gray-600">{range?.name}</td>
+                                          <td className="p-2 border border-gray-300 text-right font-bold text-blue-600">₹{alloc.amount.toLocaleString()}</td>
+                                          <td className="p-2 border border-gray-300 text-right text-gray-400">₹{(approvedBudget - alloc.amount).toLocaleString()}</td>
+                                          
+                                          {displaySoeNames.map(soeName => {
+                                            const soeId = subActivity.soeMap[soeName];
+                                            return (
+                                              <td key={soeName} className="p-1 border border-gray-300">
+                                                {soeId ? (
+                                                  <input 
+                                                    type="number"
+                                                    value={distribution[soeId] || ''}
+                                                    onChange={(e) => {
+                                                      const val = e.target.value;
+                                                      setReconData((prev: any) => ({
+                                                        ...prev,
+                                                        [alloc.id]: {
+                                                          ...(prev[alloc.id] || {}),
+                                                          [soeId]: val
+                                                        }
+                                                      }));
+                                                    }}
+                                                    placeholder="0"
+                                                    className="w-full p-1 border-none focus:ring-1 focus:ring-emerald-500 text-right bg-transparent"
+                                                  />
+                                                ) : (
+                                                  <div className="text-center text-gray-300">-</div>
+                                                )}
+                                              </td>
+                                            );
+                                          })}
+                                          
+                                          <td className="p-2 border border-gray-300 text-right font-bold text-emerald-600">₹{tryTotal.toLocaleString()}</td>
+                                          <td className={`p-2 border border-gray-300 text-right font-bold ${Math.abs(variation) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
+                                            ₹{variation.toLocaleString()}
                                           </td>
-                                        );
-                                      })}
-                                      
-                                      <td className="p-2 border border-gray-300 text-right font-bold text-emerald-600">₹{tryTotal.toLocaleString()}</td>
-                                      <td className={`p-2 border border-gray-300 text-right font-bold ${Math.abs(variation) < 0.01 ? 'text-green-600' : 'text-red-600'}`}>
-                                        ₹{variation.toLocaleString()}
-                                      </td>
+                                        </tr>
+                                      );
+                                    })}
+                                    {/* Sub-Activity Total Row */}
+                                    <tr className="bg-gray-50 font-bold text-[10px]">
+                                      <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total for {subActivity.name}</td>
+                                      <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + a.amount, 0).toLocaleString()}</td>
+                                      <td className="p-2 border border-gray-300" colSpan={5}></td>
+                                      <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + getRowTotals(a.id), 0).toLocaleString()}</td>
+                                      <td className="p-2 border border-gray-300"></td>
                                     </tr>
-                                  );
-                                })}
-                                {/* Sub-Activity Total Row */}
-                                <tr className="bg-gray-50 font-bold text-[10px]">
-                                  <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total for {subActivity.name}</td>
-                                  <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + a.amount, 0).toLocaleString()}</td>
-                                  <td className="p-2 border border-gray-300" colSpan={5}></td>
-                                  <td className="p-2 border border-gray-300 text-right">₹{subActivityAllocations.reduce((sum: number, a: any) => sum + getRowTotals(a.id), 0).toLocaleString()}</td>
-                                  <td className="p-2 border border-gray-300"></td>
-                                </tr>
-                              </React.Fragment>
-                            );
-                          })}
-                          {/* Activity Total Row */}
-                          <tr className="bg-blue-50 font-bold text-[11px]">
-                            <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Activity: {activity.name}</td>
-                            <td className="p-2 border border-gray-300 text-right">₹{activity.subActivities.reduce((sum: number, sa: any) => sum + sa.allocations.reduce((s: number, a: any) => s + a.amount, 0), 0).toLocaleString()}</td>
+                                  </React.Fragment>
+                                );
+                              })}
+                              {/* Activity Total Row */}
+                              <tr className="bg-blue-50 font-bold text-[11px]">
+                                <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Activity: {activity.name}</td>
+                                <td className="p-2 border border-gray-300 text-right">₹{activity.subActivities.reduce((sum: number, sa: any) => sum + sa.allocations.reduce((s: number, a: any) => s + a.amount, 0), 0).toLocaleString()}</td>
+                                <td className="p-2 border border-gray-300" colSpan={7}></td>
+                              </tr>
+                            </React.Fragment>
+                          ))}
+                          {/* Sector Total Row */}
+                          <tr className="bg-emerald-50 font-bold text-xs">
+                            <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Sector: {sector.name}</td>
+                            <td className="p-2 border border-gray-300 text-right">₹{sector.activities.reduce((sum: number, act: any) => sum + act.subActivities.reduce((s: number, sa: any) => s + sa.allocations.reduce((ss: number, a: any) => ss + a.amount, 0), 0), 0).toLocaleString()}</td>
                             <td className="p-2 border border-gray-300" colSpan={7}></td>
                           </tr>
                         </React.Fragment>
                       ))}
-                      {/* Sector Total Row */}
-                      <tr className="bg-emerald-50 font-bold text-xs">
-                        <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Sector: {sector.name}</td>
-                        <td className="p-2 border border-gray-300 text-right">₹{sector.activities.reduce((sum: number, act: any) => sum + act.subActivities.reduce((s: number, sa: any) => s + sa.allocations.reduce((ss: number, a: any) => ss + a.amount, 0), 0), 0).toLocaleString()}</td>
-                        <td className="p-2 border border-gray-300" colSpan={7}></td>
-                      </tr>
+                      {/* Scheme Total Row (only if 'all' is selected) */}
+                      {reconSchemeId === 'all' && (
+                        <tr className="bg-emerald-100 font-bold text-sm">
+                          <td className="p-2 border border-gray-300 text-right" colSpan={3}>Total Scheme: {schemeLevel.name}</td>
+                          <td className="p-2 border border-gray-300 text-right">₹{schemeLevel.sectors.reduce((sum: number, sec: any) => sum + sec.activities.reduce((s: number, act: any) => s + act.subActivities.reduce((ss: number, sa: any) => ss + sa.allocations.reduce((sss: number, a: any) => sss + a.amount, 0), 0), 0), 0).toLocaleString()}</td>
+                          <td className="p-2 border border-gray-300" colSpan={7}></td>
+                        </tr>
+                      )}
                     </React.Fragment>
                   ))}
                   {/* Grand Total Row */}
@@ -2234,7 +2350,7 @@ export default function App() {
 
                     return (b.updatedAt || 0) - (a.updatedAt || 0);
                   })
-                  .slice(0, visibleCount)
+                  .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
                   .map((s, index) => {
                   const allocated = allocations.reduce((sum, a) => {
                     const funded = a.fundedSOEs?.find(f => f.soeId === s.id);
@@ -2244,7 +2360,7 @@ export default function App() {
 
                   return (
                     <tr key={s.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-4 text-gray-500 font-medium">{index + 1}</td>
+                      <td className="px-4 py-4 text-gray-500 font-medium">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                       <td className="px-4 py-4">{renderHierarchy(s)}</td>
                       <td className="px-4 py-4 font-medium">{s.name || '-'}</td>
                       <td className="px-4 py-4 text-right">₹{getApprovedBudget(s).toLocaleString()}</td>
@@ -2271,21 +2387,20 @@ export default function App() {
               </tbody>
             </table>
           </div>
-          {filteredItems.length > visibleCount && (
-            <div className="mt-4 text-center border-t pt-4 p-4">
-              <button 
-                onClick={() => setVisibleCount(prev => prev + 10)}
-                className="px-6 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium transition-colors flex items-center gap-2 mx-auto"
-              >
-                <ChevronDown className="w-4 h-4" />
-                Read More / Load More...
-              </button>
-            </div>
-          )}
+          <Pagination 
+            totalEntries={filteredItems.length} 
+            currentPage={currentPage} 
+            itemsPerPage={itemsPerPage} 
+            onPageChange={setCurrentPage} 
+          />
         </div>
       </div>
     );
   };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [activeTab]);
 
   const renderSimpleManager = (
     title: string, 
@@ -2409,10 +2524,10 @@ export default function App() {
                   // Priority 2: updatedAt (Descending)
                   return (b.updatedAt || 0) - (a.updatedAt || 0);
                 })
-                .slice(0, visibleCount)
+                .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
                 .map((item, index) => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="p-3 text-gray-500 font-medium">{index + 1}</td>
+                  <td className="p-3 text-gray-500 font-medium">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
                   {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
                     <td className="p-3 text-right flex justify-end gap-2">
@@ -2447,17 +2562,12 @@ export default function App() {
             </tbody>
           </table>
         </div>
-        {filteredItems.length > visibleCount && (
-          <div className="mt-4 text-center border-t pt-4">
-            <button 
-              onClick={() => setVisibleCount(prev => prev + 10)}
-              className="px-6 py-2 bg-emerald-50 text-emerald-700 rounded-lg hover:bg-emerald-100 font-medium transition-colors flex items-center gap-2 mx-auto"
-            >
-              <ChevronDown className="w-4 h-4" />
-              Read More / Load More...
-            </button>
-          </div>
-        )}
+        <Pagination 
+          totalEntries={filteredItems.length} 
+          currentPage={currentPage} 
+          itemsPerPage={itemsPerPage} 
+          onPageChange={setCurrentPage} 
+        />
       </div>
     </div>
     </div>
@@ -4150,7 +4260,7 @@ export default function App() {
                   setEditingItem(null);
                   setMenuOpen(false);
                   setIsFormExpanded(window.innerWidth > 1024);
-                  setVisibleCount(10);
+                  setCurrentPage(1);
                   window.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
                 className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
@@ -4378,16 +4488,18 @@ export default function App() {
                 {key: 'amount', label: 'Sanctioned Amount', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className="font-medium">₹{val.toLocaleString()}</span>
-                    {item.fundedSOEs && item.fundedSOEs.length > 0 && (
-                      <div className="mt-1 space-y-0.5 border-t pt-1">
-                        {item.fundedSOEs.map((f: any, idx: number) => (
+                    <div className="mt-1 space-y-0.5 border-t pt-1">
+                      {item.fundedSOEs && item.fundedSOEs.length > 0 ? (
+                        item.fundedSOEs.map((f: any, idx: number) => (
                           <div key={idx} className="text-[9px] text-gray-400 flex justify-between gap-1">
                             <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
                             <span>₹{f.amount.toLocaleString()}</span>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        ))
+                      ) : (
+                        <div className="text-[9px] text-orange-400 italic">No SOE funding assigned</div>
+                      )}
+                    </div>
                   </div>
                 )},
                 {key: 'remarks', label: 'Description / Remarks', render: (val) => <span className="text-xs italic text-gray-500">{val || '-'}</span>},
@@ -4396,16 +4508,18 @@ export default function App() {
                     <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
                       {val}
                     </span>
-                    {item.fundedSOEs && item.fundedSOEs.length > 0 && (
-                      <div className="mt-1 space-y-1">
-                        {item.fundedSOEs.map((f: any, idx: number) => (
+                    <div className="mt-1 space-y-1">
+                      {item.fundedSOEs && item.fundedSOEs.length > 0 ? (
+                        item.fundedSOEs.map((f: any, idx: number) => (
                           <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
                             <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
                             <span className="font-medium">₹{f.amount.toLocaleString()}</span>
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        ))
+                      ) : (
+                        <div className="text-[10px] text-orange-400 italic">Pending funding assignment</div>
+                      )}
+                    </div>
                   </div>
                 )},
                 {key: 'actions', label: 'Funding', render: (_, item) => (
@@ -5189,15 +5303,109 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
   );
 }
 
-function StatCard({ title, amount, icon, color }: { title: string, amount: number, icon: React.ReactNode, color: string }) {
+function Pagination({ 
+  totalEntries, 
+  currentPage, 
+  itemsPerPage, 
+  onPageChange 
+}: { 
+  totalEntries: number, 
+  currentPage: number, 
+  itemsPerPage: number, 
+  onPageChange: (page: number) => void 
+}) {
+  const totalPages = Math.ceil(totalEntries / itemsPerPage);
+  if (totalPages <= 1) return null;
+
+  const startEntry = (currentPage - 1) * itemsPerPage + 1;
+  const endEntry = Math.min(currentPage * itemsPerPage, totalEntries);
+
+  const pages = [];
+  const maxVisiblePages = 5;
+  
+  let startPage = Math.max(1, currentPage - 2);
+  let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+  
+  if (endPage - startPage < maxVisiblePages - 1) {
+    startPage = Math.max(1, endPage - maxVisiblePages + 1);
+  }
+
+  for (let i = startPage; i <= endPage; i++) {
+    pages.push(i);
+  }
+
   return (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-      <div className={`p-4 rounded-full bg-gray-50 ${color}`}>
-        {icon}
+    <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t">
+      <p className="text-sm text-gray-600">
+        Showing <span className="font-medium">{startEntry}</span> to <span className="font-medium">{endEntry}</span> of <span className="font-medium">{totalEntries}</span> entries
+      </p>
+      <div className="flex items-center gap-1">
+        <button 
+          onClick={() => onPageChange(1)} 
+          disabled={currentPage === 1}
+          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="First Page"
+        >
+          <ChevronsLeft className="w-4 h-4" />
+        </button>
+        <button 
+          onClick={() => onPageChange(currentPage - 1)} 
+          disabled={currentPage === 1}
+          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="Previous Page"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        
+        {startPage > 1 && <span className="px-2 text-gray-400">...</span>}
+        
+        {pages.map(page => (
+          <button
+            key={page}
+            onClick={() => onPageChange(page)}
+            className={`min-w-[32px] h-8 flex items-center justify-center rounded border text-sm font-medium transition-colors ${
+              currentPage === page 
+                ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' 
+                : 'hover:bg-gray-50 text-gray-600 border-gray-200'
+            }`}
+          >
+            {page}
+          </button>
+        ))}
+        
+        {endPage < totalPages && <span className="px-2 text-gray-400">...</span>}
+        
+        <button 
+          onClick={() => onPageChange(currentPage + 1)} 
+          disabled={currentPage === totalPages}
+          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="Next Page"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+        <button 
+          onClick={() => onPageChange(totalPages)} 
+          disabled={currentPage === totalPages}
+          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          title="Last Page"
+        >
+          <ChevronsRight className="w-4 h-4" />
+        </button>
       </div>
-      <div>
-        <p className="text-sm text-gray-500 font-medium">{title}</p>
-        <p className={`text-2xl font-bold ${color}`}>₹{amount.toLocaleString()}</p>
+    </div>
+  );
+}
+
+function StatCard({ title, amount, icon, color, subtitle }: { title: string, amount: number, icon: React.ReactNode, color: string, subtitle?: string }) {
+  return (
+    <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 flex items-center gap-3 min-w-0">
+      <div className={`p-2.5 rounded-full bg-gray-50 ${color} shrink-0`}>
+        {React.cloneElement(icon as React.ReactElement<any>, { className: 'w-4 h-4' })}
+      </div>
+      <div className="min-w-0">
+        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight truncate" title={title}>{title}</p>
+        <p className={`text-base font-bold ${color} truncate`}>₹{amount.toLocaleString()}</p>
+        {subtitle && <p className="text-[9px] text-gray-400 font-medium truncate">{subtitle}</p>}
       </div>
     </div>
   );
