@@ -172,7 +172,7 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 25;
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   const [dashboardSearch, setDashboardSearch] = useState('');
   const [showAllBudget, setShowAllBudget] = useState(false);
   const [rangeSearch, setRangeSearch] = useState('');
@@ -220,10 +220,11 @@ export default function App() {
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '' });
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
 
-  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
+  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
   const [reportSubTab, setReportSubTab] = useState('summary');
   const [reportSearchTerm, setReportSearchTerm] = useState('');
   const [reportPage, setReportPage] = useState(1);
+  const [reportItemsPerPage, setReportItemsPerPage] = useState(25);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
   const [selectedExpenseForApproval, setSelectedExpenseForApproval] = useState<Expense | null>(null);
   const [approvalStatus, setApprovalStatus] = useState<'approved' | 'rejected'>('approved');
@@ -365,37 +366,37 @@ export default function App() {
     if (!user || !userRole) return;
 
     const unsubFys = onSnapshot(collection(db, 'financialYears'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as FinancialYear));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as FinancialYear));
       setFys(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'financialYears'));
 
     const unsubRanges = onSnapshot(collection(db, 'ranges'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Range));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Range));
       setRanges(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'ranges'));
 
     const unsubSchemes = onSnapshot(collection(db, 'schemes'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Scheme));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Scheme));
       setSchemes(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'schemes'));
 
     const unsubSectors = onSnapshot(collection(db, 'sectors'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Sector));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Sector));
       setSectors(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'sectors'));
 
     const unsubActivities = onSnapshot(collection(db, 'activities'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as ActivityItem));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as ActivityItem));
       setActivities(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'activities'));
 
     const unsubSubActivities = onSnapshot(collection(db, 'subActivities'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SubActivity));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as SubActivity));
       setSubActivities(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'subActivities'));
 
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as AppUser));
       setUsers(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
@@ -419,7 +420,7 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubSoes = onSnapshot(soesQuery, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as SOE));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as SOE));
       setSoes(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
       setIsSoesLoaded(true);
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'soeHeads'));
@@ -429,7 +430,7 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubAllocations = onSnapshot(allocsQuery, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Allocation));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Allocation));
       console.log('Fetched allocations for FY:', fyQueryValues, 'Count:', data.length);
       setAllocations(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'allocations'));
@@ -439,7 +440,7 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubExpenses = onSnapshot(expensesQuery, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() } as Expense));
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Expense));
       setExpenses(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
 
@@ -2402,6 +2403,19 @@ export default function App() {
             itemsPerPage={itemsPerPage} 
             onPageChange={setCurrentPage} 
           />
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500">Entries per page:</span>
+            <select 
+              value={itemsPerPage} 
+              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+              className="p-1 border rounded text-xs bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={-1}>All</option>
+            </select>
+          </div>
         </div>
       </div>
     );
@@ -2517,7 +2531,7 @@ export default function App() {
               <tr className="bg-gray-50 text-gray-600 text-sm">
                 <th className="p-3 border-b">SrNo</th>
                 {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && <th className="p-3 border-b text-right">Actions</th>}
+                {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -2533,15 +2547,15 @@ export default function App() {
                   // Priority 2: updatedAt (Descending)
                   return (b.updatedAt || 0) - (a.updatedAt || 0);
                 })
-                .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+                .slice((currentPage - 1) * itemsPerPage, itemsPerPage === -1 ? filteredItems.length : currentPage * itemsPerPage)
                 .map((item, index) => (
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   <td className="p-3 text-gray-500 font-medium">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
+                  {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       {customActions && customActions(item)}
-                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
+                      {(userRole === 'admin' || userRole === 'deo' || (canEditDelete ? canEditDelete(item) : (title === 'Expenditure' && userRole !== 'approver'))) && (
                         <>
                           <button 
                             onClick={() => {
@@ -3503,16 +3517,16 @@ export default function App() {
         sector: sec?.name || 'N/A',
         activity: act?.name || 'N/A',
         subActivity: sa?.name || 'N/A',
-        soe: soeNames,
-        totalBudget,
-        allocated,
-        expenditure,
-        remaining
+        totalBudget: totalBudget,
+        allocated: allocated,
+        expenditure: expenditure,
+        remaining: remaining,
+        balance: remaining // for report consistency
       };
     });
 
     const allocationExpenditureData = currentExpenses.map(exp => {
-      const alloc = allocations.find(a => a.id === exp.allocationId);
+      const alloc = currentAllocations.find(a => a.id === exp.allocationId);
       const sch = schemes.find(s => s.id === alloc?.schemeId);
       const sec = sectors.find(s => s.id === alloc?.sectorId);
       const act = activities.find(a => a.id === alloc?.activityId);
@@ -3529,7 +3543,9 @@ export default function App() {
         subActivity: sa?.name || 'N/A',
         soe: soe?.name || 'N/A',
         range: range?.name || 'N/A',
-        amount: exp.amount,
+        allocation: alloc?.amount || 0,
+        expenditure: exp.amount,
+        balance: (alloc?.amount || 0) - currentExpenses.filter(e => e.allocationId === alloc?.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0),
         description: exp.description,
         status: exp.status
       };
@@ -3537,41 +3553,66 @@ export default function App() {
 
     const renderAllocationExpenditureReport = () => {
       const searchLower = reportSearchTerm.toLowerCase();
-      const filtered = allocationExpenditureData.filter(row => 
-        row.scheme.toLowerCase().includes(searchLower) ||
-        row.sector.toLowerCase().includes(searchLower) ||
-        row.activity.toLowerCase().includes(searchLower) ||
-        row.subActivity.toLowerCase().includes(searchLower) ||
-        row.soe.toLowerCase().includes(searchLower) ||
-        row.range.toLowerCase().includes(searchLower) ||
-        row.description.toLowerCase().includes(searchLower)
-      );
+      const filtered = allocationExpenditureData.filter(row => {
+        const matchesSearch = (
+          row.scheme.toLowerCase().includes(searchLower) ||
+          row.sector.toLowerCase().includes(searchLower) ||
+          row.activity.toLowerCase().includes(searchLower) ||
+          row.subActivity.toLowerCase().includes(searchLower) ||
+          row.soe.toLowerCase().includes(searchLower) ||
+          row.range.toLowerCase().includes(searchLower) ||
+          row.description.toLowerCase().includes(searchLower)
+        );
 
-      // Totals for searched items
-      const totalAmount = filtered.reduce((sum, r) => sum + r.amount, 0);
+        const matchesFilters = (
+          (!reportFilters.scheme || row.scheme === reportFilters.scheme) &&
+          (!reportFilters.sector || row.sector === reportFilters.sector) &&
+          (!reportFilters.activity || row.activity === reportFilters.activity) &&
+          (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity) &&
+          (!reportFilters.range || row.range === reportFilters.range)
+        );
+
+        return matchesSearch && matchesFilters;
+      });
+
+      // Totals for searched/filtered items
+      const totalAllocation = filtered.reduce((sum, r) => sum + r.allocation, 0);
+      const totalExpenditure = filtered.reduce((sum, r) => sum + r.expenditure, 0);
+      const totalBalance = filtered.reduce((sum, r) => sum + r.balance, 0);
 
       // Pagination
-      const itemsPerPage = 10;
-      const totalPages = Math.ceil(filtered.length / itemsPerPage);
-      const paginatedData = filtered.slice((reportPage - 1) * itemsPerPage, reportPage * itemsPerPage);
+      const totalPages = reportItemsPerPage === -1 ? 1 : Math.ceil(filtered.length / reportItemsPerPage);
+      const paginatedData = reportItemsPerPage === -1 ? filtered : filtered.slice((reportPage - 1) * reportItemsPerPage, reportPage * reportItemsPerPage);
 
-      const headers = ['Date', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Range', 'Description', 'Amount', 'Status'];
+      const headers = ['Date', 'Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
       const tableData = filtered.map(r => [
-        r.date, r.scheme, r.sector, r.activity, r.subActivity, r.soe, r.range, r.description, r.amount, r.status
+        r.date, r.range, r.scheme, r.sector, r.activity, r.subActivity, r.description, r.allocation, r.expenditure, r.balance
       ]);
 
       return (
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="relative flex-1 max-w-md">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by scheme, sector, activity..."
-                value={reportSearchTerm}
-                onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
-                className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
-              />
+            <div className="flex items-center gap-4 flex-1">
+              <div className="relative flex-1 max-w-md">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  placeholder="Search by scheme, sector, activity, range, description..."
+                  value={reportSearchTerm}
+                  onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
+                  className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
+                />
+              </div>
+              <select 
+                value={reportItemsPerPage} 
+                onChange={(e) => { setReportItemsPerPage(Number(e.target.value)); setReportPage(1); }}
+                className="p-2 border rounded text-sm bg-white"
+              >
+                <option value={10}>10 per page</option>
+                <option value={25}>25 per page</option>
+                <option value={50}>50 per page</option>
+                <option value={-1}>View All</option>
+              </select>
             </div>
             <div className="flex gap-2">
               <button 
@@ -3589,53 +3630,94 @@ export default function App() {
             </div>
           </div>
 
-          <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
-            <span className="text-sm font-semibold text-emerald-900">Total for Searched Items:</span>
-            <span className="text-lg font-bold text-emerald-700">₹{totalAmount.toLocaleString()}</span>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
+              <span className="text-xs font-semibold text-emerald-900">Total Allocation:</span>
+              <span className="text-sm font-bold text-emerald-700">₹{totalAllocation.toLocaleString()}</span>
+            </div>
+            <div className="bg-red-50 p-3 rounded-lg border border-red-100 flex justify-between items-center">
+              <span className="text-xs font-semibold text-red-900">Total Expenditure:</span>
+              <span className="text-sm font-bold text-red-700">₹{totalExpenditure.toLocaleString()}</span>
+            </div>
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center">
+              <span className="text-xs font-semibold text-blue-900">Total Balance:</span>
+              <span className="text-sm font-bold text-blue-700">₹{totalBalance.toLocaleString()}</span>
+            </div>
           </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse border border-gray-300">
               <thead>
                 <tr className="bg-gray-100">
-                  {headers.map(h => <th key={h} className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">Date</th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      Range <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      Scheme <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      Sector <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      Activity <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      Sub-Activity <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">Description</th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight text-right">Allocation</th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight text-right">Expenditure</th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight text-right">Balance to Book</th>
                 </tr>
               </thead>
               <tbody>
                 {paginatedData.map((row, i) => (
                   <tr key={i} className="hover:bg-gray-50 border-b border-gray-200">
                     <td className="p-2 text-[10px] border border-gray-300">{row.date}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.range}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.scheme}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.sector}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.activity}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.subActivity}</td>
-                    <td className="p-2 text-[10px] border border-gray-300 font-medium">{row.soe}</td>
-                    <td className="p-2 text-[10px] border border-gray-300">{row.range}</td>
-                    <td className="p-2 text-[10px] border border-gray-300 max-w-xs truncate" title={row.description}>{row.description}</td>
-                    <td className="p-2 text-[10px] border border-gray-300 text-right font-bold text-emerald-700">₹{row.amount.toLocaleString()}</td>
-                    <td className="p-2 text-[10px] border border-gray-300">
-                      <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase ${
-                        row.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
-                        row.status === 'rejected' ? 'bg-red-100 text-red-700' :
-                        'bg-amber-100 text-amber-700'
-                      }`}>
-                        {row.status || 'pending'}
-                      </span>
-                    </td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.description}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right font-medium text-emerald-700">₹{row.allocation.toLocaleString()}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right font-bold text-red-700">₹{row.expenditure.toLocaleString()}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right font-bold text-blue-700">₹{row.balance.toLocaleString()}</td>
                   </tr>
                 ))}
                 {paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={headers.length} className="p-8 text-center text-gray-500 border border-gray-300">No expenditure data found.</td>
+                    <td colSpan={10} className="p-8 text-center text-gray-500 border border-gray-300">No expenditure data found.</td>
                   </tr>
                 )}
               </tbody>
+              {paginatedData.length > 0 && (
+                <tfoot className="bg-gray-100 font-bold">
+                  <tr>
+                    <td colSpan={7} className="p-2 text-[10px] border border-gray-300 text-right uppercase">Total (Filtered)</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right text-emerald-700">₹{totalAllocation.toLocaleString()}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right text-red-700">₹{totalExpenditure.toLocaleString()}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right text-blue-700">₹{totalBalance.toLocaleString()}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
 
-          {totalPages > 1 && (
+          {reportItemsPerPage !== -1 && totalPages > 1 && (
             <div className="flex items-center justify-between mt-4">
-              <span className="text-xs text-gray-500">Showing {(reportPage - 1) * itemsPerPage + 1} to {Math.min(reportPage * itemsPerPage, filtered.length)} of {filtered.length} entries</span>
+              <span className="text-xs text-gray-500">Showing {(reportPage - 1) * reportItemsPerPage + 1} to {Math.min(reportPage * reportItemsPerPage, filtered.length)} of {filtered.length} entries</span>
               <div className="flex gap-1">
                 <button
                   onClick={() => setReportPage(p => Math.max(1, p - 1))}
@@ -3837,15 +3919,13 @@ export default function App() {
     const isGlobalUser = userRole === 'admin' || userRole === 'deo' || userRole === 'approver';
     const detailedHeaders = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
     if (!userRangeId) detailedHeaders.push('Total Budget');
-    detailedHeaders.push('Allocated');
-    if (isGlobalUser) detailedHeaders.push('To be Allocated');
-    detailedHeaders.push('Expenditure', 'Remaining');
+    detailedHeaders.push('Allocation');
+    detailedHeaders.push('Expenditure', 'Balance to Book');
     
     const detailedTableData = groupedData.map(row => {
       const cols = [row.range, row.scheme, row.sector, row.activity, row.subActivity, row.soe];
       if (!userRangeId) cols.push(row.totalBudget);
       cols.push(row.allocated);
-      if (isGlobalUser) cols.push(row.toBeAllocated);
       cols.push(row.expenditure, row.remaining);
       return cols;
     });
@@ -3854,6 +3934,7 @@ export default function App() {
     const uniqueSectors = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[1]))).filter(Boolean).sort();
     const uniqueActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[2]))).filter(Boolean).sort();
     const uniqueSubActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[3]))).filter(Boolean).sort();
+    const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name))).filter(Boolean).sort();
 
     return (
       <div className="space-y-6">
@@ -3944,6 +4025,17 @@ export default function App() {
                     </select>
                   </div>
                   <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Range</label>
+                    <select 
+                      value={reportFilters.range}
+                      onChange={(e) => setReportFilters({ ...reportFilters, range: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Ranges</option>
+                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
                     <select 
                       value={reportFilters.subActivity}
@@ -3954,9 +4046,9 @@ export default function App() {
                       {uniqueSubActivities.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
-                  <div className="md:col-span-4 flex justify-end">
+                  <div className="md:col-span-5 flex justify-end">
                     <button 
-                      onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '' })}
+                      onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' })}
                       className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
                     >
                       Clear All Filters
@@ -4064,7 +4156,6 @@ export default function App() {
                           <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
                           {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
                           <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
-                          {isGlobalUser && <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
                           <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
                           <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
                         </tr>
@@ -4586,7 +4677,8 @@ export default function App() {
             sectors={currentSectors} 
             editingItem={editingItem} 
           />,
-          (item) => setEditingItem({ type: 'Activity', item })
+          (item) => setEditingItem({ type: 'Activity', item }),
+          (item) => userRole === 'admin' || userRole === 'deo' || user?.email?.toLowerCase() === 'admin@rajgarhforest.app' || user?.email?.toLowerCase() === 'sharmaanuj860@gmail.com'
         )}
 
         {activeTab === 'Sub-Activities' && renderSimpleManager(
@@ -4626,7 +4718,8 @@ export default function App() {
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-1.5 border rounded text-sm" />
           </CascadingDropdowns>,
-          (item) => setEditingItem({ type: 'Sub-Activity', item })
+          (item) => setEditingItem({ type: 'Sub-Activity', item }),
+          (item) => userRole === 'admin' || userRole === 'deo' || user?.email?.toLowerCase() === 'admin@rajgarhforest.app' || user?.email?.toLowerCase() === 'sharmaanuj860@gmail.com'
         )}
 
         {activeTab === 'SOE Heads' && renderSOEHeads()}
