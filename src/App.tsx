@@ -221,6 +221,9 @@ export default function App() {
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
 
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '' });
+  const [reportSubTab, setReportSubTab] = useState('summary');
+  const [reportSearchTerm, setReportSearchTerm] = useState('');
+  const [reportPage, setReportPage] = useState(1);
   const [isApprovalModalOpen, setIsApprovalModalOpen] = useState(false);
   const [selectedExpenseForApproval, setSelectedExpenseForApproval] = useState<Expense | null>(null);
   const [approvalStatus, setApprovalStatus] = useState<'approved' | 'rejected'>('approved');
@@ -2706,6 +2709,12 @@ export default function App() {
     e.preventDefault();
     const name = e.target.name.value;
     const activityId = e.target.activityId.value;
+    
+    if (!activityId) {
+      showAlert("Activity is mandatory for Sub-Activity.");
+      return;
+    }
+
     try {
       if (editingItem?.type === 'Sub-Activity') {
         await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId, updatedAt: Date.now() });
@@ -3502,6 +3511,172 @@ export default function App() {
       };
     });
 
+    const allocationExpenditureData = currentExpenses.map(exp => {
+      const alloc = allocations.find(a => a.id === exp.allocationId);
+      const sch = schemes.find(s => s.id === alloc?.schemeId);
+      const sec = sectors.find(s => s.id === alloc?.sectorId);
+      const act = activities.find(a => a.id === alloc?.activityId);
+      const sa = subActivities.find(s => s.id === alloc?.subActivityId);
+      const soe = soes.find(s => s.id === exp.soeId);
+      const range = ranges.find(r => r.id === alloc?.rangeId);
+
+      return {
+        id: exp.id,
+        date: exp.date,
+        scheme: sch?.name || 'N/A',
+        sector: sec?.name || 'N/A',
+        activity: act?.name || 'N/A',
+        subActivity: sa?.name || 'N/A',
+        soe: soe?.name || 'N/A',
+        range: range?.name || 'N/A',
+        amount: exp.amount,
+        description: exp.description,
+        status: exp.status
+      };
+    });
+
+    const renderAllocationExpenditureReport = () => {
+      const searchLower = reportSearchTerm.toLowerCase();
+      const filtered = allocationExpenditureData.filter(row => 
+        row.scheme.toLowerCase().includes(searchLower) ||
+        row.sector.toLowerCase().includes(searchLower) ||
+        row.activity.toLowerCase().includes(searchLower) ||
+        row.subActivity.toLowerCase().includes(searchLower) ||
+        row.soe.toLowerCase().includes(searchLower) ||
+        row.range.toLowerCase().includes(searchLower) ||
+        row.description.toLowerCase().includes(searchLower)
+      );
+
+      // Totals for searched items
+      const totalAmount = filtered.reduce((sum, r) => sum + r.amount, 0);
+
+      // Pagination
+      const itemsPerPage = 10;
+      const totalPages = Math.ceil(filtered.length / itemsPerPage);
+      const paginatedData = filtered.slice((reportPage - 1) * itemsPerPage, reportPage * itemsPerPage);
+
+      const headers = ['Date', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head', 'Range', 'Description', 'Amount', 'Status'];
+      const tableData = filtered.map(r => [
+        r.date, r.scheme, r.sector, r.activity, r.subActivity, r.soe, r.range, r.description, r.amount, r.status
+      ]);
+
+      return (
+        <div className="space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                placeholder="Search by scheme, sector, activity..."
+                value={reportSearchTerm}
+                onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
+                className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
+              />
+            </div>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => downloadPDF('Allocation & Expenditure Report', [], [], tableData, headers)}
+                className="bg-red-600 text-white px-3 py-1.5 rounded text-xs flex items-center gap-1 hover:bg-red-700 transition-colors"
+              >
+                <Download className="w-3 h-3" /> PDF
+              </button>
+              <button 
+                onClick={() => downloadExcel('Allocation & Expenditure Report', [], [], tableData, headers)}
+                className="bg-emerald-600 text-white px-3 py-1.5 rounded text-xs flex items-center gap-1 hover:bg-emerald-700 transition-colors"
+              >
+                <Download className="w-3 h-3" /> Excel
+              </button>
+            </div>
+          </div>
+
+          <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
+            <span className="text-sm font-semibold text-emerald-900">Total for Searched Items:</span>
+            <span className="text-lg font-bold text-emerald-700">₹{totalAmount.toLocaleString()}</span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse border border-gray-300">
+              <thead>
+                <tr className="bg-gray-100">
+                  {headers.map(h => <th key={h} className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {paginatedData.map((row, i) => (
+                  <tr key={i} className="hover:bg-gray-50 border-b border-gray-200">
+                    <td className="p-2 text-[10px] border border-gray-300">{row.date}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.scheme}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.sector}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.activity}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.subActivity}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 font-medium">{row.soe}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">{row.range}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 max-w-xs truncate" title={row.description}>{row.description}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 text-right font-bold text-emerald-700">₹{row.amount.toLocaleString()}</td>
+                    <td className="p-2 text-[10px] border border-gray-300">
+                      <span className={`px-1.5 py-0.5 rounded-full text-[8px] font-bold uppercase ${
+                        row.status === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                        row.status === 'rejected' ? 'bg-red-100 text-red-700' :
+                        'bg-amber-100 text-amber-700'
+                      }`}>
+                        {row.status || 'pending'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+                {paginatedData.length === 0 && (
+                  <tr>
+                    <td colSpan={headers.length} className="p-8 text-center text-gray-500 border border-gray-300">No expenditure data found.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <span className="text-xs text-gray-500">Showing {(reportPage - 1) * itemsPerPage + 1} to {Math.min(reportPage * itemsPerPage, filtered.length)} of {filtered.length} entries</span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setReportPage(p => Math.max(1, p - 1))}
+                  disabled={reportPage === 1}
+                  className="p-1 rounded border hover:bg-gray-100 disabled:opacity-50"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <div className="flex gap-1">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    let pageNum;
+                    if (totalPages <= 5) pageNum = i + 1;
+                    else if (reportPage <= 3) pageNum = i + 1;
+                    else if (reportPage >= totalPages - 2) pageNum = totalPages - 4 + i;
+                    else pageNum = reportPage - 2 + i;
+                    
+                    return (
+                      <button
+                        key={pageNum}
+                        onClick={() => setReportPage(pageNum)}
+                        className={`w-8 h-8 text-xs rounded border ${reportPage === pageNum ? 'bg-emerald-600 text-white border-emerald-600' : 'hover:bg-gray-100'}`}
+                      >
+                        {pageNum}
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={() => setReportPage(p => Math.min(totalPages, p + 1))}
+                  disabled={reportPage === totalPages}
+                  className="p-1 rounded border hover:bg-gray-100 disabled:opacity-50"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
     // Calculate total allocated per SOE Head across all ranges to get accurate "To be Allocated"
     const totalAllocatedBySoe: Record<string, number> = {};
     comprehensiveReportData.forEach(a => {
@@ -3683,211 +3858,232 @@ export default function App() {
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
-            </h3>
-            <div className="flex flex-wrap gap-1">
-              <button 
-                onClick={() => setShowReportFilters(!showReportFilters)}
-                className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-gray-200 transition-colors border border-gray-200"
-              >
-                <Filter className="w-3 h-3" /> {showReportFilters ? 'Hide' : 'Show'} Filters
-                {showReportFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              </button>
-              <button 
-                onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
-                className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
-              >
-                <Download className="w-3 h-3" /> PDF
-              </button>
-              <button 
-                onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
-                className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-emerald-700 transition-colors shadow-sm"
-              >
-                <Download className="w-3 h-3" /> Excel
-              </button>
-              <button 
-                onClick={downloadZip}
-                className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-blue-700 transition-colors shadow-sm"
-              >
-                <Download className="w-3 h-3" /> ZIP
-              </button>
-            </div>
+          <div className="flex border-b border-gray-200 mb-6">
+            <button
+              onClick={() => { setReportSubTab('summary'); setReportPage(1); }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'summary' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Summary Report
+            </button>
+            <button
+              onClick={() => { setReportSubTab('allocation-expenditure'); setReportPage(1); }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'allocation-expenditure' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Allocation & Expenditure Details
+            </button>
           </div>
 
-          {showReportFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
-                <select 
-                  value={reportFilters.scheme}
-                  onChange={(e) => setReportFilters({ ...reportFilters, scheme: e.target.value })}
-                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                >
-                  <option value="">All Schemes</option>
-                  {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
-                <select 
-                  value={reportFilters.sector}
-                  onChange={(e) => setReportFilters({ ...reportFilters, sector: e.target.value })}
-                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                >
-                  <option value="">All Sectors</option>
-                  {uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
-                <select 
-                  value={reportFilters.activity}
-                  onChange={(e) => setReportFilters({ ...reportFilters, activity: e.target.value })}
-                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                >
-                  <option value="">All Activities</option>
-                  {uniqueActivities.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
-                <select 
-                  value={reportFilters.subActivity}
-                  onChange={(e) => setReportFilters({ ...reportFilters, subActivity: e.target.value })}
-                  className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                >
-                  <option value="">All Sub-Activities</option>
-                  {uniqueSubActivities.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="md:col-span-4 flex justify-end">
-                <button 
-                  onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '' })}
-                  className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
-                >
-                  Clear All Filters
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* SOE Abstract Summary Table */}
-          {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver') && (
-            <div className="mb-10">
-              <div 
-                className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
-                onClick={() => setShowSoeAbstract(!showSoeAbstract)}
-              >
-                <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
-                  <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
-                </h4>
-                <div className="flex items-center gap-4">
-                  {showSoeAbstract && (
-                    <div className="relative" onClick={(e) => e.stopPropagation()}>
-                      <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                      <input
-                        type="text"
-                        placeholder="Search abstract..."
-                        value={soeAbstractSearch}
-                        onChange={(e) => setSoeAbstractSearch(e.target.value)}
-                        className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
-                      />
-                    </div>
-                  )}
-                  <button type="button" className="text-gray-500 hover:text-gray-700">
-                    {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+          {reportSubTab === 'summary' ? (
+            <>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                <h3 className="text-lg font-semibold flex items-center gap-2">
+                  <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
+                </h3>
+                <div className="flex flex-wrap gap-1">
+                  <button 
+                    onClick={() => setShowReportFilters(!showReportFilters)}
+                    className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-gray-200 transition-colors border border-gray-200"
+                  >
+                    <Filter className="w-3 h-3" /> {showReportFilters ? 'Hide' : 'Show'} Filters
+                    {showReportFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                  </button>
+                  <button 
+                    onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
+                    className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3 h-3" /> PDF
+                  </button>
+                  <button 
+                    onClick={() => downloadExcel('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
+                    className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-emerald-700 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3 h-3" /> Excel
+                  </button>
+                  <button 
+                    onClick={downloadZip}
+                    className="bg-blue-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-blue-700 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3 h-3" /> ZIP
                   </button>
                 </div>
               </div>
-              
-              {showSoeAbstract && (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse border border-gray-300">
-                    <thead>
-                      <tr className="bg-emerald-50 border-b border-gray-300">
-                        {abstractHeaders.map(h => <th key={h} className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase tracking-tight">{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {abstractRows.map((row, i) => (
-                        <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
-                          <td className="p-1.5 text-[10px] border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                          <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
-                        </tr>
-                      ))}
-                      {abstractRows.length === 0 && (
-                        <tr>
-                          <td colSpan={9} className="p-4 text-center text-gray-500 border border-gray-300 text-xs">No abstract data available.</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+
+              {showReportFilters && (
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
+                    <select 
+                      value={reportFilters.scheme}
+                      onChange={(e) => setReportFilters({ ...reportFilters, scheme: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
+                    <select 
+                      value={reportFilters.sector}
+                      onChange={(e) => setReportFilters({ ...reportFilters, sector: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
+                    <select 
+                      value={reportFilters.activity}
+                      onChange={(e) => setReportFilters({ ...reportFilters, activity: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {uniqueActivities.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
+                    <select 
+                      value={reportFilters.subActivity}
+                      onChange={(e) => setReportFilters({ ...reportFilters, subActivity: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Sub-Activities</option>
+                      {uniqueSubActivities.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="md:col-span-4 flex justify-end">
+                    <button 
+                      onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '' })}
+                      className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
+                    >
+                      Clear All Filters
+                    </button>
+                  </div>
                 </div>
               )}
-            </div>
-          )}
 
-          <div className="mb-4">
-            <h4 className="text-md font-bold text-gray-800 mb-2 flex items-center gap-2">
-              <Table className="w-4 h-4 text-emerald-600" /> Detailed Range-wise Report
-            </h4>
-          </div>
+              {/* SOE Abstract Summary Table */}
+              {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver') && (
+                <div className="mb-10">
+                  <div 
+                    className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
+                    onClick={() => setShowSoeAbstract(!showSoeAbstract)}
+                  >
+                    <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+                      <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
+                    </h4>
+                    <div className="flex items-center gap-4">
+                      {showSoeAbstract && (
+                        <div className="relative" onClick={(e) => e.stopPropagation()}>
+                          <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search abstract..."
+                            value={soeAbstractSearch}
+                            onChange={(e) => setSoeAbstractSearch(e.target.value)}
+                            className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                          />
+                        </div>
+                      )}
+                      <button type="button" className="text-gray-500 hover:text-gray-700">
+                        {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {showSoeAbstract && (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse border border-gray-300">
+                        <thead>
+                          <tr className="bg-emerald-50 border-b border-gray-300">
+                            {abstractHeaders.map(h => <th key={h} className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {abstractRows.map((row, i) => (
+                            <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
+                              <td className="p-1.5 text-[10px] border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
+                            </tr>
+                          ))}
+                          {abstractRows.length === 0 && (
+                            <tr>
+                              <td colSpan={9} className="p-4 text-center text-gray-500 border border-gray-300 text-xs">No abstract data available.</td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse border border-gray-300">
-              <thead>
-                <tr className="bg-gray-100 border-b border-gray-300">
-                  {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
-                </tr>
-              </thead>
-              <tbody>
-                {groupedData.map((row, i) => {
-                  let rowClass = "border-b border-gray-300 hover:bg-gray-50";
-                  let textClass = "text-[10px]";
-                  if (row.isTotal) {
-                    textClass = "text-[9px] uppercase tracking-tight";
-                    if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
-                    else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
-                    else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
-                    else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
-                    else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
-                  }
+              <div className="mb-4">
+                <h4 className="text-md font-bold text-gray-800 mb-2 flex items-center gap-2">
+                  <Table className="w-4 h-4 text-emerald-600" /> Detailed Range-wise Report
+                </h4>
+              </div>
 
-                  return (
-                    <tr key={i} className={rowClass}>
-                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
-                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
-                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
-                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
-                      <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
-                      <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
-                      {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
-                      <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
-                      {isGlobalUser && <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
-                      <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
-                      <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse border border-gray-300">
+                  <thead>
+                    <tr className="bg-gray-100 border-b border-gray-300">
+                      {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
                     </tr>
-                  );
-                })}
-                {groupedData.length === 0 && (
-                  <tr>
-                    <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          
-          {renderSchemeWiseLedger()}
+                  </thead>
+                  <tbody>
+                    {groupedData.map((row, i) => {
+                      let rowClass = "border-b border-gray-300 hover:bg-gray-50";
+                      let textClass = "text-[10px]";
+                      if (row.isTotal) {
+                        textClass = "text-[9px] uppercase tracking-tight";
+                        if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
+                        else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
+                        else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
+                        else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
+                        else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
+                      }
+
+                      return (
+                        <tr key={i} className={rowClass}>
+                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
+                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
+                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
+                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
+                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
+                          <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
+                          {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
+                          <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
+                          {isGlobalUser && <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-amber-700'}`}>₹{row.toBeAllocated.toLocaleString()}</td>}
+                          <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
+                          <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+                        </tr>
+                      );
+                    })}
+                    {groupedData.length === 0 && (
+                      <tr>
+                        <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              
+              {renderSchemeWiseLedger()}
+            </>
+          ) : (
+            renderAllocationExpenditureReport()
+          )}
         </div>
       </div>
     );
@@ -4891,6 +5087,13 @@ function CascadingDropdowns({
         }
       } else if (type === 'Sub-Activity') {
         currentActivityId = item.activityId;
+        const act = activities.find((a: any) => a.id === currentActivityId);
+        currentSectorId = act?.sectorId || '';
+        currentSchemeId = act?.schemeId || '';
+        if (!currentSchemeId && currentSectorId) {
+          const sec = sectors.find((s: any) => s.id === currentSectorId);
+          currentSchemeId = sec?.schemeId || '';
+        }
       } else if (type === 'SOE Name') {
         currentSubActivityId = item.subActivityId || '';
         currentActivityId = item.activityId || '';
@@ -4925,17 +5128,16 @@ function CascadingDropdowns({
         setSchemeId(currentSchemeId);
       }
     } else {
-      // Reset if not editing and everything is empty
-      if (!schemeId && !sectorId && !activityId && !subActivityId) {
-        setSchemeId('');
-        setSectorId('');
-        setActivityId('');
-        setSubActivityId('');
-        setSoeId('');
-        setAllocationId('');
-      }
+      // Reset if not editing
+      setSchemeId('');
+      setSectorId('');
+      setActivityId('');
+      setSubActivityId('');
+      setSoeId('');
+      setAllocationId('');
+      setFundingSoeName('');
     }
-  }, [editingItem, type, allocations, soes, subActivities, activities, sectors]);
+  }, [editingItem, type]); // Reduced dependencies to avoid unnecessary resets during selection
 
   const filteredSchemes = type === 'Expenditure' 
     ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
