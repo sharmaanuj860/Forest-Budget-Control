@@ -217,8 +217,9 @@ export default function App() {
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
-  const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '' });
-  const [allocFilters, setAllocFilters] = useState({ schemeId: '', activityId: '', rangeId: '' });
+  const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
+  const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+  const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
   const [reportSubTab, setReportSubTab] = useState('summary');
@@ -231,11 +232,13 @@ export default function App() {
   const [approvalReason, setApprovalReason] = useState('');
   const [isExpFilterExpanded, setIsExpFilterExpanded] = useState(false);
   const [isAllocFilterExpanded, setIsAllocFilterExpanded] = useState(false);
+  const [isSoeFilterExpanded, setIsSoeFilterExpanded] = useState(false);
 
   // Auto-collapse filters on tab change
   useEffect(() => {
     setIsExpFilterExpanded(false);
     setIsAllocFilterExpanded(false);
+    setIsSoeFilterExpanded(false);
   }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
@@ -605,9 +608,6 @@ export default function App() {
   const currentSectors = sectors;
   const currentActivities = activities;
   const currentSubActivities = subActivities;
-  const currentSoes = useMemo(() => soes.filter(s => ALLOWED_SOES.includes(s.name || 'Provisional')), [soes]);
-
-  
   const userRangeId = useMemo(() => {
     console.log('Calculating userRangeId. userRole:', userRole);
     if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh'].includes(userRole)) {
@@ -617,6 +617,30 @@ export default function App() {
     }
     return null;
   }, [userRole, ranges]);
+
+  const currentSoes = useMemo(() => {
+    let filtered = soes.filter(s => ALLOWED_SOES.includes(s.name || 'Provisional'));
+    
+    // SOE Heads don't have rangeId directly, so we don't filter by userRangeId or soeFilters.rangeId
+    
+    if (soeFilters.schemeId) {
+      filtered = filtered.filter(s => s.schemeId === soeFilters.schemeId);
+    }
+    if (soeFilters.sectorId) {
+      filtered = filtered.filter(s => s.sectorId === soeFilters.sectorId);
+    }
+    if (soeFilters.activityId) {
+      filtered = filtered.filter(s => s.activityId === soeFilters.activityId);
+    }
+    if (soeFilters.subActivityId) {
+      filtered = filtered.filter(s => s.subActivityId === soeFilters.subActivityId);
+    }
+    if (soeFilters.soeName) {
+      filtered = filtered.filter(s => s.name === soeFilters.soeName);
+    }
+    
+    return filtered;
+  }, [soes, soeFilters]);
 
   const baseAllocations = useMemo(() => {
     let filtered = allocations;
@@ -645,15 +669,24 @@ export default function App() {
     if (allocFilters.schemeId) {
       filtered = filtered.filter(a => a.schemeId === allocFilters.schemeId);
     }
+    if (allocFilters.sectorId) {
+      filtered = filtered.filter(a => a.sectorId === allocFilters.sectorId);
+    }
     if (allocFilters.activityId) {
       filtered = filtered.filter(a => a.activityId === allocFilters.activityId);
+    }
+    if (allocFilters.subActivityId) {
+      filtered = filtered.filter(a => a.subActivityId === allocFilters.subActivityId);
     }
     if (allocFilters.rangeId) {
       filtered = filtered.filter(a => a.rangeId === allocFilters.rangeId);
     }
+    if (allocFilters.soeId) {
+      filtered = filtered.filter(a => a.fundedSOEs && a.fundedSOEs.some(f => f.soeId === allocFilters.soeId));
+    }
     console.log('currentAllocations count:', filtered.length);
     return filtered;
-  }, [baseAllocations, allocFilters]);
+  }, [baseAllocations, allocFilters, userRangeId]);
   
   const currentExpenses = useMemo(() => {
     let filtered = expenses;
@@ -684,6 +717,20 @@ export default function App() {
       filtered = filtered.filter(e => {
         const alloc = allocations.find(a => a.id === e.allocationId);
         return alloc?.activityId === expFilters.activityId;
+      });
+    }
+
+    if (expFilters.subActivityId) {
+      filtered = filtered.filter(e => {
+        const alloc = allocations.find(a => a.id === e.allocationId);
+        return alloc?.subActivityId === expFilters.subActivityId;
+      });
+    }
+
+    if (expFilters.rangeId) {
+      filtered = filtered.filter(e => {
+        const alloc = allocations.find(a => a.id === e.allocationId);
+        return alloc?.rangeId === expFilters.rangeId;
       });
     }
 
@@ -2322,17 +2369,113 @@ export default function App() {
         </div>
 
         <div className="lg:col-span-3 space-y-4">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex items-center gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search SOE Heads..." 
-                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
+            <div className="flex items-center gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <input 
+                  type="text" 
+                  placeholder="Search SOE Heads..." 
+                  className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+              </div>
+              <button 
+                onClick={() => setIsSoeFilterExpanded(!isSoeFilterExpanded)}
+                className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${isSoeFilterExpanded ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
+              >
+                <Filter className="w-4 h-4" />
+                <span>Filters</span>
+                {isSoeFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
             </div>
+
+            {isSoeFilterExpanded && (
+              <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                  <select 
+                    value={soeFilters.schemeId}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Schemes</option>
+                    {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                  <select 
+                    value={soeFilters.sectorId}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, sectorId: e.target.value, activityId: '', subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sectors</option>
+                    {sectors.filter(s => !soeFilters.schemeId || s.schemeId === soeFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                  <select 
+                    value={soeFilters.activityId}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, activityId: e.target.value, subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Activities</option>
+                    {activities.filter(a => {
+                      if (soeFilters.sectorId) return a.sectorId === soeFilters.sectorId;
+                      if (soeFilters.schemeId) return a.schemeId === soeFilters.schemeId || sectors.find(s => s.id === a.sectorId)?.schemeId === soeFilters.schemeId;
+                      return true;
+                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                  <select 
+                    value={soeFilters.subActivityId}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, subActivityId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sub-Activities</option>
+                    {subActivities.filter(sa => !soeFilters.activityId || sa.activityId === soeFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                  <select 
+                    value={soeFilters.rangeId}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, rangeId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Ranges</option>
+                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE Name</label>
+                  <select 
+                    value={soeFilters.soeName}
+                    onChange={(e) => setSoeFilters({ ...soeFilters, soeName: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All SOEs</option>
+                    {ALLOWED_SOES.map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div className="md:col-span-3 lg:col-span-6 flex justify-end">
+                  <button 
+                    onClick={() => {
+                      setSoeFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
+                      setSearchTerm('');
+                    }}
+                    className="text-[10px] text-red-600 hover:text-red-800 font-bold uppercase flex items-center gap-1"
+                  >
+                    Reset Filters
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -2436,7 +2579,11 @@ export default function App() {
     canEditDelete?: (item: any) => boolean,
     extraContent?: React.ReactNode,
     customActions?: (item: any) => React.ReactNode,
-    isSubmitDisabled: boolean = false
+    isSubmitDisabled: boolean = false,
+    isFilterExpanded?: boolean,
+    setIsFilterExpanded?: (val: boolean) => void,
+    filterContent?: React.ReactNode,
+    onResetFilters?: () => void
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -2514,17 +2661,45 @@ export default function App() {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
             <h3 className="text-lg font-semibold">Existing {title}s</h3>
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-            <input 
-              type="text" 
-              placeholder={`Search ${title}s...`} 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
-            />
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                <input 
+                  type="text" 
+                  placeholder={`Search ${title}s...`} 
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
+                />
+              </div>
+              {filterContent && setIsFilterExpanded && (
+                <button 
+                  onClick={() => setIsFilterExpanded(!isFilterExpanded)}
+                  className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${isFilterExpanded ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
+                >
+                  <Filter className="w-4 h-4" />
+                  <span>Filters</span>
+                  {isFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+              )}
+            </div>
           </div>
-        </div>
+
+          {isFilterExpanded && filterContent && (
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 mb-4 animate-in fade-in slide-in-from-top-2">
+              {filterContent}
+              {onResetFilters && (
+                <div className="md:col-span-3 lg:col-span-5 flex justify-end">
+                  <button 
+                    onClick={onResetFilters}
+                    className="text-[10px] text-red-600 hover:text-red-800 font-bold uppercase flex items-center gap-1"
+                  >
+                    Reset Filters
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse min-w-[800px]">
             <thead>
@@ -3573,6 +3748,16 @@ export default function App() {
         );
 
         return matchesSearch && matchesFilters;
+      }).sort((a, b) => {
+        // Sort by Activity first, then Sub-Activity, then Date
+        if (a.activity !== b.activity) {
+          return a.activity.localeCompare(b.activity);
+        }
+        if (a.subActivity !== b.subActivity) {
+          return a.subActivity.localeCompare(b.subActivity);
+        }
+        // Sort by date (assuming YYYY-MM-DD format)
+        return new Date(a.date).getTime() - new Date(b.date).getTime();
       });
 
       // Totals for searched/filtered items
@@ -3603,6 +3788,14 @@ export default function App() {
                   className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
                 />
               </div>
+              <button 
+                onClick={() => setShowReportFilters(!showReportFilters)}
+                className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${showReportFilters ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
+              >
+                <Filter className="w-4 h-4" />
+                <span>Filters</span>
+                {showReportFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
               <select 
                 value={reportItemsPerPage} 
                 onChange={(e) => { setReportItemsPerPage(Number(e.target.value)); setReportPage(1); }}
@@ -3629,6 +3822,99 @@ export default function App() {
               </button>
             </div>
           </div>
+
+          {showReportFilters && (
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                <select 
+                  value={reportFilters.scheme}
+                  onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
+                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                >
+                  <option value="">All Schemes</option>
+                  {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                <select 
+                  value={reportFilters.sector}
+                  onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
+                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                >
+                  <option value="">All Sectors</option>
+                  {uniqueSectors.filter(s => {
+                    if (!reportFilters.scheme) return true;
+                    // Check if this sector exists under the selected scheme in soeAbstractData
+                    return soeAbstractData.some(r => r.hierarchy.startsWith(reportFilters.scheme + ' > ' + s));
+                  }).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                <select 
+                  value={reportFilters.activity}
+                  onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
+                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                >
+                  <option value="">All Activities</option>
+                  {uniqueActivities.filter(a => {
+                    if (!reportFilters.sector && !reportFilters.scheme) return true;
+                    return soeAbstractData.some(r => {
+                      const parts = r.hierarchy.split(' > ');
+                      const schemeMatch = !reportFilters.scheme || parts[0] === reportFilters.scheme;
+                      const sectorMatch = !reportFilters.sector || parts[1] === reportFilters.sector;
+                      return schemeMatch && sectorMatch && parts[2] === a;
+                    });
+                  }).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                <select 
+                  value={reportFilters.subActivity}
+                  onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
+                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                >
+                  <option value="">All Sub-Activities</option>
+                  {uniqueSubActivities.filter(sa => {
+                    if (!reportFilters.activity && !reportFilters.sector && !reportFilters.scheme) return true;
+                    return soeAbstractData.some(r => {
+                      const parts = r.hierarchy.split(' > ');
+                      const schemeMatch = !reportFilters.scheme || parts[0] === reportFilters.scheme;
+                      const sectorMatch = !reportFilters.sector || parts[1] === reportFilters.sector;
+                      const activityMatch = !reportFilters.activity || parts[2] === reportFilters.activity;
+                      return schemeMatch && sectorMatch && activityMatch && parts[3] === sa;
+                    });
+                  }).map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                <select 
+                  value={reportFilters.range}
+                  onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value }); setReportPage(1); }}
+                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                >
+                  <option value="">All Ranges</option>
+                  {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div className="md:col-span-5 flex justify-end">
+                <button 
+                  onClick={() => {
+                    setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+                    setReportSearchTerm('');
+                    setReportPage(1);
+                  }}
+                  className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                >
+                  Reset All Filters
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
@@ -4809,7 +5095,91 @@ export default function App() {
               (item) => userRole === 'admin' || userRole === 'deo',
               null,
               null,
-              isAllocationInvalid
+              isAllocationInvalid,
+              isAllocFilterExpanded,
+              setIsAllocFilterExpanded,
+              <>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                  <select 
+                    value={allocFilters.schemeId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '', soeId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Schemes</option>
+                    {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                  <select 
+                    value={allocFilters.sectorId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, sectorId: e.target.value, activityId: '', subActivityId: '', soeId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sectors</option>
+                    {sectors.filter(s => !allocFilters.schemeId || s.schemeId === allocFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                  <select 
+                    value={allocFilters.activityId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, activityId: e.target.value, subActivityId: '', soeId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Activities</option>
+                    {activities.filter(a => {
+                      if (allocFilters.sectorId) return a.sectorId === allocFilters.sectorId;
+                      if (allocFilters.schemeId) return a.schemeId === allocFilters.schemeId || sectors.find(s => s.id === a.sectorId)?.schemeId === allocFilters.schemeId;
+                      return true;
+                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                  <select 
+                    value={allocFilters.subActivityId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, subActivityId: e.target.value, soeId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sub-Activities</option>
+                    {subActivities.filter(sa => !allocFilters.activityId || sa.activityId === allocFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                  <select 
+                    value={allocFilters.rangeId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, rangeId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Ranges</option>
+                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE Head</label>
+                  <select 
+                    value={allocFilters.soeId}
+                    onChange={(e) => setAllocFilters({ ...allocFilters, soeId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All SOEs</option>
+                    {soes.filter(s => {
+                      if (allocFilters.subActivityId) return s.subActivityId === allocFilters.subActivityId;
+                      if (allocFilters.activityId) return s.activityId === allocFilters.activityId;
+                      if (allocFilters.sectorId) return s.sectorId === allocFilters.sectorId;
+                      if (allocFilters.schemeId) return s.schemeId === allocFilters.schemeId;
+                      return true;
+                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </>,
+              () => {
+                setAllocFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+                setSearchTerm('');
+              }
             )}
           </div>
         )}
@@ -4961,7 +5331,74 @@ export default function App() {
                   )}
                 </div>
               ),
-              false
+              false,
+              isExpFilterExpanded,
+              setIsExpFilterExpanded,
+              <>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                  <select 
+                    value={expFilters.schemeId}
+                    onChange={(e) => setExpFilters({ ...expFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Schemes</option>
+                    {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                  <select 
+                    value={expFilters.sectorId}
+                    onChange={(e) => setExpFilters({ ...expFilters, sectorId: e.target.value, activityId: '', subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sectors</option>
+                    {sectors.filter(s => !expFilters.schemeId || s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                  <select 
+                    value={expFilters.activityId}
+                    onChange={(e) => setExpFilters({ ...expFilters, activityId: e.target.value, subActivityId: '' })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Activities</option>
+                    {activities.filter(a => {
+                      if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
+                      if (expFilters.schemeId) return a.schemeId === expFilters.schemeId || sectors.find(s => s.id === a.sectorId)?.schemeId === expFilters.schemeId;
+                      return true;
+                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                  <select 
+                    value={expFilters.subActivityId}
+                    onChange={(e) => setExpFilters({ ...expFilters, subActivityId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Sub-Activities</option>
+                    {subActivities.filter(sa => !expFilters.activityId || sa.activityId === expFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                  <select 
+                    value={expFilters.rangeId}
+                    onChange={(e) => setExpFilters({ ...expFilters, rangeId: e.target.value })}
+                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                  >
+                    <option value="">All Ranges</option>
+                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </>,
+              () => {
+                setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
+                setSearchTerm('');
+              }
             )}
           </div>
         )}
