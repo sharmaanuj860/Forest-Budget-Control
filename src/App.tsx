@@ -221,7 +221,10 @@ export default function App() {
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
-  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+  const [ledgerFilters, setLedgerFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+  const [showLedgerFilters, setShowLedgerFilters] = useState(false);
+  const [ledgerSearchTerm, setLedgerSearchTerm] = useState('');
   const [reportSubTab, setReportSubTab] = useState('summary');
   const [reportSearchTerm, setReportSearchTerm] = useState('');
   const [reportPage, setReportPage] = useState(1);
@@ -242,8 +245,10 @@ export default function App() {
       setShowReportFilters(false);
       
       // Reset all filters when switching main tabs
-      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+      setLedgerFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
       setReportSearchTerm('');
+      setLedgerSearchTerm('');
       setReportPage(1);
       setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
       setAllocFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
@@ -257,6 +262,7 @@ export default function App() {
       setTrackerSearch('');
       setReconSearchTerm('');
       setReconSchemeId('');
+      setShowLedgerFilters(false);
     }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
@@ -705,7 +711,7 @@ export default function App() {
     console.log('currentAllocations count:', filtered.length);
     return filtered;
   }, [baseAllocations, allocFilters, userRangeId]);
-  
+
   const currentExpenses = useMemo(() => {
     let filtered = expenses;
     
@@ -754,6 +760,149 @@ export default function App() {
 
     return filtered;
   }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId]);
+
+  const comprehensiveReportData = useMemo(() => {
+    return currentAllocations.map(a => {
+      const allocExpenses = currentExpenses.filter(e => e.allocationId === a.id);
+      const totalExp = allocExpenses.reduce((sum, e) => sum + e.amount, 0);
+      const range = ranges.find(r => r.id === a.rangeId);
+      const scheme = schemes.find(s => s.id === a.schemeId);
+      const sector = sectors.find(s => s.id === a.sectorId);
+      const activity = activities.find(act => act.id === a.activityId);
+      const subActivity = subActivities.find(sa => sa.id === a.subActivityId);
+
+      const soeBreakdown = soes.reduce((acc: any, soe) => {
+        const soeAlloc = a.fundedSOEs?.find(f => f.soeId === soe.id)?.amount || 0;
+        const soeExp = allocExpenses
+          .filter(e => e.soeId === soe.id)
+          .reduce((sum, e) => sum + e.amount, 0);
+        acc[soe.name] = { alloc: soeAlloc, exp: soeExp };
+        return acc;
+      }, {});
+
+      return {
+        id: a.id,
+        range: range?.name || 'Unknown',
+        scheme: scheme?.name || 'Unknown',
+        sector: sector?.name || 'Unknown',
+        activity: activity?.name || 'Unknown',
+        subActivity: subActivity?.name || 'Unknown',
+        totalAlloc: a.amount,
+        totalExp,
+        balance: a.amount - totalExp,
+        soeBreakdown
+      };
+    });
+  }, [currentAllocations, currentExpenses, ranges, schemes, sectors, activities, subActivities, soes]);
+
+  const allocationExpenditureData = useMemo(() => {
+    return currentSoes.map(s => {
+      const soeAllocations = currentAllocations.filter(a => 
+        a.fundedSOEs?.some(f => f.soeId === s.id)
+      );
+      const soeExpenses = currentExpenses.filter(e => e.soeId === s.id);
+      
+      const totalAllocated = soeAllocations.reduce((sum, a) => {
+        const funded = a.fundedSOEs?.find(f => f.soeId === s.id)?.amount || 0;
+        return sum + funded;
+      }, 0);
+      
+      const totalExp = soeExpenses.reduce((sum, e) => sum + e.amount, 0);
+      const approvedBudget = getApprovedBudget(s);
+
+      return {
+        soeName: s.name,
+        approvedBudget,
+        totalAllocated,
+        totalExp,
+        balance: totalAllocated - totalExp,
+        treasuryBalance: approvedBudget - totalAllocated
+      };
+    });
+  }, [currentSoes, currentAllocations, currentExpenses]);
+
+  const combinedReportData = useMemo(() => {
+    return [...comprehensiveReportData, ...allocationExpenditureData];
+  }, [comprehensiveReportData, allocationExpenditureData]);
+
+  const uniqueSchemes = useMemo(() => 
+    Array.from(new Set(comprehensiveReportData.map((item: any) => item.scheme).filter(Boolean))).sort()
+  , [comprehensiveReportData]);
+
+  const uniqueSectors = useMemo(() => 
+    Array.from(new Set(comprehensiveReportData.map((item: any) => item.sector).filter(Boolean))).sort()
+  , [comprehensiveReportData]);
+
+  const uniqueActivities = useMemo(() => 
+    Array.from(new Set(comprehensiveReportData.map((item: any) => item.activity).filter(Boolean))).sort()
+  , [comprehensiveReportData]);
+
+  const uniqueSubActivities = useMemo(() => 
+    Array.from(new Set(comprehensiveReportData.map((item: any) => item.subActivity).filter(Boolean))).sort()
+  , [comprehensiveReportData]);
+
+  const uniqueRangesList = useMemo(() => 
+    Array.from(new Set(comprehensiveReportData.map((item: any) => item.range).filter(Boolean))).sort()
+  , [comprehensiveReportData]);
+
+  const uniqueSoes = useMemo(() => 
+    Array.from(new Set(soes.map(s => s.name))).sort()
+  , [soes]);
+
+  const filteredLedgerData = useMemo(() => {
+    const filtered = currentAllocations.filter(alloc => {
+      const r = ranges.find(r => r.id === alloc.rangeId);
+      const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+      const act = activities.find(a => a.id === (alloc.subActivityId ? sa?.activityId : alloc.activityId));
+      const sec = sectors.find(sec => sec.id === act?.sectorId);
+      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+      const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean) || [];
+      
+      let hierarchy = '';
+      if (alloc.subActivityId) {
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+      } else if (alloc.activityId) {
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+      }
+
+      const searchLower = ledgerSearchTerm.toLowerCase();
+      const matchesSearch = !ledgerSearchTerm || (
+        hierarchy.toLowerCase().includes(searchLower) ||
+        soeNames.join(' ').toLowerCase().includes(searchLower) ||
+        r?.name.toLowerCase().includes(searchLower) ||
+        alloc.remarks?.toLowerCase().includes(searchLower) ||
+        alloc.id.toLowerCase().includes(searchLower)
+      );
+
+      const matchesFilters = (
+        (!ledgerFilters.scheme || sch?.name === ledgerFilters.scheme) &&
+        (!ledgerFilters.sector || sec?.name === ledgerFilters.sector) &&
+        (!ledgerFilters.activity || act?.name === ledgerFilters.activity) &&
+        (!ledgerFilters.subActivity || sa?.name === ledgerFilters.subActivity) &&
+        (!ledgerFilters.range || r?.name === ledgerFilters.range) &&
+        (!ledgerFilters.soe || soeNames.includes(ledgerFilters.soe))
+      );
+      return matchesSearch && matchesFilters;
+    });
+
+    let totalCredit = 0;
+    let totalDebit = 0;
+
+    filtered.forEach(alloc => {
+      totalCredit += alloc.amount;
+      const allocExpenses = expenses.filter(e => e.allocationId === alloc.id && e.status !== 'rejected');
+      totalDebit += allocExpenses.reduce((sum, e) => sum + e.amount, 0);
+    });
+
+    return {
+      allocations: filtered,
+      totals: {
+        credit: totalCredit,
+        debit: totalDebit,
+        balance: totalCredit - totalDebit
+      }
+    };
+  }, [currentAllocations, ledgerSearchTerm, ledgerFilters, ranges, subActivities, activities, sectors, schemes, soes, expenses]);
 
   const getSoeAllocated = (soeId: string) => baseAllocations.reduce((sum, a) => sum + (a.fundedSOEs?.find(f => f.soeId === soeId)?.amount || 0), 0);
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
@@ -3708,7 +3857,7 @@ export default function App() {
       const remaining = allocated - expenditure;
 
       return {
-        soeId: soeNames,
+        soe: soeNames,
         range: range?.name || 'N/A',
         scheme: sch?.name || 'N/A',
         sector: sec?.name || 'N/A',
@@ -3753,6 +3902,7 @@ export default function App() {
     const uniqueSectors = Array.from(new Set(combinedReportData.map(r => r.sector))).filter(Boolean).sort();
     const uniqueActivities = Array.from(new Set(combinedReportData.map(r => r.activity))).filter(Boolean).sort();
     const uniqueSubActivities = Array.from(new Set(combinedReportData.map(r => r.subActivity))).filter(Boolean).sort();
+    const uniqueSoes = Array.from(new Set(soes.map(s => s.name))).filter(Boolean).sort();
     const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name))).filter(Boolean).sort();
 
     const renderAllocationExpenditureReport = () => {
@@ -3773,7 +3923,8 @@ export default function App() {
           (!reportFilters.sector || row.sector === reportFilters.sector) &&
           (!reportFilters.activity || row.activity === reportFilters.activity) &&
           (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity) &&
-          (!reportFilters.range || row.range === reportFilters.range)
+          (!reportFilters.range || row.range === reportFilters.range) &&
+          (!reportFilters.soe || row.soe.includes(reportFilters.soe))
         );
 
         return matchesSearch && matchesFilters;
@@ -3853,118 +4004,141 @@ export default function App() {
           </div>
 
               {showReportFilters && (
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
-                    <select 
-                      value={reportFilters.range}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                    >
-                      <option value="">All Ranges</option>
-                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                <div className="mb-6 animate-in fade-in slide-in-from-top-2">
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                      <select 
+                        value={reportFilters.range}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Ranges</option>
+                        {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                      <select 
+                        value={reportFilters.scheme}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Schemes</option>
+                        {uniqueSchemes.filter(s => {
+                          if (!reportFilters.range) return true;
+                          return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                      <select 
+                        value={reportFilters.sector}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Sectors</option>
+                        {uniqueSectors.filter(s => {
+                          if (!reportFilters.range && !reportFilters.scheme) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            return rangeMatch && schemeMatch && r.sector === s;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                      <select 
+                        value={reportFilters.activity}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Activities</option>
+                        {uniqueActivities.filter(a => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                      <select 
+                        value={reportFilters.subActivity}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Sub-Activities</option>
+                        {uniqueSubActivities.filter(sa => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
+                      <select 
+                        value={reportFilters.soe}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All SOEs</option>
+                        {uniqueSoes.filter(s => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity && !reportFilters.subActivity) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                            const subActivityMatch = !reportFilters.subActivity || r.subActivity === reportFilters.subActivity;
+                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && subActivityMatch && (r as any).soe.includes(s);
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div className="lg:col-span-6 flex justify-end">
+                      <button 
+                        onClick={() => {
+                          setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                          setReportSearchTerm('');
+                          setReportPage(1);
+                        }}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" />
+                        Reset Filters
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
-                    <select 
-                      value={reportFilters.scheme}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                    >
-                      <option value="">All Schemes</option>
-                      {uniqueSchemes.filter(s => {
-                        if (!reportFilters.range) return true;
-                        return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
-                    <select 
-                      value={reportFilters.sector}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                    >
-                      <option value="">All Sectors</option>
-                      {uniqueSectors.filter(s => {
-                        if (!reportFilters.range && !reportFilters.scheme) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          return rangeMatch && schemeMatch && r.sector === s;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
-                    <select 
-                      value={reportFilters.activity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                    >
-                      <option value="">All Activities</option>
-                      {uniqueActivities.filter(a => {
-                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
-                    <select 
-                      value={reportFilters.subActivity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                    >
-                      <option value="">All Sub-Activities</option>
-                      {uniqueSubActivities.filter(sa => {
-                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
-                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div className="md:col-span-5 flex justify-end">
-                    <button 
-                      onClick={() => {
-                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
-                        setReportSearchTerm('');
-                        setReportPage(1);
-                      }}
-                      className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
-                    >
-                      Reset All Filters
-                    </button>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-3 bg-emerald-50 rounded-b-lg border-x border-b border-gray-200">
+                    <div className="flex justify-between items-center px-2">
+                      <span className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocation:</span>
+                      <span className="text-sm font-bold text-emerald-700">₹{totalAllocation.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-2 border-x border-emerald-100">
+                      <span className="text-[10px] font-bold text-red-800 uppercase">Total Expenditure:</span>
+                      <span className="text-sm font-bold text-red-700">₹{totalExpenditure.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-2">
+                      <span className="text-[10px] font-bold text-blue-800 uppercase">Total Balance:</span>
+                      <span className="text-sm font-bold text-blue-700">₹{totalBalance.toLocaleString()}</span>
+                    </div>
                   </div>
                 </div>
               )}
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
-              <span className="text-xs font-semibold text-emerald-900">Total Allocation:</span>
-              <span className="text-sm font-bold text-emerald-700">₹{totalAllocation.toLocaleString()}</span>
-            </div>
-            <div className="bg-red-50 p-3 rounded-lg border border-red-100 flex justify-between items-center">
-              <span className="text-xs font-semibold text-red-900">Total Expenditure:</span>
-              <span className="text-sm font-bold text-red-700">₹{totalExpenditure.toLocaleString()}</span>
-            </div>
-            <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center">
-              <span className="text-xs font-semibold text-blue-900">Total Balance:</span>
-              <span className="text-sm font-bold text-blue-700">₹{totalBalance.toLocaleString()}</span>
-            </div>
-          </div>
 
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse border border-gray-300">
@@ -4083,16 +4257,18 @@ export default function App() {
     // Calculate total allocated per SOE Head across all ranges to get accurate "To be Allocated"
     const totalAllocatedBySoe: Record<string, number> = {};
     comprehensiveReportData.forEach(a => {
-      totalAllocatedBySoe[a.soeId] = (totalAllocatedBySoe[a.soeId] || 0) + a.allocated;
+      totalAllocatedBySoe[a.soe] = (totalAllocatedBySoe[a.soe] || 0) + a.allocated;
     });
 
     // Filtering
     const filteredData = comprehensiveReportData.filter(row => {
       return (
+        (!reportFilters.range || row.range === reportFilters.range) &&
         (!reportFilters.scheme || row.scheme === reportFilters.scheme) &&
         (!reportFilters.sector || row.sector === reportFilters.sector) &&
         (!reportFilters.activity || row.activity === reportFilters.activity) &&
-        (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity)
+        (!reportFilters.subActivity || row.subActivity === reportFilters.subActivity) &&
+        (!reportFilters.soe || row.soe.includes(reportFilters.soe))
       );
     });
 
@@ -4112,8 +4288,8 @@ export default function App() {
       let totalExpenditure = 0;
 
       rows.forEach(r => {
-        if (!(r.soeId in distinctSoes)) {
-          distinctSoes[r.soeId] = r.totalBudget;
+        if (!(r.soe in distinctSoes)) {
+          distinctSoes[r.soe] = r.totalBudget;
         }
         totalAllocated += r.allocated;
         totalExpenditure += r.expenditure;
@@ -4143,7 +4319,7 @@ export default function App() {
     let currentSubActivity = null;
 
     sortedData.forEach((row, idx) => {
-      const totalAllocatedForThisSoe = totalAllocatedBySoe[row.soeId] || 0;
+      const totalAllocatedForThisSoe = totalAllocatedBySoe[row.soe] || 0;
       const toBeAllocated = row.totalBudget - totalAllocatedForThisSoe;
       const rowWithCalc = { ...row, toBeAllocated };
 
@@ -4300,100 +4476,141 @@ export default function App() {
               </div>
 
               {showReportFilters && (
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Range</label>
-                    <select 
-                      value={reportFilters.range}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Ranges</option>
-                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
+                <div className="mb-6 animate-in fade-in slide-in-from-top-2">
+                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                      <select 
+                        value={reportFilters.range}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Ranges</option>
+                        {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                      <select 
+                        value={reportFilters.scheme}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Schemes</option>
+                        {uniqueSchemes.filter(s => {
+                          if (!reportFilters.range) return true;
+                          return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                      <select 
+                        value={reportFilters.sector}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Sectors</option>
+                        {uniqueSectors.filter(s => {
+                          if (!reportFilters.range && !reportFilters.scheme) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            return rangeMatch && schemeMatch && r.sector === s;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                      <select 
+                        value={reportFilters.activity}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Activities</option>
+                        {uniqueActivities.filter(a => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                      <select 
+                        value={reportFilters.subActivity}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Sub-Activities</option>
+                        {uniqueSubActivities.filter(sa => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
+                      <select 
+                        value={reportFilters.soe}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value }); setReportPage(1); }}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All SOEs</option>
+                        {uniqueSoes.filter(s => {
+                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity && !reportFilters.subActivity) return true;
+                          return combinedReportData.some(r => {
+                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                            const subActivityMatch = !reportFilters.subActivity || r.subActivity === reportFilters.subActivity;
+                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && subActivityMatch && (r as any).soe.includes(s);
+                          });
+                        }).map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div className="lg:col-span-6 flex justify-end">
+                      <button 
+                        onClick={() => {
+                          setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                          setSoeAbstractSearch('');
+                          setReportPage(1);
+                        }}
+                        className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                      >
+                        <X className="w-3 h-3" />
+                        Reset Filters
+                      </button>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
-                    <select 
-                      value={reportFilters.scheme}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Schemes</option>
-                      {uniqueSchemes.filter(s => {
-                        if (!reportFilters.range) return true;
-                        return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
-                    <select 
-                      value={reportFilters.sector}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Sectors</option>
-                      {uniqueSectors.filter(s => {
-                        if (!reportFilters.range && !reportFilters.scheme) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          return rangeMatch && schemeMatch && r.sector === s;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
-                    <select 
-                      value={reportFilters.activity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Activities</option>
-                      {uniqueActivities.filter(a => {
-                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
-                    <select 
-                      value={reportFilters.subActivity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Sub-Activities</option>
-                      {uniqueSubActivities.filter(sa => {
-                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
-                        return combinedReportData.some(r => {
-                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
-                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
-                        });
-                      }).map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div className="md:col-span-5 flex justify-end">
-                    <button 
-                      onClick={() => {
-                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
-                        setReportPage(1);
-                      }}
-                      className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
-                    >
-                      Clear All Filters
-                    </button>
-                  </div>
+                  {sortedData.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-3 bg-emerald-50 rounded-b-lg border-x border-b border-gray-200">
+                      <div className="flex justify-between items-center px-2">
+                        <span className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocation:</span>
+                        <span className="text-sm font-bold text-emerald-700">₹{calculateTotals(sortedData).allocated.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center px-2 border-x border-emerald-100">
+                        <span className="text-[10px] font-bold text-red-800 uppercase">Total Expenditure:</span>
+                        <span className="text-sm font-bold text-red-700">₹{calculateTotals(sortedData).expenditure.toLocaleString()}</span>
+                      </div>
+                      <div className="flex justify-between items-center px-2">
+                        <span className="text-[10px] font-bold text-blue-800 uppercase">Total Balance:</span>
+                        <span className="text-sm font-bold text-blue-700">₹{calculateTotals(sortedData).remaining.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -5461,10 +5678,157 @@ export default function App() {
 
         {activeTab === 'Ledger' && (
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-            <div className="flex items-center justify-between mb-4 border-b pb-2">
-              <h3 className="text-lg font-semibold">Passbook Ledger</h3>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-4">
+              <div className="flex items-center gap-4 flex-1">
+                <h3 className="text-lg font-semibold whitespace-nowrap">Passbook Ledger</h3>
+                <div className="relative flex-1 max-w-md">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by description, approval ID, hierarchy..."
+                    value={ledgerSearchTerm}
+                    onChange={(e) => setLedgerSearchTerm(e.target.value)}
+                    className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
+                  />
+                </div>
+                <button 
+                  onClick={() => setShowLedgerFilters(!showLedgerFilters)}
+                  className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${showLedgerFilters ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
+                >
+                  <Filter className="w-4 h-4" />
+                  <span>Filters</span>
+                  {showLedgerFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                </button>
+              </div>
               <span className="text-sm font-medium text-emerald-600">FY {fys.find(f => f.id === selectedFY)?.name || selectedFY}</span>
             </div>
+
+            {showLedgerFilters && (
+              <div className="mb-6 animate-in fade-in slide-in-from-top-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <select 
+                      value={ledgerFilters.range}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Ranges</option>
+                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                    <select 
+                      value={ledgerFilters.scheme}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {uniqueSchemes.filter(s => {
+                        if (!ledgerFilters.range) return true;
+                        return comprehensiveReportData.some(r => r.range === ledgerFilters.range && r.scheme === s);
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                    <select 
+                      value={ledgerFilters.sector}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {uniqueSectors.filter(s => {
+                        if (!ledgerFilters.range && !ledgerFilters.scheme) return true;
+                        return comprehensiveReportData.some(r => {
+                          const rangeMatch = !ledgerFilters.range || r.range === ledgerFilters.range;
+                          const schemeMatch = !ledgerFilters.scheme || r.scheme === ledgerFilters.scheme;
+                          return rangeMatch && schemeMatch && r.sector === s;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                    <select 
+                      value={ledgerFilters.activity}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, activity: e.target.value, subActivity: '', soe: '' })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {uniqueActivities.filter(a => {
+                        if (!ledgerFilters.range && !ledgerFilters.scheme && !ledgerFilters.sector) return true;
+                        return comprehensiveReportData.some(r => {
+                          const rangeMatch = !ledgerFilters.range || r.range === ledgerFilters.range;
+                          const schemeMatch = !ledgerFilters.scheme || r.scheme === ledgerFilters.scheme;
+                          const sectorMatch = !ledgerFilters.sector || r.sector === ledgerFilters.sector;
+                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                    <select 
+                      value={ledgerFilters.subActivity}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, subActivity: e.target.value, soe: '' })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sub-Activities</option>
+                      {uniqueSubActivities.filter(sa => {
+                        if (!ledgerFilters.range && !ledgerFilters.scheme && !ledgerFilters.sector && !ledgerFilters.activity) return true;
+                        return comprehensiveReportData.some(r => {
+                          const rangeMatch = !ledgerFilters.range || r.range === ledgerFilters.range;
+                          const schemeMatch = !ledgerFilters.scheme || r.scheme === ledgerFilters.scheme;
+                          const sectorMatch = !ledgerFilters.sector || r.sector === ledgerFilters.sector;
+                          const activityMatch = !ledgerFilters.activity || r.activity === ledgerFilters.activity;
+                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
+                    <select 
+                      value={ledgerFilters.soe}
+                      onChange={(e) => setLedgerFilters({ ...ledgerFilters, soe: e.target.value })}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All SOEs</option>
+                      {uniqueSoes.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="lg:col-span-6 flex justify-end">
+                    <button 
+                      onClick={() => {
+                        setLedgerFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                        setLedgerSearchTerm('');
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" />
+                      Reset Filters
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-3 bg-emerald-50 rounded-b-lg border-x border-b border-gray-200">
+                  <div className="flex justify-between items-center px-2">
+                    <span className="text-[10px] font-bold text-emerald-800 uppercase">Total Credit:</span>
+                    <span className="text-sm font-bold text-emerald-700">₹{filteredLedgerData.totals.credit.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-2 border-x border-emerald-100">
+                    <span className="text-[10px] font-bold text-red-800 uppercase">Total Debit:</span>
+                    <span className="text-sm font-bold text-red-700">₹{filteredLedgerData.totals.debit.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between items-center px-2">
+                    <span className="text-[10px] font-bold text-blue-800 uppercase">Net Balance:</span>
+                    <span className="text-sm font-bold text-blue-700">₹{filteredLedgerData.totals.balance.toLocaleString()}</span>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
@@ -5480,7 +5844,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {currentAllocations.map(alloc => {
+                  {filteredLedgerData.allocations.map(alloc => {
                     const r = ranges.find(r => r.id === alloc.rangeId);
                     const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
                     
@@ -5545,7 +5909,7 @@ export default function App() {
                       </React.Fragment>
                     );
                   })}
-                  {currentAllocations.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-gray-500">No allocations found for this Financial Year.</td></tr>}
+                  {filteredLedgerData.allocations.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-gray-500">No allocations found for this Financial Year.</td></tr>}
                 </tbody>
               </table>
             </div>
