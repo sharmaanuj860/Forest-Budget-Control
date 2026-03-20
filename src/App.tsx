@@ -3836,7 +3836,7 @@ export default function App() {
       saveAs(content, `financial_data_fy_${selectedFY}.zip`);
     };
 
-    const comprehensiveReportData = currentAllocations.map(a => {
+    const comprehensiveReportData = baseAllocations.map(a => {
       const soeNames = a.fundedSOEs?.map((f: any) => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
       const range = ranges.find(r => r.id === a.rangeId);
       
@@ -3845,7 +3845,8 @@ export default function App() {
       let sec = sectors.find(s => s.id === a.sectorId);
       let sch = schemes.find(s => s.id === a.schemeId);
 
-      const budget = currentSoes.filter(s => 
+      const budget = soes.filter(s => 
+        ALLOWED_SOES.includes(s.name || 'Provisional') &&
         s.schemeId === a.schemeId && 
         (s.sectorId || null) === (a.sectorId || null) && 
         (s.activityId || null) === (a.activityId || null) && 
@@ -3853,7 +3854,7 @@ export default function App() {
       ).reduce((sum, s) => sum + getApprovedBudget(s), 0);
       const totalBudget = budget || 0;
       const allocated = a.amount;
-      const expenditure = currentExpenses.filter(e => e.allocationId === a.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
+      const expenditure = baseExpenses.filter(e => e.allocationId === a.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
       const remaining = allocated - expenditure;
 
       return {
@@ -3871,36 +3872,61 @@ export default function App() {
       };
     });
 
-      const allocationExpenditureData = currentExpenses.map(exp => {
-        const alloc = currentAllocations.find(a => a.id === exp.allocationId);
-        const sch = schemes.find(s => s.id === alloc?.schemeId);
-        const sec = sectors.find(s => s.id === alloc?.sectorId);
-        const act = activities.find(a => a.id === alloc?.activityId);
-        const sa = subActivities.find(s => s.id === alloc?.subActivityId);
-        const soe = soes.find(s => s.id === exp.soeId);
-        const range = ranges.find(r => r.id === alloc?.rangeId);
+    const allocationExpenditureData: any[] = [];
+    baseAllocations.forEach(alloc => {
+      const sch = schemes.find(s => s.id === alloc.schemeId);
+      const sec = sectors.find(s => s.id === alloc.sectorId);
+      const act = activities.find(a => a.id === alloc.activityId);
+      const sa = subActivities.find(s => s.id === alloc.subActivityId);
+      const range = ranges.find(r => r.id === alloc.rangeId);
 
-        const fundedSoe = alloc?.fundedSOEs?.find(f => f.soeId === exp.soeId);
-        const totalSpentOnSoe = baseExpenses
-          .filter(e => e.allocationId === exp.allocationId && e.soeId === exp.soeId && e.status !== 'rejected')
-          .reduce((sum, e) => sum + e.amount, 0);
+      alloc.fundedSOEs?.forEach(f => {
+        const soe = soes.find(s => s.id === f.soeId);
+        const allocExpenses = baseExpenses.filter(e => e.allocationId === alloc.id && e.soeId === f.soeId && e.status !== 'rejected');
+        
+        const totalSpentOnSoe = allocExpenses.reduce((sum, e) => sum + e.amount, 0);
 
-        return {
-          id: exp.id,
-          date: exp.date,
-          scheme: sch?.name || 'N/A',
-          sector: sec?.name || 'N/A',
-          activity: act?.name || 'N/A',
-          subActivity: sa?.name || 'N/A',
-          soe: soe?.name || 'N/A',
-          range: range?.name || 'N/A',
-          allocation: fundedSoe?.amount || 0,
-          expenditure: exp.amount,
-          balance: (fundedSoe?.amount || 0) - totalSpentOnSoe,
-          description: exp.description,
-          status: exp.status
-        };
+        if (allocExpenses.length === 0) {
+          allocationExpenditureData.push({
+            id: `alloc-${alloc.id}-${f.soeId}`,
+            allocationId: alloc.id,
+            soeId: f.soeId,
+            date: alloc.createdAt ? new Date(alloc.createdAt).toISOString().split('T')[0] : 'N/A',
+            scheme: sch?.name || 'N/A',
+            sector: sec?.name || 'N/A',
+            activity: act?.name || 'N/A',
+            subActivity: sa?.name || 'N/A',
+            soe: soe?.name || 'N/A',
+            range: range?.name || 'N/A',
+            allocation: f.amount,
+            expenditure: 0,
+            balance: f.amount,
+            description: 'Initial Allocation',
+            status: 'approved'
+          });
+        } else {
+          allocExpenses.forEach(exp => {
+            allocationExpenditureData.push({
+              id: exp.id,
+              allocationId: exp.allocationId,
+              soeId: exp.soeId,
+              date: exp.date,
+              scheme: sch?.name || 'N/A',
+              sector: sec?.name || 'N/A',
+              activity: act?.name || 'N/A',
+              subActivity: sa?.name || 'N/A',
+              soe: soe?.name || 'N/A',
+              range: range?.name || 'N/A',
+              allocation: f.amount,
+              expenditure: exp.amount,
+              balance: f.amount - totalSpentOnSoe,
+              description: exp.description,
+              status: exp.status
+            });
+          });
+        }
       });
+    });
 
     const combinedReportData = [...comprehensiveReportData, ...allocationExpenditureData];
     const uniqueSchemes = Array.from(new Set(combinedReportData.map(r => r.scheme))).filter(Boolean).sort();
@@ -3946,17 +3972,23 @@ export default function App() {
       });
 
       // Totals for searched/filtered items
-      const totalAllocation = filtered.reduce((sum, r) => sum + r.allocation, 0);
+      // Fix: Calculate total allocation correctly by only counting each unique allocation-SOE pair once
+      const uniqueAllocationsInFiltered = Array.from(new Set(filtered.map(r => (r as any).allocationId + '-' + (r as any).soeId)));
+      const totalAllocation = uniqueAllocationsInFiltered.reduce((sum, key) => {
+        const row = filtered.find(r => ((r as any).allocationId + '-' + (r as any).soeId) === key);
+        return sum + (row ? (row as any).allocation : 0);
+      }, 0);
+
       const totalExpenditure = filtered.reduce((sum, r) => sum + r.expenditure, 0);
-      const totalBalance = filtered.reduce((sum, r) => sum + r.balance, 0);
+      const totalBalance = totalAllocation - totalExpenditure;
 
       // Pagination
       const totalPages = reportItemsPerPage === -1 ? 1 : Math.ceil(filtered.length / reportItemsPerPage);
       const paginatedData = reportItemsPerPage === -1 ? filtered : filtered.slice((reportPage - 1) * reportItemsPerPage, reportPage * reportItemsPerPage);
 
-      const headers = ['Date', 'Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
+      const headers = ['Date', 'Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
       const tableData = filtered.map(r => [
-        r.date, r.range, r.scheme, r.sector, r.activity, r.subActivity, r.description, r.allocation, r.expenditure, r.balance
+        r.date, r.range, r.scheme, r.sector, r.activity, r.subActivity, r.soe, r.description, r.allocation, r.expenditure, r.balance
       ]);
 
       return (
@@ -4175,6 +4207,11 @@ export default function App() {
                       Sub-Activity <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
                     </div>
                   </th>
+                  <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
+                    <div className="flex items-center justify-between">
+                      SOE <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                    </div>
+                  </th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">Description</th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight text-right">Allocation</th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight text-right">Expenditure</th>
@@ -4190,6 +4227,7 @@ export default function App() {
                     <td className="p-2 text-[10px] border border-gray-300">{row.sector}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.activity}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.subActivity}</td>
+                    <td className="p-2 text-[10px] border border-gray-300 font-medium">{row.soe}</td>
                     <td className="p-2 text-[10px] border border-gray-300">{row.description}</td>
                     <td className="p-2 text-[10px] border border-gray-300 text-right font-medium text-emerald-700">₹{row.allocation.toLocaleString()}</td>
                     <td className="p-2 text-[10px] border border-gray-300 text-right font-bold text-red-700">₹{row.expenditure.toLocaleString()}</td>
@@ -4198,14 +4236,14 @@ export default function App() {
                 ))}
                 {paginatedData.length === 0 && (
                   <tr>
-                    <td colSpan={10} className="p-8 text-center text-gray-500 border border-gray-300">No expenditure data found.</td>
+                    <td colSpan={11} className="p-8 text-center text-gray-500 border border-gray-300">No expenditure data found.</td>
                   </tr>
                 )}
               </tbody>
               {paginatedData.length > 0 && (
                 <tfoot className="bg-gray-100 font-bold">
                   <tr>
-                    <td colSpan={7} className="p-2 text-[10px] border border-gray-300 text-right uppercase">Total (Filtered)</td>
+                    <td colSpan={8} className="p-2 text-[10px] border border-gray-300 text-right uppercase">Total (Filtered)</td>
                     <td className="p-2 text-[10px] border border-gray-300 text-right text-emerald-700">₹{totalAllocation.toLocaleString()}</td>
                     <td className="p-2 text-[10px] border border-gray-300 text-right text-red-700">₹{totalExpenditure.toLocaleString()}</td>
                     <td className="p-2 text-[10px] border border-gray-300 text-right text-blue-700">₹{totalBalance.toLocaleString()}</td>
@@ -4302,7 +4340,7 @@ export default function App() {
 
       const totalBudget = Object.values(distinctSoes).reduce((sum, b) => sum + b, 0);
       const toBeAllocated = totalBudget - totalAllocated;
-      const remaining = totalBudget - totalExpenditure;
+      const remaining = totalAllocated - totalExpenditure; // Fix: Balance = Allocated - Expenditure
 
       return {
         totalBudget,
@@ -5311,6 +5349,23 @@ export default function App() {
                     </div>
                   </div>
                 )},
+                {
+                  key: 'expenditure', 
+                  label: 'Expenditure', 
+                  render: (_, item) => {
+                    const expenditure = baseExpenses.filter(e => e.allocationId === item.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
+                    return <span className="font-medium text-red-600">₹{expenditure.toLocaleString()}</span>;
+                  }
+                },
+                {
+                  key: 'balance', 
+                  label: 'Balance', 
+                  render: (_, item) => {
+                    const expenditure = baseExpenses.filter(e => e.allocationId === item.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
+                    const balance = item.amount - expenditure;
+                    return <span className={`font-bold ${balance < 0 ? 'text-red-700' : 'text-blue-700'}`}>₹{balance.toLocaleString()}</span>;
+                  }
+                },
                 {key: 'remarks', label: 'Description / Remarks', render: (val) => <span className="text-xs italic text-gray-500">{val || '-'}</span>},
                 {key: 'status', label: 'Funding Status', render: (val, item) => (
                   <div className="flex flex-col">
