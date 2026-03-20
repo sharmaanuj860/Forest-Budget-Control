@@ -3871,31 +3871,36 @@ export default function App() {
       };
     });
 
-    const allocationExpenditureData = currentExpenses.map(exp => {
-      const alloc = currentAllocations.find(a => a.id === exp.allocationId);
-      const sch = schemes.find(s => s.id === alloc?.schemeId);
-      const sec = sectors.find(s => s.id === alloc?.sectorId);
-      const act = activities.find(a => a.id === alloc?.activityId);
-      const sa = subActivities.find(s => s.id === alloc?.subActivityId);
-      const soe = soes.find(s => s.id === exp.soeId);
-      const range = ranges.find(r => r.id === alloc?.rangeId);
+      const allocationExpenditureData = currentExpenses.map(exp => {
+        const alloc = currentAllocations.find(a => a.id === exp.allocationId);
+        const sch = schemes.find(s => s.id === alloc?.schemeId);
+        const sec = sectors.find(s => s.id === alloc?.sectorId);
+        const act = activities.find(a => a.id === alloc?.activityId);
+        const sa = subActivities.find(s => s.id === alloc?.subActivityId);
+        const soe = soes.find(s => s.id === exp.soeId);
+        const range = ranges.find(r => r.id === alloc?.rangeId);
 
-      return {
-        id: exp.id,
-        date: exp.date,
-        scheme: sch?.name || 'N/A',
-        sector: sec?.name || 'N/A',
-        activity: act?.name || 'N/A',
-        subActivity: sa?.name || 'N/A',
-        soe: soe?.name || 'N/A',
-        range: range?.name || 'N/A',
-        allocation: alloc?.amount || 0,
-        expenditure: exp.amount,
-        balance: (alloc?.amount || 0) - currentExpenses.filter(e => e.allocationId === alloc?.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0),
-        description: exp.description,
-        status: exp.status
-      };
-    });
+        const fundedSoe = alloc?.fundedSOEs?.find(f => f.soeId === exp.soeId);
+        const totalSpentOnSoe = baseExpenses
+          .filter(e => e.allocationId === exp.allocationId && e.soeId === exp.soeId && e.status !== 'rejected')
+          .reduce((sum, e) => sum + e.amount, 0);
+
+        return {
+          id: exp.id,
+          date: exp.date,
+          scheme: sch?.name || 'N/A',
+          sector: sec?.name || 'N/A',
+          activity: act?.name || 'N/A',
+          subActivity: sa?.name || 'N/A',
+          soe: soe?.name || 'N/A',
+          range: range?.name || 'N/A',
+          allocation: fundedSoe?.amount || 0,
+          expenditure: exp.amount,
+          balance: (fundedSoe?.amount || 0) - totalSpentOnSoe,
+          description: exp.description,
+          status: exp.status
+        };
+      });
 
     const combinedReportData = [...comprehensiveReportData, ...allocationExpenditureData];
     const uniqueSchemes = Array.from(new Set(combinedReportData.map(r => r.scheme))).filter(Boolean).sort();
@@ -5540,19 +5545,24 @@ export default function App() {
                   searchableText: (_, item) => {
                     const alloc = allocations.find(a => a.id === item.allocationId);
                     if (!alloc) return 'N/A';
-                    const spentUpTo = expenses
-                      .filter(e => e.allocationId === item.allocationId && e.status !== 'rejected' && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
+                    const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
+                    if (!fundedSoe) return 'N/A';
+                    const totalSpentOnSoe = expenses
+                      .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
                       .reduce((sum, e) => sum + e.amount, 0);
-                    return String(alloc.amount - spentUpTo);
+                    return String(fundedSoe.amount - totalSpentOnSoe);
                   },
                   render: (_, item) => {
-                  const alloc = allocations.find(a => a.id === item.allocationId);
-                  if (!alloc) return 'N/A';
-                  const spentUpTo = expenses
-                    .filter(e => e.allocationId === item.allocationId && e.status !== 'rejected' && (new Date(e.date).getTime() < new Date(item.date).getTime() || (e.date === item.date && e.id <= item.id)))
-                    .reduce((sum, e) => sum + e.amount, 0);
-                  return <span className="text-blue-600 font-bold">₹{(alloc.amount - spentUpTo).toLocaleString()}</span>;
-                }}
+                    const alloc = allocations.find(a => a.id === item.allocationId);
+                    if (!alloc) return 'N/A';
+                    const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
+                    if (!fundedSoe) return 'N/A';
+                    const totalSpentOnSoe = expenses
+                      .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
+                      .reduce((sum, e) => sum + e.amount, 0);
+                    return <span className="text-blue-600 font-bold">₹{(fundedSoe.amount - totalSpentOnSoe).toLocaleString()}</span>;
+                  }
+                }
               ], 
               handleAddExpense, 
               (id) => handleDelete('expenditures', id), 
