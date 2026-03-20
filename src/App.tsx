@@ -234,12 +234,30 @@ export default function App() {
   const [isAllocFilterExpanded, setIsAllocFilterExpanded] = useState(false);
   const [isSoeFilterExpanded, setIsSoeFilterExpanded] = useState(false);
 
-  // Auto-collapse filters on tab change
-  useEffect(() => {
-    setIsExpFilterExpanded(false);
-    setIsAllocFilterExpanded(false);
-    setIsSoeFilterExpanded(false);
-  }, [activeTab]);
+    // Auto-collapse filters and reset all filters on tab change
+    useEffect(() => {
+      setIsExpFilterExpanded(false);
+      setIsAllocFilterExpanded(false);
+      setIsSoeFilterExpanded(false);
+      setShowReportFilters(false);
+      
+      // Reset all filters when switching main tabs
+      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+      setReportSearchTerm('');
+      setReportPage(1);
+      setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
+      setAllocFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+      setSoeFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
+      setExpDateRange({ start: '', end: '' });
+      setSearchTerm('');
+      setDashboardSearch('');
+      setRangeSearch('');
+      setSoeSearchTerm('');
+      setSoeAbstractSearch('');
+      setTrackerSearch('');
+      setReconSearchTerm('');
+      setReconSchemeId('');
+    }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
@@ -778,6 +796,10 @@ export default function App() {
         soeId: soe.id,
         soeName: soe.name,
         hierarchy,
+        schemeName: sch?.name || '',
+        sectorName: sec?.name || '',
+        activityName: act?.name || '',
+        subActivityName: sa?.name || '',
         approvedBudget,
         receivedInTry,
         allocated,
@@ -3726,6 +3748,13 @@ export default function App() {
       };
     });
 
+    const combinedReportData = [...comprehensiveReportData, ...allocationExpenditureData];
+    const uniqueSchemes = Array.from(new Set(combinedReportData.map(r => r.scheme))).filter(Boolean).sort();
+    const uniqueSectors = Array.from(new Set(combinedReportData.map(r => r.sector))).filter(Boolean).sort();
+    const uniqueActivities = Array.from(new Set(combinedReportData.map(r => r.activity))).filter(Boolean).sort();
+    const uniqueSubActivities = Array.from(new Set(combinedReportData.map(r => r.subActivity))).filter(Boolean).sort();
+    const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name))).filter(Boolean).sort();
+
     const renderAllocationExpenditureReport = () => {
       const searchLower = reportSearchTerm.toLowerCase();
       const filtered = allocationExpenditureData.filter(row => {
@@ -3823,98 +3852,104 @@ export default function App() {
             </div>
           </div>
 
-          {showReportFilters && (
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
-                <select 
-                  value={reportFilters.scheme}
-                  onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
-                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                >
-                  <option value="">All Schemes</option>
-                  {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
-                <select 
-                  value={reportFilters.sector}
-                  onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
-                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                >
-                  <option value="">All Sectors</option>
-                  {uniqueSectors.filter(s => {
-                    if (!reportFilters.scheme) return true;
-                    // Check if this sector exists under the selected scheme in soeAbstractData
-                    return soeAbstractData.some(r => r.hierarchy.startsWith(reportFilters.scheme + ' > ' + s));
-                  }).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
-                <select 
-                  value={reportFilters.activity}
-                  onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
-                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                >
-                  <option value="">All Activities</option>
-                  {uniqueActivities.filter(a => {
-                    if (!reportFilters.sector && !reportFilters.scheme) return true;
-                    return soeAbstractData.some(r => {
-                      const parts = r.hierarchy.split(' > ');
-                      const schemeMatch = !reportFilters.scheme || parts[0] === reportFilters.scheme;
-                      const sectorMatch = !reportFilters.sector || parts[1] === reportFilters.sector;
-                      return schemeMatch && sectorMatch && parts[2] === a;
-                    });
-                  }).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
-                <select 
-                  value={reportFilters.subActivity}
-                  onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
-                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                >
-                  <option value="">All Sub-Activities</option>
-                  {uniqueSubActivities.filter(sa => {
-                    if (!reportFilters.activity && !reportFilters.sector && !reportFilters.scheme) return true;
-                    return soeAbstractData.some(r => {
-                      const parts = r.hierarchy.split(' > ');
-                      const schemeMatch = !reportFilters.scheme || parts[0] === reportFilters.scheme;
-                      const sectorMatch = !reportFilters.sector || parts[1] === reportFilters.sector;
-                      const activityMatch = !reportFilters.activity || parts[2] === reportFilters.activity;
-                      return schemeMatch && sectorMatch && activityMatch && parts[3] === sa;
-                    });
-                  }).map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
-                <select 
-                  value={reportFilters.range}
-                  onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value }); setReportPage(1); }}
-                  className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                >
-                  <option value="">All Ranges</option>
-                  {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </div>
-              <div className="md:col-span-5 flex justify-end">
-                <button 
-                  onClick={() => {
-                    setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
-                    setReportSearchTerm('');
-                    setReportPage(1);
-                  }}
-                  className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
-                >
-                  Reset All Filters
-                </button>
-              </div>
-            </div>
-          )}
+              {showReportFilters && (
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <select 
+                      value={reportFilters.range}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Ranges</option>
+                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                    <select 
+                      value={reportFilters.scheme}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {uniqueSchemes.filter(s => {
+                        if (!reportFilters.range) return true;
+                        return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                    <select 
+                      value={reportFilters.sector}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {uniqueSectors.filter(s => {
+                        if (!reportFilters.range && !reportFilters.scheme) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          return rangeMatch && schemeMatch && r.sector === s;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                    <select 
+                      value={reportFilters.activity}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {uniqueActivities.filter(a => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                    <select 
+                      value={reportFilters.subActivity}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sub-Activities</option>
+                      {uniqueSubActivities.filter(sa => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div className="md:col-span-5 flex justify-end">
+                    <button 
+                      onClick={() => {
+                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+                        setReportSearchTerm('');
+                        setReportPage(1);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                    >
+                      Reset All Filters
+                    </button>
+                  </div>
+                </div>
+              )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 flex justify-between items-center">
@@ -4168,16 +4203,11 @@ export default function App() {
     // --- SOE Abstract Summary Calculation ---
     const abstractRows = soeAbstractData.filter(row => {
       // Apply UI filters
-      const scheme = row.hierarchy.split(' > ')[0];
-      const sector = row.hierarchy.split(' > ')[1];
-      const activity = row.hierarchy.split(' > ')[2];
-      const subActivity = row.hierarchy.split(' > ')[3];
-
       const matchesFilters = (
-        (!reportFilters.scheme || scheme === reportFilters.scheme) &&
-        (!reportFilters.sector || sector === reportFilters.sector) &&
-        (!reportFilters.activity || activity === reportFilters.activity) &&
-        (!reportFilters.subActivity || subActivity === reportFilters.subActivity)
+        (!reportFilters.scheme || row.schemeName === reportFilters.scheme) &&
+        (!reportFilters.sector || row.sectorName === reportFilters.sector) &&
+        (!reportFilters.activity || row.activityName === reportFilters.activity) &&
+        (!reportFilters.subActivity || row.subActivityName === reportFilters.subActivity)
       );
 
       if (!matchesFilters) return false;
@@ -4215,12 +4245,6 @@ export default function App() {
       cols.push(row.expenditure, row.remaining);
       return cols;
     });
-
-    const uniqueSchemes = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[0]))).filter(Boolean).sort();
-    const uniqueSectors = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[1]))).filter(Boolean).sort();
-    const uniqueActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[2]))).filter(Boolean).sort();
-    const uniqueSubActivities = Array.from(new Set(soeAbstractData.filter(r => r.allocated > 0).map(r => r.hierarchy.split(' > ')[3]))).filter(Boolean).sort();
-    const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name))).filter(Boolean).sort();
 
     return (
       <div className="space-y-6">
@@ -4276,45 +4300,12 @@ export default function App() {
               </div>
 
               {showReportFilters && (
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
-                    <select 
-                      value={reportFilters.scheme}
-                      onChange={(e) => setReportFilters({ ...reportFilters, scheme: e.target.value })}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Schemes</option>
-                      {uniqueSchemes.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
-                    <select 
-                      value={reportFilters.sector}
-                      onChange={(e) => setReportFilters({ ...reportFilters, sector: e.target.value })}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Sectors</option>
-                      {uniqueSectors.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
-                    <select 
-                      value={reportFilters.activity}
-                      onChange={(e) => setReportFilters({ ...reportFilters, activity: e.target.value })}
-                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
-                    >
-                      <option value="">All Activities</option>
-                      {uniqueActivities.map(s => <option key={s} value={s}>{s}</option>)}
-                    </select>
-                  </div>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200 animate-in fade-in slide-in-from-top-2">
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Range</label>
                     <select 
                       value={reportFilters.range}
-                      onChange={(e) => setReportFilters({ ...reportFilters, range: e.target.value })}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
                     >
                       <option value="">All Ranges</option>
@@ -4322,19 +4313,82 @@ export default function App() {
                     </select>
                   </div>
                   <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Scheme</label>
+                    <select 
+                      value={reportFilters.scheme}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {uniqueSchemes.filter(s => {
+                        if (!reportFilters.range) return true;
+                        return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Sector</label>
+                    <select 
+                      value={reportFilters.sector}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {uniqueSectors.filter(s => {
+                        if (!reportFilters.range && !reportFilters.scheme) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          return rangeMatch && schemeMatch && r.sector === s;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Activity</label>
+                    <select 
+                      value={reportFilters.activity}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {uniqueActivities.filter(a => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Sub-Activity</label>
                     <select 
                       value={reportFilters.subActivity}
-                      onChange={(e) => setReportFilters({ ...reportFilters, subActivity: e.target.value })}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-sm bg-white"
                     >
                       <option value="">All Sub-Activities</option>
-                      {uniqueSubActivities.map(s => <option key={s} value={s}>{s}</option>)}
+                      {uniqueSubActivities.filter(sa => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
                   <div className="md:col-span-5 flex justify-end">
                     <button 
-                      onClick={() => setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' })}
+                      onClick={() => {
+                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '' });
+                        setReportPage(1);
+                      }}
                       className="text-sm text-emerald-600 hover:text-emerald-700 font-medium"
                     >
                       Clear All Filters
