@@ -10,6 +10,7 @@ import {
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { preloadDatabase } from './preloadData';
@@ -74,6 +75,21 @@ type Expense = {
   createdAt?: number;
   approvalReason?: string;
 };
+
+type Bill = {
+  id: string;
+  billNo: string;
+  billDate: string;
+  expenseIds: string[];
+  fyId: string;
+  financialYear: string;
+  totalAmount: number;
+  status: 'draft' | 'finalized';
+  createdAt: number;
+  updatedAt: number;
+  remarks?: string;
+};
+
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
 
 enum OperationType {
@@ -207,6 +223,7 @@ export default function App() {
 
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [bills, setBills] = useState<Bill[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -218,6 +235,11 @@ export default function App() {
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
+  const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills'>('list');
+  const [selectedExpensesForBill, setSelectedExpensesForBill] = useState<string[]>([]);
+  const [billFilters, setBillFilters] = useState({ billNo: '', startDate: '', endDate: '' });
+  const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+  const [isBillFormFullScreen, setIsBillFormFullScreen] = useState(false);
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
@@ -471,8 +493,17 @@ export default function App() {
       setExpenses(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'expenditures'));
 
+    const billsQuery = query(
+      collection(db, 'bills'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubBills = onSnapshot(billsQuery, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Bill));
+      setBills(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'bills'));
+
     return () => {
-      unsubSoes(); unsubAllocations(); unsubExpenses();
+      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills();
     };
   }, [user, userRole, selectedFY, fys]);
 
@@ -903,6 +934,183 @@ export default function App() {
       }
     };
   }, [currentAllocations, ledgerSearchTerm, ledgerFilters, ranges, subActivities, activities, sectors, schemes, soes, expenses]);
+
+    const downloadLedgerPDF = () => {
+      const doc = new jsPDF('landscape');
+      doc.setFontSize(16);
+      doc.text("Passbook Ledger Report", 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Financial Year: ${fys.find(f => f.id === selectedFY)?.name || selectedFY}`, 14, 22);
+      
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const body: any[] = [];
+      
+      filteredLedgerData.allocations.forEach(alloc => {
+        const r = ranges.find(r => r.id === alloc.rangeId);
+        const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
+        
+        let hierarchy = '';
+        if (alloc.subActivityId) {
+          const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+          const act = activities.find(a => a.id === sa?.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+        } else if (alloc.activityId) {
+          const act = activities.find(a => a.id === alloc.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+        }
+
+        const allocExpenses = expenses.filter(e => e.allocationId === alloc.id && e.status !== 'rejected').sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        let currentBalance = alloc.amount;
+        
+        // Initial Allocation Row
+        body.push([
+          "-",
+          r?.name || 'N/A',
+          `${hierarchy || 'N/A'}\n${soeNames}`,
+          "Initial Allocation",
+          "-",
+          alloc.amount.toLocaleString('en-IN'),
+          "-",
+          currentBalance.toLocaleString('en-IN')
+        ]);
+
+        // Expense Rows
+        allocExpenses.forEach(exp => {
+          currentBalance -= exp.amount;
+          body.push([
+            exp.date ? exp.date.split('-').reverse().join('/') : '',
+            r?.name || 'N/A',
+            `${hierarchy || 'N/A'}\n${soeNames}`,
+            exp.description,
+            exp.approvalId ? `#${exp.approvalId}` : '-',
+            "-",
+            exp.amount.toLocaleString('en-IN'),
+            currentBalance.toLocaleString('en-IN')
+          ]);
+        });
+      });
+
+      autoTable(doc, {
+        head: [headers],
+        body: body,
+        startY: 30,
+        styles: { fontSize: 7, cellPadding: 2, overflow: 'linebreak' },
+        headStyles: { fillColor: [5, 150, 105] },
+        columnStyles: {
+          0: { cellWidth: 20 },
+          1: { cellWidth: 25 },
+          2: { cellWidth: 80 },
+          3: { cellWidth: 60 },
+          4: { cellWidth: 20 },
+          5: { cellWidth: 25, halign: 'right' },
+          6: { cellWidth: 25, halign: 'right' },
+          7: { cellWidth: 25, halign: 'right' }
+        }
+      });
+
+      doc.save(`ledger_report_${selectedFY}.pdf`);
+    };
+
+    const downloadLedgerExcel = async () => {
+      const workbook = new ExcelJS.Workbook();
+      const sheet = workbook.addWorksheet("Passbook Ledger");
+      
+      const title = `Passbook Ledger Report - FY ${fys.find(f => f.id === selectedFY)?.name || selectedFY}`;
+      const titleRow = sheet.addRow([title]);
+      titleRow.font = { bold: true, size: 14 };
+      sheet.mergeCells(1, 1, 1, 8);
+      titleRow.alignment = { horizontal: 'center' };
+
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headerRow = sheet.addRow(headers);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE0E0E0' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+
+      filteredLedgerData.allocations.forEach(alloc => {
+        const r = ranges.find(r => r.id === alloc.rangeId);
+        const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(', ') || 'Pending Funds';
+        
+        let hierarchy = '';
+        if (alloc.subActivityId) {
+          const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+          const act = activities.find(a => a.id === sa?.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+        } else if (alloc.activityId) {
+          const act = activities.find(a => a.id === alloc.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+        }
+
+        const allocExpenses = expenses.filter(e => e.allocationId === alloc.id && e.status !== 'rejected').sort((a,b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        let currentBalance = alloc.amount;
+        
+        const row1 = sheet.addRow([
+          "-",
+          r?.name || 'N/A',
+          `${hierarchy || 'N/A'}\n${soeNames}`,
+          "Initial Allocation",
+          "-",
+          alloc.amount,
+          "-",
+          currentBalance
+        ]);
+        row1.eachCell(cell => {
+          cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+          cell.alignment = { wrapText: true, vertical: 'middle' };
+        });
+
+        allocExpenses.forEach(exp => {
+          currentBalance -= exp.amount;
+          const row = sheet.addRow([
+            exp.date ? exp.date.split('-').reverse().join('/') : '',
+            r?.name || 'N/A',
+            `${hierarchy || 'N/A'}\n${soeNames}`,
+            exp.description,
+            exp.approvalId ? `#${exp.approvalId}` : '-',
+            "-",
+            exp.amount,
+            currentBalance
+          ]);
+          row.eachCell(cell => {
+            cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } };
+            cell.alignment = { wrapText: true, vertical: 'middle' };
+          });
+        });
+      });
+
+      sheet.columns.forEach((column, i) => {
+        column.width = [12, 15, 45, 40, 15, 15, 15, 15][i];
+        if (i >= 5) {
+          column.alignment = { horizontal: 'right', vertical: 'middle' };
+          column.numFmt = '#,##0.00';
+        }
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `ledger_report_${selectedFY}.xlsx`);
+    };
 
   const getSoeAllocated = (soeId: string) => baseAllocations.reduce((sum, a) => sum + (a.fundedSOEs?.find(f => f.soeId === soeId)?.amount || 0), 0);
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
@@ -2754,7 +2962,9 @@ export default function App() {
     isFilterExpanded?: boolean,
     setIsFilterExpanded?: (val: boolean) => void,
     filterContent?: React.ReactNode,
-    onResetFilters?: () => void
+    onResetFilters?: () => void,
+    isFullScreen?: boolean,
+    setIsFullScreen?: (val: boolean) => void
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -2777,9 +2987,9 @@ export default function App() {
     }
 
     return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
-      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA'))) && (
-        <div className="bg-white p-3 rounded-xl shadow-sm border border-gray-100 lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto custom-scrollbar">
+    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start relative">
+      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && (
+        <div className={`bg-white p-3 rounded-xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
             onClick={() => setIsFormExpanded(!isFormExpanded)}
@@ -2794,6 +3004,16 @@ export default function App() {
                   className="text-[9px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-100 font-bold uppercase"
                 >
                   New
+                </button>
+              )}
+              {setIsFullScreen && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setIsFullScreen(!isFullScreen); }}
+                  className="p-1 hover:bg-gray-100 rounded text-gray-500"
+                  title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+                >
+                  {isFullScreen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
               )}
             </div>
@@ -2822,12 +3042,21 @@ export default function App() {
                     Cancel
                   </button>
                 )}
+                {isFullScreen && setIsFullScreen && (
+                   <button 
+                    type="button" 
+                    onClick={() => setIsFullScreen(false)}
+                    className="px-3 py-1.5 border border-gray-300 rounded text-sm text-gray-600 hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                )}
               </div>
             </form>
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4'}`}>
+      <div className={`space-y-6 ${isFullScreen ? 'hidden' : ((userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4')}`}>
         {extraContent}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
@@ -2898,10 +3127,10 @@ export default function App() {
                 <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
                   <td className="p-3 text-gray-500 font-medium">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                   {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && (
+                  {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
                     <td className="p-3 text-right flex justify-end gap-2">
                       {customActions && customActions(item)}
-                      {(userRole === 'admin' || userRole === 'deo' || (canEditDelete ? canEditDelete(item) : (title === 'Expenditure' && userRole !== 'approver'))) && (
+                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
                         <>
                           <button 
                             onClick={() => {
@@ -3507,6 +3736,151 @@ export default function App() {
     });
   };
 
+  const handleCreateBill = async (e: any) => {
+    e.preventDefault();
+    const billNo = e.target.billNo.value;
+    const billDate = e.target.billDate.value;
+    const remarks = e.target.remarks.value;
+    const isFinalizing = e.nativeEvent.submitter?.name === 'finalize';
+
+    if (!billNo || !billDate || selectedExpensesForBill.length === 0) {
+      showAlert('Please provide Bill No, Date and select at least one expenditure.');
+      return;
+    }
+
+    const selectedExpObjects = expenses.filter(ex => selectedExpensesForBill.includes(ex.id));
+    
+    // Validate same SOE
+    const soeIds = new Set(selectedExpObjects.map(ex => ex.soeId));
+    if (soeIds.size > 1) {
+      showAlert('A bill can only contain expenditures from a single SOE head.');
+      return;
+    }
+
+    const totalAmount = selectedExpObjects.reduce((sum, ex) => sum + ex.amount, 0);
+    const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
+
+    try {
+      const billData = {
+        billNo,
+        billDate,
+        expenseIds: selectedExpensesForBill,
+        fyId: activeFy?.id || selectedFY,
+        financialYear: activeFy?.name || selectedFY,
+        totalAmount,
+        status: isFinalizing ? 'finalized' : (editingItem?.type === 'Bill' ? editingItem.item.status : 'draft'),
+        remarks: remarks || '',
+        updatedAt: Date.now(),
+        createdBy: editingItem?.type === 'Bill' ? editingItem.item.createdBy : user.uid
+      };
+
+      if (editingItem?.type === 'Bill') {
+        await updateDoc(doc(db, 'bills', editingItem.item.id), billData);
+        setEditingItem(null);
+      } else {
+        await addDoc(collection(db, 'bills'), { ...billData, createdAt: Date.now() });
+      }
+      setSelectedExpensesForBill([]);
+      setBillExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+      e.target.reset();
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Bill' ? OperationType.UPDATE : OperationType.CREATE, 'bills');
+    }
+  };
+
+  const handleRemoveExpenseFromBill = async (billId: string, expenseId: string) => {
+    const bill = bills.find(b => b.id === billId);
+    if (!bill) return;
+
+    const newExpenseIds = bill.expenseIds.filter(id => id !== expenseId);
+    if (newExpenseIds.length === 0) {
+      showAlert('A bill must have at least one expenditure. Delete the bill instead.');
+      return;
+    }
+
+    const newTotalAmount = expenses
+      .filter(e => newExpenseIds.includes(e.id))
+      .reduce((sum, e) => sum + e.amount, 0);
+
+    try {
+      await updateDoc(doc(db, 'bills', billId), {
+        expenseIds: newExpenseIds,
+        totalAmount: newTotalAmount,
+        updatedAt: Date.now()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'bills');
+    }
+  };
+
+  const handleDownloadBill = async (bill: Bill) => {
+    const doc = new jsPDF();
+    const activeFy = fys.find(f => f.id === bill.fyId || f.name === bill.financialYear);
+    
+    // Header
+    doc.setFontSize(16);
+    doc.text('TREASURY BILL', 105, 15, { align: 'center' });
+    doc.setFontSize(10);
+    doc.text(`Financial Year: ${activeFy?.name || bill.financialYear}`, 105, 22, { align: 'center' });
+    
+    doc.setFontSize(11);
+    doc.text(`Bill No: ${bill.billNo}`, 15, 35);
+    doc.text(`Bill Date: ${bill.billDate.split('-').reverse().join('/')}`, 15, 42);
+    if (bill.remarks) {
+      doc.text(`Remarks: ${bill.remarks}`, 15, 49);
+    }
+
+    const billExpenses = expenses.filter(e => bill.expenseIds.includes(e.id));
+    
+    const tableData = billExpenses.map((exp, index) => {
+      const s = soes.find(s => s.id === exp.soeId);
+      const al = allocations.find(a => a.id === exp.allocationId);
+      const r = ranges.find(r => r.id === al?.rangeId);
+      
+      let hierarchy = '';
+      if (al?.subActivityId) {
+        const sa = subActivities.find(sa => sa.id === al.subActivityId);
+        const act = activities.find(a => a.id === sa?.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+      } else if (al?.activityId) {
+        const act = activities.find(a => a.id === al.activityId);
+        const sec = sectors.find(sec => sec.id === act?.sectorId);
+        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+      }
+
+      return [
+        index + 1,
+        exp.date.split('-').reverse().join('/'),
+        r?.name || 'N/A',
+        s?.name || 'N/A',
+        hierarchy,
+        exp.description,
+        `Rs. ${exp.amount.toLocaleString()}`
+      ];
+    });
+
+    autoTable(doc, {
+      startY: 55,
+      head: [['SrNo', 'Date', 'Range', 'SOE', 'Hierarchy', 'Description', 'Amount']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [16, 185, 129] },
+      styles: { fontSize: 8 },
+      columnStyles: {
+        6: { halign: 'right', fontStyle: 'bold' }
+      }
+    });
+
+    const finalY = (doc as any).lastAutoTable.finalY || 70;
+    doc.setFontSize(12);
+    doc.text(`Total Amount: Rs. ${bill.totalAmount.toLocaleString()}`, 195, finalY + 10, { align: 'right' });
+
+    doc.save(`bill_${bill.billNo}.pdf`);
+  };
+
   const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: Date.now() });
@@ -3771,20 +4145,114 @@ export default function App() {
       doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
     };
 
-    const downloadExcel = (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
-      const wb = XLSX.utils.book_new();
+    const downloadExcel = async (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
+      const workbook = new ExcelJS.Workbook();
       
       if (abstractData.length > 0) {
-        const abstractWsData = [["SOE Abstract Summary"], abstractHeaders, ...abstractData];
-        const abstractWs = XLSX.utils.aoa_to_sheet(abstractWsData);
-        XLSX.utils.book_append_sheet(wb, abstractWs, "Abstract Summary");
+        const abstractSheet = workbook.addWorksheet("Abstract Summary");
+        
+        // Add Title
+        const titleRow = abstractSheet.addRow(["SOE Abstract Summary"]);
+        titleRow.font = { bold: true, size: 14 };
+        abstractSheet.mergeCells(1, 1, 1, abstractHeaders.length);
+        titleRow.alignment = { horizontal: 'center' };
+
+        // Add Headers
+        const headerRow = abstractSheet.addRow(abstractHeaders);
+        headerRow.eachCell((cell) => {
+          cell.font = { bold: true };
+          cell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFE0E0E0' }
+          };
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        });
+
+        // Add Data
+        abstractData.forEach(row => {
+          const dataRow = abstractSheet.addRow(row);
+          dataRow.eachCell((cell) => {
+            cell.border = {
+              top: { style: 'thin' },
+              left: { style: 'thin' },
+              bottom: { style: 'thin' },
+              right: { style: 'thin' }
+            };
+          });
+        });
+
+        // Auto-width columns
+        abstractSheet.columns.forEach(column => {
+          let maxLength = 0;
+          column.eachCell({ includeEmpty: true }, cell => {
+            const columnLength = cell.value ? cell.value.toString().length : 10;
+            if (columnLength > maxLength) {
+              maxLength = columnLength;
+            }
+          });
+          column.width = maxLength < 12 ? 12 : maxLength + 2;
+        });
       }
 
-      const detailedWsData = [["Detailed Range-wise Report"], detailedHeaders, ...detailedData];
-      const detailedWs = XLSX.utils.aoa_to_sheet(detailedWsData);
-      XLSX.utils.book_append_sheet(wb, detailedWs, "Detailed Report");
+      const detailedSheet = workbook.addWorksheet("Detailed Report");
+      
+      // Add Title
+      const dTitleRow = detailedSheet.addRow(["Detailed Range-wise Report"]);
+      dTitleRow.font = { bold: true, size: 14 };
+      detailedSheet.mergeCells(1, 1, 1, detailedHeaders.length);
+      dTitleRow.alignment = { horizontal: 'center' };
 
-      XLSX.writeFile(wb, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
+      // Add Headers
+      const dHeaderRow = detailedSheet.addRow(detailedHeaders);
+      dHeaderRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE0E0E0' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+
+      // Add Data
+      detailedData.forEach(row => {
+        const dataRow = detailedSheet.addRow(row);
+        dataRow.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        });
+      });
+
+      // Auto-width columns
+      detailedSheet.columns.forEach(column => {
+        let maxLength = 0;
+        column.eachCell({ includeEmpty: true }, cell => {
+          const columnLength = cell.value ? cell.value.toString().length : 10;
+          if (columnLength > maxLength) {
+            maxLength = columnLength;
+          }
+        });
+        column.width = maxLength < 12 ? 12 : maxLength + 2;
+      });
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      saveAs(blob, `${title.toLowerCase().replace(/\s+/g, '_')}.xlsx`);
     };
 
     const downloadZip = async () => {
@@ -5517,13 +5985,53 @@ export default function App() {
 
         {activeTab === 'Expenditures' && (
           <div className="space-y-4">
-            {renderSimpleManager(
-              'Expenditure', 
-              currentExpenses, 
-              [
-                {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
-                {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
-                  searchableText: (val, item) => {
+            <div className="flex gap-4 mb-2 border-b pb-2">
+              <button 
+                onClick={() => setExpenditureSubTab('list')}
+                className={`pb-2 px-4 text-sm font-medium transition-colors relative ${expenditureSubTab === 'list' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Expenditure List
+                {expenditureSubTab === 'list' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
+              </button>
+              {(userRole === 'admin' || userRole === 'deo') && (
+                <button 
+                  onClick={() => setExpenditureSubTab('bills')}
+                  className={`pb-2 px-4 text-sm font-medium transition-colors relative ${expenditureSubTab === 'bills' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Bill Creation
+                  {expenditureSubTab === 'bills' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
+                </button>
+              )}
+            </div>
+
+            {expenditureSubTab === 'list' ? (
+              renderSimpleManager(
+                'Expenditure', 
+                currentExpenses, 
+                [
+                  {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
+                  {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
+                    searchableText: (val, item) => {
+                      const al = allocations.find(a => a.id === val);
+                      const r = ranges.find(r => r.id === al?.rangeId);
+                      const s = soes.find(s => s.id === item.soeId);
+                      let hierarchy = '';
+                      if (al?.subActivityId) {
+                        const sa = subActivities.find(sa => sa.id === al.subActivityId);
+                        const act = activities.find(a => a.id === sa?.activityId);
+                        const sec = sectors.find(sec => sec.id === act?.sectorId);
+                        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                      } else if (al?.activityId) {
+                        const act = activities.find(a => a.id === al.activityId);
+                        const sec = sectors.find(sec => sec.id === act?.sectorId);
+                        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                      }
+                      const actName = item.activityId ? activities.find(a => a.id === item.activityId)?.name : '';
+                      return `${hierarchy} ${r?.name} ${s?.name} ${actName}`;
+                    },
+                    render: (val, item) => {
                     const al = allocations.find(a => a.id === val);
                     const r = ranges.find(r => r.id === al?.rangeId);
                     const s = soes.find(s => s.id === item.soeId);
@@ -5540,202 +6048,467 @@ export default function App() {
                       const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
                       hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
                     }
-                    const actName = item.activityId ? activities.find(a => a.id === item.activityId)?.name : '';
-                    return `${hierarchy} ${r?.name} ${s?.name} ${actName}`;
-                  },
-                  render: (val, item) => {
-                  const al = allocations.find(a => a.id === val);
-                  const r = ranges.find(r => r.id === al?.rangeId);
-                  const s = soes.find(s => s.id === item.soeId);
-                  let hierarchy = '';
-                  if (al?.subActivityId) {
-                    const sa = subActivities.find(sa => sa.id === al.subActivityId);
-                    const act = activities.find(a => a.id === sa?.activityId);
-                    const sec = sectors.find(sec => sec.id === act?.sectorId);
-                    const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                    hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                  } else if (al?.activityId) {
-                    const act = activities.find(a => a.id === al.activityId);
-                    const sec = sectors.find(sec => sec.id === act?.sectorId);
-                    const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                    hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-                  }
-                  return (
+                    return (
+                      <div>
+                        <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
+                        <div className="font-medium">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
+                        {item.activityId && (
+                          <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
+                            Activity: {activities.find(a => a.id === item.activityId)?.name}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }},
+                  {key: 'description', label: 'Description', render: (val, item) => (
                     <div>
-                      <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
-                      <div className="font-medium">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
-                      {item.activityId && (
-                        <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
-                          Activity: {activities.find(a => a.id === item.activityId)?.name}
+                      <div className="text-xs italic text-gray-500">{val}</div>
+                      {item.approvalReason && (
+                        <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
+                          Action Reason: {item.approvalReason}
                         </div>
                       )}
                     </div>
-                  );
-                }},
-                {key: 'description', label: 'Description', render: (val, item) => (
-                  <div>
-                    <div className="text-xs italic text-gray-500">{val}</div>
-                    {item.approvalReason && (
-                      <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
-                        Action Reason: {item.approvalReason}
-                      </div>
+                  )},
+                  {key: 'status', label: 'Status', render: (val) => {
+                    const colors = {
+                      pending: 'bg-yellow-100 text-yellow-800',
+                      approved: 'bg-green-100 text-green-800',
+                      rejected: 'bg-red-100 text-red-800'
+                    };
+                    return (
+                      <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${colors[val as keyof typeof colors] || 'bg-gray-100'}`}>
+                        {val || 'pending'}
+                      </span>
+                    );
+                  }},
+                  {key: 'approvalId', label: 'Approval ID', render: (val) => val ? `#${val}` : '-'},
+                  {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
+                  {key: 'balance', label: 'Balance', 
+                    searchableText: (_, item) => {
+                      const alloc = allocations.find(a => a.id === item.allocationId);
+                      if (!alloc) return 'N/A';
+                      const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
+                      if (!fundedSoe) return 'N/A';
+                      const totalSpentOnSoe = expenses
+                        .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
+                        .reduce((sum, e) => sum + e.amount, 0);
+                      return String(fundedSoe.amount - totalSpentOnSoe);
+                    },
+                    render: (_, item) => {
+                      const alloc = allocations.find(a => a.id === item.allocationId);
+                      if (!alloc) return 'N/A';
+                      const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
+                      if (!fundedSoe) return 'N/A';
+                      const totalSpentOnSoe = expenses
+                        .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
+                        .reduce((sum, e) => sum + e.amount, 0);
+                      return <span className="text-blue-600 font-bold">₹{(fundedSoe.amount - totalSpentOnSoe).toLocaleString()}</span>;
+                    }
+                  }
+                ], 
+                handleAddExpense, 
+                (id) => handleDelete('expenditures', id), 
+                <CascadingDropdowns 
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                  editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
+                >
+                  <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                  <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
+                  <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
+                </CascadingDropdowns>,
+                (item) => setEditingItem({ type: 'Expenditure', item }),
+                (item) => {
+                  if (item.isLocked && userRole !== 'admin') return false;
+                  if (userRole === 'approver' || userRole === 'DA') {
+                    // Approvers/DAs can only edit if it's pending and they have range access
+                    if (item.status !== 'pending') return false;
+                    if (userRangeId) {
+                      const alloc = allocations.find(a => a.id === item.allocationId);
+                      return alloc?.rangeId === userRangeId;
+                    }
+                    return item.createdBy === user?.uid;
+                  }
+                  if (userRole === 'admin' || userRole === 'deo') return true;
+                  if (userRangeId) {
+                    const alloc = allocations.find(a => a.id === item.allocationId);
+                    return alloc?.rangeId === userRangeId;
+                  }
+                  return item.createdBy === user?.uid;
+                },
+                undefined,
+                (item) => (
+                  <div className="flex gap-1">
+                    {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin' || userRole === 'DA') && (
+                      <button 
+                        onClick={() => {
+                          setSelectedExpenseForApproval(item);
+                          setApprovalStatus('approved');
+                          setIsApprovalModalOpen(true);
+                        }}
+                        className="text-blue-600 hover:text-blue-800 p-1 border border-blue-100 rounded bg-blue-50"
+                        title="Take Action"
+                      >
+                        <ShieldCheck className="w-4 h-4" />
+                      </button>
+                    )}
+                    {item.isLocked && userRole === 'admin' && (
+                      <button 
+                        onClick={() => handleUpdateExpenseStatus(item.id, 'pending', false)}
+                        className="text-orange-600 hover:text-orange-800 p-1 border border-orange-100 rounded bg-orange-50"
+                        title="Unlock"
+                      >
+                        <Lock className="w-4 h-4" />
+                      </button>
                     )}
                   </div>
-                )},
-                {key: 'status', label: 'Status', render: (val) => {
-                  const colors = {
-                    pending: 'bg-yellow-100 text-yellow-800',
-                    approved: 'bg-green-100 text-green-800',
-                    rejected: 'bg-red-100 text-red-800'
-                  };
-                  return (
-                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${colors[val as keyof typeof colors] || 'bg-gray-100'}`}>
-                      {val || 'pending'}
+                ),
+                false,
+                isExpFilterExpanded,
+                setIsExpFilterExpanded,
+                <>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                    <select 
+                      value={expFilters.schemeId}
+                      onChange={(e) => setExpFilters({ ...expFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '' })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                    <select 
+                      value={expFilters.sectorId}
+                      onChange={(e) => setExpFilters({ ...expFilters, sectorId: e.target.value, activityId: '', subActivityId: '' })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {sectors.filter(s => !expFilters.schemeId || s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                    <select 
+                      value={expFilters.activityId}
+                      onChange={(e) => setExpFilters({ ...expFilters, activityId: e.target.value, subActivityId: '' })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {activities.filter(a => {
+                        if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
+                        if (expFilters.schemeId) return a.schemeId === expFilters.schemeId || sectors.find(s => s.id === a.sectorId)?.schemeId === expFilters.schemeId;
+                        return true;
+                      }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                    <select 
+                      value={expFilters.subActivityId}
+                      onChange={(e) => setExpFilters({ ...expFilters, subActivityId: e.target.value })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sub-Activities</option>
+                      {subActivities.filter(sa => !expFilters.activityId || sa.activityId === expFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <select 
+                      value={expFilters.rangeId}
+                      onChange={(e) => setExpFilters({ ...expFilters, rangeId: e.target.value })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Ranges</option>
+                      {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                </>,
+                () => {
+                  setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
+                  setSearchTerm('');
+                }
+              )
+            ) : (() => {
+              const availableApprovedExpenses = expenses.filter(e => e.status === 'approved' && e.financialYear === selectedFY);
+              const firstSelectedExp = expenses.find(e => selectedExpensesForBill.includes(e.id));
+              const lockedSoeId = firstSelectedExp?.soeId;
+
+              const filteredForSoeList = availableApprovedExpenses.filter(e => {
+                const al = allocations.find(a => a.id === e.allocationId);
+                if (billExpFilters.rangeId && al?.rangeId !== billExpFilters.rangeId) return false;
+                if (billExpFilters.schemeId && al?.schemeId !== billExpFilters.schemeId) return false;
+                if (billExpFilters.sectorId && al?.sectorId !== billExpFilters.sectorId) return false;
+                if (billExpFilters.activityId && al?.activityId !== billExpFilters.activityId) return false;
+                if (billExpFilters.subActivityId && al?.subActivityId !== billExpFilters.subActivityId) return false;
+                return true;
+              });
+              const availableSoeIds = Array.from(new Set(filteredForSoeList.map(e => e.soeId)));
+              const availableSoesForBill = soes.filter(s => availableSoeIds.includes(s.id));
+
+              return renderSimpleManager(
+                'Bill',
+                bills,
+                [
+                  {key: 'billNo', label: 'Bill No', render: (val) => <span className="font-bold text-emerald-700">{val}</span>},
+                  {key: 'billDate', label: 'Bill Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
+                  {key: 'soeId', label: 'SOE', render: (_, item: Bill) => {
+                    const firstExp = expenses.find(e => item.expenseIds.includes(e.id));
+                    const s = soes.find(s => s.id === firstExp?.soeId);
+                    return <span className="text-[10px] font-bold text-gray-600">{s?.name || 'N/A'}</span>
+                  }},
+                  {key: 'expenseIds', label: 'Expenditures', render: (val: string[], item: Bill) => (
+                    <div className="space-y-1">
+                      <div className="text-[10px] text-gray-500 font-bold uppercase">{val.length} Entries</div>
+                      <div className="max-h-32 overflow-y-auto border rounded p-1 bg-gray-50 space-y-1">
+                        {val.map(id => {
+                          const exp = expenses.find(e => e.id === id);
+                          if (!exp) return null;
+                          const s = soes.find(s => s.id === exp.soeId);
+                          return (
+                            <div key={id} className="text-[9px] flex justify-between items-center bg-white p-1 rounded border border-gray-100">
+                              <span className="truncate flex-1">
+                                {exp.date.split('-').reverse().join('/')} - {s?.name} - ₹{exp.amount.toLocaleString()}
+                              </span>
+                              {(userRole === 'admin' || (userRole === 'deo' && item.status === 'draft')) && (
+                                <button 
+                                  onClick={() => handleRemoveExpenseFromBill(item.id, id)}
+                                  className="text-red-500 hover:text-red-700 ml-1"
+                                  title="Remove from Bill"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )},
+                  {key: 'totalAmount', label: 'Total Amount', render: (val) => <span className="text-emerald-600 font-bold">₹{val.toLocaleString()}</span>},
+                  {key: 'status', label: 'Status', render: (val) => (
+                    <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${val === 'finalized' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'}`}>
+                      {val}
                     </span>
-                  );
-                }},
-                {key: 'approvalId', label: 'Approval ID', render: (val) => val ? `#${val}` : '-'},
-                {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
-                {key: 'balance', label: 'Balance', 
-                  searchableText: (_, item) => {
-                    const alloc = allocations.find(a => a.id === item.allocationId);
-                    if (!alloc) return 'N/A';
-                    const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
-                    if (!fundedSoe) return 'N/A';
-                    const totalSpentOnSoe = expenses
-                      .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
-                      .reduce((sum, e) => sum + e.amount, 0);
-                    return String(fundedSoe.amount - totalSpentOnSoe);
-                  },
-                  render: (_, item) => {
-                    const alloc = allocations.find(a => a.id === item.allocationId);
-                    if (!alloc) return 'N/A';
-                    const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
-                    if (!fundedSoe) return 'N/A';
-                    const totalSpentOnSoe = expenses
-                      .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
-                      .reduce((sum, e) => sum + e.amount, 0);
-                    return <span className="text-blue-600 font-bold">₹{(fundedSoe.amount - totalSpentOnSoe).toLocaleString()}</span>;
-                  }
-                }
-              ], 
-              handleAddExpense, 
-              (id) => handleDelete('expenditures', id), 
-              <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
-              >
-                <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
-                <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
-                <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
-              </CascadingDropdowns>,
-              (item) => setEditingItem({ type: 'Expenditure', item }),
-              (item) => {
-                if (item.isLocked && userRole !== 'admin') return false;
-                if (userRole === 'approver') return false;
-                if (userRole === 'admin' || userRole === 'deo') return true;
-                if (userRangeId) {
-                  const alloc = allocations.find(a => a.id === item.allocationId);
-                  return alloc?.rangeId === userRangeId;
-                }
-                return item.createdBy === user?.uid;
-              },
-              undefined,
-              (item) => (
-                <div className="flex gap-1">
-                  {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin' || userRole === 'DA') && (
-                    <button 
-                      onClick={() => {
-                        setSelectedExpenseForApproval(item);
-                        setApprovalStatus('approved');
-                        setIsApprovalModalOpen(true);
-                      }}
-                      className="text-blue-600 hover:text-blue-800 p-1 border border-blue-100 rounded bg-blue-50"
-                      title="Take Action"
-                    >
-                      <ShieldCheck className="w-4 h-4" />
-                    </button>
                   )}
-                  {item.isLocked && userRole === 'admin' && (
+                ],
+                handleCreateBill,
+                (id) => handleDelete('bills', id),
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input name="billNo" required defaultValue={editingItem?.type === 'Bill' ? editingItem.item.billNo : ''} placeholder="Bill Number (e.g. TRY-123)" className="p-2 border rounded text-sm" />
+                    <input name="billDate" type="date" required defaultValue={editingItem?.type === 'Bill' ? editingItem.item.billDate : new Date().toISOString().split('T')[0]} className="p-2 border rounded text-sm" />
+                  </div>
+                  <textarea name="remarks" defaultValue={editingItem?.type === 'Bill' ? editingItem.item.remarks : ''} placeholder="Remarks (optional)" className="w-full p-2 border rounded text-sm" rows={2} />
+                  
+                  <div className="mt-4 border-t pt-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="block text-xs font-bold text-gray-600 uppercase">Select Expenditures</label>
+                      <div className="flex gap-1">
+                        <select 
+                          value={billExpFilters.rangeId} 
+                          onChange={(e) => setBillExpFilters({...billExpFilters, rangeId: e.target.value})}
+                          className="text-[10px] p-1 border rounded bg-white"
+                        >
+                          <option value="">All Ranges</option>
+                          {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                        </select>
+                        <select 
+                          value={billExpFilters.soeId} 
+                          onChange={(e) => setBillExpFilters({...billExpFilters, soeId: e.target.value})}
+                          className="text-[10px] p-1 border rounded bg-white"
+                        >
+                          <option value="">All SOEs</option>
+                          {availableSoesForBill.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-1 mb-1">
+                      <select 
+                        value={billExpFilters.schemeId} 
+                        onChange={(e) => setBillExpFilters({...billExpFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: ''})}
+                        className="text-[10px] p-1 border rounded bg-white"
+                      >
+                        <option value="">All Schemes</option>
+                        {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <select 
+                        value={billExpFilters.sectorId} 
+                        onChange={(e) => setBillExpFilters({...billExpFilters, sectorId: e.target.value, activityId: '', subActivityId: ''})}
+                        className="text-[10px] p-1 border rounded bg-white"
+                      >
+                        <option value="">All Sectors</option>
+                        {sectors.filter(s => !billExpFilters.schemeId || s.schemeId === billExpFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 mb-2">
+                      <select 
+                        value={billExpFilters.activityId} 
+                        onChange={(e) => setBillExpFilters({...billExpFilters, activityId: e.target.value, subActivityId: ''})}
+                        className="text-[10px] p-1 border rounded bg-white"
+                      >
+                        <option value="">All Activities</option>
+                        {activities.filter(a => !billExpFilters.sectorId || a.sectorId === billExpFilters.sectorId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                      <select 
+                        value={billExpFilters.subActivityId} 
+                        onChange={(e) => setBillExpFilters({...billExpFilters, subActivityId: e.target.value})}
+                        className="text-[10px] p-1 border rounded bg-white"
+                      >
+                        <option value="">All Sub-Activities</option>
+                        {subActivities.filter(sa => !billExpFilters.activityId || sa.activityId === billExpFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+
+                    <div className={`${isBillFormFullScreen ? 'max-h-[60vh]' : 'max-h-60'} overflow-y-auto border rounded divide-y bg-gray-50 custom-scrollbar`}>
+                      {expenses
+                        .filter(e => e.status === 'approved' && e.financialYear === selectedFY)
+                        .filter(e => {
+                          const isAlreadyInBill = bills.some(b => b.expenseIds.includes(e.id) && b.id !== editingItem?.item?.id);
+                          if (isAlreadyInBill) return false;
+                          
+                          // SOE Restriction
+                          if (lockedSoeId && e.soeId !== lockedSoeId) return false;
+
+                          const al = allocations.find(a => a.id === e.allocationId);
+                          if (billExpFilters.rangeId && al?.rangeId !== billExpFilters.rangeId) return false;
+                          if (billExpFilters.soeId && e.soeId !== billExpFilters.soeId) return false;
+                          if (billExpFilters.schemeId && al?.schemeId !== billExpFilters.schemeId) return false;
+                          if (billExpFilters.sectorId && al?.sectorId !== billExpFilters.sectorId) return false;
+                          if (billExpFilters.activityId && al?.activityId !== billExpFilters.activityId) return false;
+                          if (billExpFilters.subActivityId && al?.subActivityId !== billExpFilters.subActivityId) return false;
+                          
+                          return true;
+                        })
+                        .map(exp => {
+                          const s = soes.find(s => s.id === exp.soeId);
+                          const al = allocations.find(a => a.id === exp.allocationId);
+                          const r = ranges.find(r => r.id === al?.rangeId);
+                          const isSelected = selectedExpensesForBill.includes(exp.id);
+                          
+                          let hierarchy = '';
+                          if (al?.subActivityId) {
+                            const sa = subActivities.find(sa => sa.id === al.subActivityId);
+                            const act = activities.find(a => a.id === sa?.activityId);
+                            const sec = sectors.find(sec => sec.id === act?.sectorId);
+                            const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                            hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
+                          } else if (al?.activityId) {
+                            const act = activities.find(a => a.id === al.activityId);
+                            const sec = sectors.find(sec => sec.id === act?.sectorId);
+                            const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+                            hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                          }
+
+                          return (
+                            <div 
+                              key={exp.id} 
+                              onClick={() => {
+                                if (isSelected) {
+                                  setSelectedExpensesForBill(selectedExpensesForBill.filter(id => id !== exp.id));
+                                } else {
+                                  setSelectedExpensesForBill([...selectedExpensesForBill, exp.id]);
+                                }
+                              }}
+                              className={`p-2 text-[10px] cursor-pointer transition-colors flex items-start gap-2 ${isSelected ? 'bg-emerald-50 border-l-2 border-emerald-500' : 'hover:bg-white'}`}
+                            >
+                              <div className={`mt-0.5 w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 ${isSelected ? 'bg-emerald-500 border-emerald-500 text-white' : 'bg-white border-gray-300'}`}>
+                                {isSelected && <Check className="w-3 h-3" />}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-start mb-1">
+                                  <span className="font-bold text-gray-900">{exp.date.split('-').reverse().join('/')}</span>
+                                  <span className="font-bold text-emerald-600">₹{exp.amount.toLocaleString()}</span>
+                                </div>
+                                <div className="text-gray-600 font-medium mb-1">Range: {r?.name} | SOE: {s?.name}</div>
+                                <div className="text-gray-500 text-[9px] mb-1 italic">{hierarchy}</div>
+                                <div className="text-gray-400 truncate">{exp.description}</div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      {expenses.filter(e => e.status === 'approved' && e.financialYear === selectedFY).length === 0 && (
+                        <div className="p-4 text-center text-gray-500 italic text-xs">No approved expenditures available.</div>
+                      )}
+                    </div>
+                    <div className="mt-2 p-2 bg-gray-50 rounded flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-gray-600 uppercase">
+                        {selectedExpensesForBill.length} Selected
+                      </span>
+                      <span className="text-xs font-bold text-emerald-700">
+                        Total: ₹{expenses.filter(e => selectedExpensesForBill.includes(e.id)).reduce((sum, e) => sum + e.amount, 0).toLocaleString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>,
+                (item) => {
+                  setEditingItem({ type: 'Bill', item });
+                  setSelectedExpensesForBill(item.expenseIds);
+                },
+                (item) => (userRole === 'admin' || (userRole === 'deo' && item.status === 'draft')),
+                undefined,
+                (item) => (
+                  <div className="flex gap-1">
                     <button 
-                      onClick={() => handleUpdateExpenseStatus(item.id, 'pending', false)}
-                      className="text-orange-600 hover:text-orange-800 p-1 border border-orange-100 rounded bg-orange-50"
-                      title="Unlock"
+                      onClick={() => handleDownloadBill(item)}
+                      className="p-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
+                      title="Download Bill PDF"
                     >
-                      <Lock className="w-4 h-4" />
+                      <Download className="w-4 h-4" />
                     </button>
-                  )}
-                </div>
-              ),
-              false,
-              isExpFilterExpanded,
-              setIsExpFilterExpanded,
-              <>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
-                  <select 
-                    value={expFilters.schemeId}
-                    onChange={(e) => setExpFilters({ ...expFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '' })}
+                    {(userRole === 'admin' || userRole === 'deo') && (
+                      <button 
+                        onClick={() => {
+                          const newStatus = item.status === 'draft' ? 'finalized' : 'draft';
+                          updateDoc(doc(db, 'bills', item.id), { status: newStatus, updatedAt: Date.now() });
+                        }}
+                        className={`p-1 border rounded ${item.status === 'finalized' ? 'text-blue-600 border-blue-100 bg-blue-50' : 'text-emerald-600 border-emerald-100 bg-emerald-50'}`}
+                        title={item.status === 'finalized' ? 'Mark as Draft' : 'Finalize Bill'}
+                      >
+                        {item.status === 'finalized' ? <RefreshCcw className="w-4 h-4" /> : <Check className="w-4 h-4" />}
+                      </button>
+                    )}
+                  </div>
+                ),
+                false,
+                isExpFilterExpanded,
+                setIsExpFilterExpanded,
+                <>
+                  <input 
+                    type="text" 
+                    placeholder="Bill Number..." 
+                    value={billFilters.billNo}
+                    onChange={(e) => setBillFilters({ ...billFilters, billNo: e.target.value })}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  >
-                    <option value="">All Schemes</option>
-                    {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
-                  <select 
-                    value={expFilters.sectorId}
-                    onChange={(e) => setExpFilters({ ...expFilters, sectorId: e.target.value, activityId: '', subActivityId: '' })}
-                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  >
-                    <option value="">All Sectors</option>
-                    {sectors.filter(s => !expFilters.schemeId || s.schemeId === expFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
-                  <select 
-                    value={expFilters.activityId}
-                    onChange={(e) => setExpFilters({ ...expFilters, activityId: e.target.value, subActivityId: '' })}
-                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  >
-                    <option value="">All Activities</option>
-                    {activities.filter(a => {
-                      if (expFilters.sectorId) return a.sectorId === expFilters.sectorId;
-                      if (expFilters.schemeId) return a.schemeId === expFilters.schemeId || sectors.find(s => s.id === a.sectorId)?.schemeId === expFilters.schemeId;
-                      return true;
-                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
-                  <select 
-                    value={expFilters.subActivityId}
-                    onChange={(e) => setExpFilters({ ...expFilters, subActivityId: e.target.value })}
-                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  >
-                    <option value="">All Sub-Activities</option>
-                    {subActivities.filter(sa => !expFilters.activityId || sa.activityId === expFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
-                  <select 
-                    value={expFilters.rangeId}
-                    onChange={(e) => setExpFilters({ ...expFilters, rangeId: e.target.value })}
-                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  >
-                    <option value="">All Ranges</option>
-                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-              </>,
-              () => {
-                setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
-                setSearchTerm('');
-              }
-            )}
+                  />
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bill Date Range</label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="date" 
+                        value={billFilters.startDate} 
+                        onChange={(e) => setBillFilters({ ...billFilters, startDate: e.target.value })}
+                        className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                      />
+                      <input 
+                        type="date" 
+                        value={billFilters.endDate} 
+                        onChange={(e) => setBillFilters({ ...billFilters, endDate: e.target.value })}
+                        className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+                </>,
+                () => setBillFilters({ billNo: '', startDate: '', endDate: '' }),
+                isBillFormFullScreen,
+                setIsBillFormFullScreen
+              );
+            })()
+            }
           </div>
         )}
 
@@ -5765,7 +6538,25 @@ export default function App() {
                   {showLedgerFilters ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                 </button>
               </div>
-              <span className="text-sm font-medium text-emerald-600">FY {fys.find(f => f.id === selectedFY)?.name || selectedFY}</span>
+              <div className="flex items-center gap-3">
+                <button 
+                  onClick={downloadLedgerPDF}
+                  className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+                  title="Download PDF"
+                >
+                  <FileText className="w-4 h-4" />
+                  <span>PDF</span>
+                </button>
+                <button 
+                  onClick={downloadLedgerExcel}
+                  className="flex items-center gap-2 px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+                  title="Download Excel"
+                >
+                  <FileBarChart className="w-4 h-4" />
+                  <span>Excel</span>
+                </button>
+                <span className="text-sm font-medium text-emerald-600">FY {fys.find(f => f.id === selectedFY)?.name || selectedFY}</span>
+              </div>
             </div>
 
             {showLedgerFilters && (

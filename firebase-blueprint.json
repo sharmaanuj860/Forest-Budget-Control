@@ -148,6 +148,23 @@
         "role": { "type": "string", "enum": ["admin", "deo"], "description": "The user's role" }
       },
       "required": ["email", "role"]
+    },
+    "Bill": {
+      "title": "Bill",
+      "description": "Represents a treasury bill containing multiple expenditures",
+      "type": "object",
+      "properties": {
+        "billNo": { "type": "string", "description": "The bill number" },
+        "billDate": { "type": "string", "description": "The date of the bill" },
+        "expenseIds": { "type": "array", "items": { "type": "string" }, "description": "List of expenditure IDs" },
+        "fyId": { "type": "string", "description": "ID of the financial year" },
+        "financialYear": { "type": "string", "description": "Name of the financial year" },
+        "totalAmount": { "type": "number", "description": "Total amount of the bill" },
+        "status": { "type": "string", "enum": ["draft", "finalized"], "description": "Status of the bill" },
+        "remarks": { "type": "string", "description": "Optional remarks" },
+        "createdBy": { "type": "string", "description": "UID of the user who created the bill" }
+      },
+      "required": ["billNo", "billDate", "expenseIds", "fyId", "financialYear", "totalAmount", "status"]
     }
   },
   "firestore": {
@@ -162,6 +179,7 @@
     "/treasuryReceipts": { "schema": "TreasuryReceipt", "description": "Collection of physical cash receipts" },
     "/allocations": { "schema": "Allocation", "description": "Collection of budget allocations" },
     "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
-    "/users": { "schema": "User", "description": "Collection of application users" }
+    "/users": { "schema": "User", "description": "Collection of application users" },
+    "/bills": { "schema": "Bill", "description": "Collection of treasury bills" }
   }
 }

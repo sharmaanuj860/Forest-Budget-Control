@@ -126,5 +126,12 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow write: if isAuthenticated() && (isAdmin() || isApprover());
     }
+
+    match /bills/{id} {
+      allow read: if isAuthenticated();
+      allow create: if canWrite();
+      allow update: if isAdmin() || (isDEO() && resource.data.status == 'draft');
+      allow delete: if isAdmin() || (isDEO() && resource.data.status == 'draft');
+    }
   }
 }
