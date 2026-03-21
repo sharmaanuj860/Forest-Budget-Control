@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -240,6 +240,7 @@ export default function App() {
   const [billFilters, setBillFilters] = useState({ billNo: '', startDate: '', endDate: '' });
   const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [isBillFormFullScreen, setIsBillFormFullScreen] = useState(false);
+  const [viewingBillPdf, setViewingBillPdf] = useState<{ url: string; bill: any } | null>(null);
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
@@ -1364,7 +1365,7 @@ export default function App() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trendData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                  <XAxis dataKey="date" axisLine={false} tickLine={false} tickFormatter={(val) => val.split('-').reverse().slice(0, 2).join('/')} />
+                  <XAxis dataKey="date" axisLine={false} tickLine={false} tickFormatter={(val) => val && typeof val === 'string' ? val.split('-').reverse().slice(0, 2).join('/') : ''} />
                   <YAxis axisLine={false} tickLine={false} tickFormatter={(val) => `₹${val/1000}k`} />
                   <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
                   <Legend />
@@ -3813,7 +3814,7 @@ export default function App() {
     }
   };
 
-  const handleDownloadBill = async (bill: Bill) => {
+  const generateBillPdf = (bill: Bill) => {
     const doc = new jsPDF();
     const activeFy = fys.find(f => f.id === bill.fyId || f.name === bill.financialYear);
     
@@ -3825,7 +3826,7 @@ export default function App() {
     
     doc.setFontSize(11);
     doc.text(`Bill No: ${bill.billNo}`, 15, 35);
-    doc.text(`Bill Date: ${bill.billDate.split('-').reverse().join('/')}`, 15, 42);
+    doc.text(`Bill Date: ${bill.billDate ? bill.billDate.split('-').reverse().join('/') : 'N/A'}`, 15, 42);
     if (bill.remarks) {
       doc.text(`Remarks: ${bill.remarks}`, 15, 49);
     }
@@ -3853,7 +3854,7 @@ export default function App() {
 
       return [
         index + 1,
-        exp.date.split('-').reverse().join('/'),
+        exp.date ? exp.date.split('-').reverse().join('/') : 'N/A',
         r?.name || 'N/A',
         s?.name || 'N/A',
         hierarchy,
@@ -3878,7 +3879,19 @@ export default function App() {
     doc.setFontSize(12);
     doc.text(`Total Amount: Rs. ${bill.totalAmount.toLocaleString()}`, 195, finalY + 10, { align: 'right' });
 
+    return doc;
+  };
+
+  const handleDownloadBill = async (bill: Bill) => {
+    const doc = generateBillPdf(bill);
     doc.save(`bill_${bill.billNo}.pdf`);
+  };
+
+  const handleViewBill = (bill: Bill) => {
+    const doc = generateBillPdf(bill);
+    const blob = doc.output('blob');
+    const url = URL.createObjectURL(blob);
+    setViewingBillPdf({ url, bill });
   };
 
   const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
@@ -6271,7 +6284,7 @@ export default function App() {
                           return (
                             <div key={id} className="text-[9px] flex justify-between items-center bg-white p-1 rounded border border-gray-100">
                               <span className="truncate flex-1">
-                                {exp.date.split('-').reverse().join('/')} - {s?.name} - ₹{exp.amount.toLocaleString()}
+                                {exp.date ? exp.date.split('-').reverse().join('/') : 'N/A'} - {s?.name} - ₹{exp.amount.toLocaleString()}
                               </span>
                               {(userRole === 'admin' || (userRole === 'deo' && item.status === 'draft')) && (
                                 <button 
@@ -6421,7 +6434,7 @@ export default function App() {
                               </div>
                               <div className="flex-1 min-w-0">
                                 <div className="flex justify-between items-start mb-1">
-                                  <span className="font-bold text-gray-900">{exp.date.split('-').reverse().join('/')}</span>
+                                  <span className="font-bold text-gray-900">{exp.date ? exp.date.split('-').reverse().join('/') : 'N/A'}</span>
                                   <span className="font-bold text-emerald-600">₹{exp.amount.toLocaleString()}</span>
                                 </div>
                                 <div className="text-gray-600 font-medium mb-1">Range: {r?.name} | SOE: {s?.name}</div>
@@ -6453,6 +6466,13 @@ export default function App() {
                 undefined,
                 (item) => (
                   <div className="flex gap-1">
+                    <button 
+                      onClick={() => handleViewBill(item)}
+                      className="p-1 border border-gray-200 rounded text-emerald-600 hover:bg-emerald-50"
+                      title="View Bill PDF"
+                    >
+                      <Eye className="w-4 h-4" />
+                    </button>
                     <button 
                       onClick={() => handleDownloadBill(item)}
                       className="p-1 border border-gray-200 rounded text-gray-600 hover:bg-gray-50"
@@ -6828,6 +6848,71 @@ export default function App() {
                     Confirm
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* PDF Viewer Modal */}
+        {viewingBillPdf && (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden animate-in zoom-in duration-300">
+              <div className="bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Bill PDF Viewer</h3>
+                    <p className="text-xs text-emerald-100">Bill No: {viewingBillPdf.bill.billNo} | Date: {viewingBillPdf.bill.billDate ? viewingBillPdf.bill.billDate.split('-').reverse().join('/') : 'N/A'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = viewingBillPdf.url;
+                      link.download = `bill_${viewingBillPdf.bill.billNo}.pdf`;
+                      link.click();
+                    }}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                    title="Download PDF"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden sm:inline">Download</span>
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const printWindow = window.open(viewingBillPdf.url);
+                      if (printWindow) printWindow.print();
+                    }}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                    title="Print PDF"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span className="hidden sm:inline">Print</span>
+                  </button>
+                  <div className="w-px h-6 bg-white/20 mx-1"></div>
+                  <button 
+                    onClick={() => {
+                      URL.revokeObjectURL(viewingBillPdf.url);
+                      setViewingBillPdf(null);
+                    }}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+              <div className="flex-1 bg-gray-100 p-4 overflow-hidden">
+                <iframe 
+                  src={`${viewingBillPdf.url}#toolbar=0`} 
+                  className="w-full h-full rounded-lg border border-gray-200 shadow-inner bg-white"
+                  title="Bill PDF"
+                />
+              </div>
+              <div className="bg-gray-50 p-3 border-t flex justify-center text-[10px] text-gray-400 font-medium uppercase tracking-widest">
+                Forest Budget Control System • Treasury Bill Format
               </div>
             </div>
           </div>
