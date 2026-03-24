@@ -289,6 +289,91 @@ export default function App() {
   const [isExpFilterExpanded, setIsExpFilterExpanded] = useState(false);
   const [isAllocFilterExpanded, setIsAllocFilterExpanded] = useState(false);
   const [isSoeFilterExpanded, setIsSoeFilterExpanded] = useState(false);
+  const [openDropdown, setOpenDropdown] = useState<string | null>(null);
+
+  const menuItems = useMemo<({ name: string; icon: React.ReactNode; children?: { name: string; icon: React.ReactNode }[] })[]>(() => {
+    const adminItems = [
+      { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Financial Years', icon: <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Ranges', icon: <Map className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Manage Scheme', 
+        icon: <Landmark className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Schemes', icon: <TreePine className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Sectors', icon: <Shield className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Activities', icon: <Activity className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Sub-Activities', icon: <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'SOE Heads', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Manage Budget', 
+        icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Surrender', icon: <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'Reconciliation', icon: <RefreshCcw className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Reports', 
+        icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'Users', icon: <User className="w-3 h-3 sm:w-4 sm:h-4" /> }
+    ];
+
+    const daItems = [
+      { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Manage Budget', 
+        icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'Reconciliation', icon: <RefreshCcw className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Reports', 
+        icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      }
+    ];
+
+    const otherItems = [
+      { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Manage Budget', 
+        icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Surrender', icon: <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { 
+        name: 'Reports', 
+        icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      }
+    ];
+
+    if (userRole === 'admin') return adminItems;
+    if (userRole === 'DA') return daItems;
+    return otherItems;
+  }, [userRole]);
 
     // Auto-collapse filters and reset all filters on tab change
     useEffect(() => {
@@ -3403,7 +3488,7 @@ export default function App() {
 
                     return (b.updatedAt || 0) - (a.updatedAt || 0);
                   })
-                  .slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage)
+                  .slice((currentPage - 1) * itemsPerPage, itemsPerPage === -1 ? filteredItems.length : currentPage * itemsPerPage)
                   .map((s, index) => {
                   const allocated = allocations.reduce((sum, a) => {
                     const funded = a.fundedSOEs?.find(f => f.soeId === s.id);
@@ -3446,19 +3531,21 @@ export default function App() {
             itemsPerPage={itemsPerPage} 
             onPageChange={setCurrentPage} 
           />
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs text-gray-500">Entries per page:</span>
-            <select 
-              value={itemsPerPage} 
-              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-              className="p-1 border rounded text-xs bg-white"
-            >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={-1}>All</option>
-            </select>
-          </div>
+          {filteredItems.length > 25 && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs text-gray-500">Entries per page:</span>
+              <select 
+                value={itemsPerPage} 
+                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                className="p-1 border rounded text-xs bg-white"
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={-1}>All</option>
+              </select>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -3687,6 +3774,21 @@ export default function App() {
           itemsPerPage={itemsPerPage} 
           onPageChange={setCurrentPage} 
         />
+        {filteredItems.length > 25 && (
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-gray-500">Entries per page:</span>
+            <select 
+              value={itemsPerPage} 
+              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+              className="p-1 border rounded text-xs bg-white"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={-1}>All</option>
+            </select>
+          </div>
+        )}
       </div>
     </div>
     </div>
@@ -6257,7 +6359,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-6 font-sans text-gray-800">
-      <div className="max-w-7xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6 overflow-visible">
         
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-3 md:p-4 rounded-xl shadow-sm border border-gray-200">
@@ -6348,7 +6450,7 @@ export default function App() {
         </div>
 
         {/* Navigation */}
-        <div className="bg-gray-800 rounded-lg shadow-sm mb-6 overflow-hidden sticky top-0 z-50">
+        <div className="bg-gray-800 rounded-lg shadow-sm mb-6 sticky top-0 z-50 overflow-visible">
           <div className="lg:hidden flex items-center justify-between p-4 border-b border-gray-700">
             <span className="text-white font-medium">Menu: {activeTab}</span>
             <button 
@@ -6359,47 +6461,72 @@ export default function App() {
             </button>
           </div>
           
-          <div className={`${menuOpen ? 'grid' : 'hidden'} lg:flex grid-cols-2 sm:grid-cols-3 lg:flex-row flex-wrap gap-1 p-2`}>
-            {(userRole === 'admin' ? [
-              'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
-              'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Surrender', 'Ledger', 'Reports', 'Users'
-            ] : userRole === 'DA' ? [
-              'Dashboard', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports'
-            ] : [
-              'Dashboard', 'Allocations', 'Expenditures', 'Surrender', 'Ledger', 'Reports'
-            ]).map((item) => (
-              <button 
-                key={item} 
-                id={`tab-${item}`}
-                onClick={() => {
-                  setActiveTab(item);
-                  setSearchTerm('');
-                  setEditingItem(null);
-                  setMenuOpen(false);
-                  setIsFormExpanded(window.innerWidth > 1024);
-                  setCurrentPage(1);
-                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-              >
-                {item === 'Dashboard' && <Home className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Financial Years' && <Calendar className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Ranges' && <Map className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Schemes' && <TreePine className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Sectors' && <Shield className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Activities' && <Activity className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Sub-Activities' && <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'SOE Heads' && <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Allocations' && <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Reconciliation' && <RefreshCcw className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Expenditures' && <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Surrender' && <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Ledger' && <FileText className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Reports' && <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Users' && <User className="w-3 h-3 sm:w-4 sm:h-4" />}
-                <span className="truncate">{item}</span>
-              </button>
-            ))}
+          <div className={`${menuOpen ? 'grid' : 'hidden'} lg:flex grid-cols-2 sm:grid-cols-3 lg:flex-row flex-wrap gap-1 p-2 overflow-visible`}>
+            {menuItems.map((item) => {
+              if (!item.children) {
+                return (
+                  <button 
+                    key={item.name} 
+                    id={`tab-${item.name}`}
+                    onClick={() => {
+                      setActiveTab(item.name);
+                      setSearchTerm('');
+                      setEditingItem(null);
+                      setMenuOpen(false);
+                      setIsFormExpanded(window.innerWidth > 1024);
+                      setCurrentPage(1);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item.name ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                  >
+                    {item.icon}
+                    <span className="truncate">{item.name}</span>
+                  </button>
+                );
+              } else {
+                const isActive = item.children.some(child => child.name === activeTab);
+                const isOpen = openDropdown === item.name;
+                return (
+                  <div 
+                    key={item.name}
+                    className={`relative group ${isOpen ? 'z-[60]' : 'z-10'} hover:z-[60]`}
+                    onMouseEnter={() => setOpenDropdown(item.name)}
+                    onMouseLeave={() => setOpenDropdown(null)}
+                  >
+                    <button 
+                      onClick={() => setOpenDropdown(isOpen ? null : item.name)}
+                      className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 w-full ${isActive ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                    >
+                      {item.icon}
+                      <span className="truncate">{item.name}</span>
+                      <ChevronDown className={`w-3 h-3 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </button>
+                    
+                    <div className={`absolute top-full left-0 bg-gray-800 border border-gray-700 rounded shadow-xl min-w-[180px] z-[100] ${isOpen ? 'block' : 'hidden'} group-hover:block`}>
+                      {item.children.map(child => (
+                        <button
+                          key={child.name}
+                          onClick={() => {
+                            setActiveTab(child.name);
+                            setSearchTerm('');
+                            setEditingItem(null);
+                            setMenuOpen(false);
+                            setOpenDropdown(null);
+                            setIsFormExpanded(window.innerWidth > 1024);
+                            setCurrentPage(1);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                          }}
+                          className={`w-full px-4 py-2.5 text-xs sm:text-sm font-medium text-left flex items-center gap-2 hover:bg-gray-700 transition-colors ${activeTab === child.name ? 'text-emerald-400 bg-gray-700/50' : 'text-gray-300'}`}
+                        >
+                          {child.icon}
+                          {child.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              }
+            })}
           </div>
         </div>
 
@@ -8242,11 +8369,13 @@ function Pagination({
   itemsPerPage: number, 
   onPageChange: (page: number) => void 
 }) {
-  const totalPages = Math.ceil(totalEntries / itemsPerPage);
-  if (totalPages <= 1) return null;
+  const isAll = itemsPerPage === -1;
+  const totalPages = isAll ? 1 : Math.ceil(totalEntries / itemsPerPage);
+  
+  if (totalPages <= 1 && totalEntries <= itemsPerPage && !isAll) return null;
 
-  const startEntry = (currentPage - 1) * itemsPerPage + 1;
-  const endEntry = Math.min(currentPage * itemsPerPage, totalEntries);
+  const startEntry = isAll ? 1 : (currentPage - 1) * itemsPerPage + 1;
+  const endEntry = isAll ? totalEntries : Math.min(currentPage * itemsPerPage, totalEntries);
 
   const pages = [];
   const maxVisiblePages = 5;
@@ -8267,59 +8396,61 @@ function Pagination({
       <p className="text-sm text-gray-600">
         Showing <span className="font-medium">{startEntry}</span> to <span className="font-medium">{endEntry}</span> of <span className="font-medium">{totalEntries}</span> entries
       </p>
-      <div className="flex items-center gap-1">
-        <button 
-          onClick={() => onPageChange(1)} 
-          disabled={currentPage === 1}
-          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="First Page"
-        >
-          <ChevronsLeft className="w-4 h-4" />
-        </button>
-        <button 
-          onClick={() => onPageChange(currentPage - 1)} 
-          disabled={currentPage === 1}
-          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="Previous Page"
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        
-        {startPage > 1 && <span className="px-2 text-gray-400">...</span>}
-        
-        {pages.map(page => (
-          <button
-            key={page}
-            onClick={() => onPageChange(page)}
-            className={`min-w-[32px] h-8 flex items-center justify-center rounded border text-sm font-medium transition-colors ${
-              currentPage === page 
-                ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' 
-                : 'hover:bg-gray-50 text-gray-600 border-gray-200'
-            }`}
+      {!isAll && totalPages > 1 && (
+        <div className="flex items-center gap-1">
+          <button 
+            onClick={() => onPageChange(1)} 
+            disabled={currentPage === 1}
+            className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="First Page"
           >
-            {page}
+            <ChevronsLeft className="w-4 h-4" />
           </button>
-        ))}
-        
-        {endPage < totalPages && <span className="px-2 text-gray-400">...</span>}
-        
-        <button 
-          onClick={() => onPageChange(currentPage + 1)} 
-          disabled={currentPage === totalPages}
-          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="Next Page"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
-        <button 
-          onClick={() => onPageChange(totalPages)} 
-          disabled={currentPage === totalPages}
-          className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          title="Last Page"
-        >
-          <ChevronsRight className="w-4 h-4" />
-        </button>
-      </div>
+          <button 
+            onClick={() => onPageChange(currentPage - 1)} 
+            disabled={currentPage === 1}
+            className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Previous Page"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </button>
+          
+          {startPage > 1 && <span className="px-2 text-gray-400">...</span>}
+          
+          {pages.map(page => (
+            <button
+              key={page}
+              onClick={() => onPageChange(page)}
+              className={`min-w-[32px] h-8 flex items-center justify-center rounded border text-sm font-medium transition-colors ${
+                currentPage === page 
+                  ? 'bg-emerald-50 border-emerald-500 text-emerald-700 shadow-sm' 
+                  : 'hover:bg-gray-50 text-gray-600 border-gray-200'
+              }`}
+            >
+              {page}
+            </button>
+          ))}
+          
+          {endPage < totalPages && <span className="px-2 text-gray-400">...</span>}
+          
+          <button 
+            onClick={() => onPageChange(currentPage + 1)} 
+            disabled={currentPage === totalPages}
+            className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Next Page"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button 
+            onClick={() => onPageChange(totalPages)} 
+            disabled={currentPage === totalPages}
+            className="p-1.5 rounded border hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            title="Last Page"
+          >
+            <ChevronsRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
