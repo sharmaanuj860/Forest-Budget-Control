@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
-  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail,
+  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence,
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction
 } from './firebase';
 import { jsPDF } from 'jspdf';
@@ -90,7 +90,24 @@ type Bill = {
   remarks?: string;
 };
 
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'; password?: string };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division'; password?: string };
+
+type Surrender = {
+  id: string;
+  rangeId: string;
+  schemeId: string;
+  sectorId: string;
+  activityId: string;
+  subActivityId: string;
+  soeId: string;
+  amount: number;
+  date: string;
+  remarks: string;
+  fyId: string;
+  financialYear: string;
+  createdAt: number;
+  updatedAt: number;
+};
 
 enum OperationType {
   CREATE = 'create',
@@ -199,9 +216,21 @@ export default function App() {
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
   const [showReconSummary, setShowReconSummary] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh' | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | null>(null);
   const [loading, setLoading] = useState(true);
   const [fundingAllocation, setFundingAllocation] = useState<Allocation | null>(null);
+  const [isSoesLoaded, setIsSoesLoaded] = useState(false);
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setUser(null);
+      setUserRole(null);
+      setActiveTab('Dashboard');
+    } catch (error) {
+      console.error("Logout error:", error);
+    }
+  };
 
   const [alertModal, setAlertModal] = useState<{ isOpen: boolean; message: string }>({ isOpen: false, message: '' });
   const [confirmModal, setConfirmModal] = useState<{ isOpen: boolean; message: string; onConfirm: () => void }>({ isOpen: false, message: '', onConfirm: () => {} });
@@ -218,7 +247,8 @@ export default function App() {
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [subActivities, setSubActivities] = useState<SubActivity[]>([]);
   const [soes, setSoes] = useState<SOE[]>([]);
-  const [isSoesLoaded, setIsSoesLoaded] = useState(false);
+  const [surrenders, setSurrenders] = useState<Surrender[]>([]);
+  const [surrenderFilters, setSurrenderFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const hasSeeded = React.useRef(false);
 
   const [allocations, setAllocations] = useState<Allocation[]>([]);
@@ -227,7 +257,7 @@ export default function App() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh'>('deo');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division'>('deo');
   const [visiblePasswords, setVisiblePasswords] = useState<{[key: string]: boolean}>({});
   const [editingPasswordId, setEditingPasswordId] = useState<string | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
@@ -288,7 +318,9 @@ export default function App() {
       setShowLedgerFilters(false);
     }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
+  const [surrenderFormSelection, setSurrenderFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
+  const [showDetailedReport, setShowDetailedReport] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
   const [reconSchemeId, setReconSchemeId] = useState('');
   const [reconSearchTerm, setReconSearchTerm] = useState('');
@@ -296,6 +328,7 @@ export default function App() {
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
+  const [viewingSoeExp, setViewingSoeExp] = useState<{ soeId: string; soeName: string; hierarchy: string } | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
   useEffect(() => {
@@ -308,6 +341,9 @@ export default function App() {
 
   // --- Auth & Role Check ---
   useEffect(() => {
+    // Set persistence to session only - will require login if app is closed
+    setPersistence(auth, browserSessionPersistence).catch(err => console.error("Persistence error:", err));
+
     async function testConnection() {
       try {
         await getDocFromServer(doc(db, 'test', 'connection'));
@@ -382,7 +418,7 @@ export default function App() {
 
   // --- Session Expiry Logic ---
   useEffect(() => {
-    if (!user || userRole === 'admin') return;
+    if (!user) return;
 
     let timeoutId: any;
 
@@ -409,7 +445,7 @@ export default function App() {
         window.removeEventListener(event, resetTimer);
       });
     };
-  }, [user, userRole]);
+  }, [user]);
 
   // --- Real-time Data Sync (Master Data) ---
   useEffect(() => {
@@ -503,8 +539,17 @@ export default function App() {
       setBills(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'bills'));
 
+    const surrendersQuery = query(
+      collection(db, 'surrenders'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubSurrenders = onSnapshot(surrendersQuery, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Surrender));
+      setSurrenders(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'surrenders'));
+
     return () => {
-      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills();
+      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills(); unsubSurrenders();
     };
   }, [user, userRole, selectedFY, fys]);
 
@@ -627,37 +672,18 @@ export default function App() {
   };
 
 
-  const handleLogout = () => signOut(auth);
-
-  // --- Session Expiry ---
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-
-    const resetTimer = () => {
-      clearTimeout(timeoutId);
-      if (user) {
-        timeoutId = setTimeout(() => {
-          handleLogout();
-        }, 15 * 60 * 1000); // 15 minutes
-      }
-    };
-
-    if (user) {
-      resetTimer();
-      window.addEventListener('mousemove', resetTimer);
-      window.addEventListener('keydown', resetTimer);
-      window.addEventListener('click', resetTimer);
-      window.addEventListener('scroll', resetTimer);
+    if (ranges.length > 0 && !ranges.some(r => r.name === 'Division')) {
+      const addDivision = async () => {
+        try {
+          await addDoc(collection(db, 'ranges'), { name: 'Division', createdAt: Date.now(), updatedAt: Date.now() });
+        } catch (e) {
+          console.error("Error adding Division unit:", e);
+        }
+      };
+      addDivision();
     }
-
-    return () => {
-      clearTimeout(timeoutId);
-      window.removeEventListener('mousemove', resetTimer);
-      window.removeEventListener('keydown', resetTimer);
-      window.removeEventListener('click', resetTimer);
-      window.removeEventListener('scroll', resetTimer);
-    };
-  }, [user]);
+  }, [ranges]);
 
   // --- Derived Data / Helpers ---
   const currentSchemes = schemes;
@@ -666,7 +692,7 @@ export default function App() {
   const currentSubActivities = subActivities;
   const userRangeId = useMemo(() => {
     console.log('Calculating userRangeId. userRole:', userRole);
-    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh'].includes(userRole)) {
+    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Division'].includes(userRole)) {
       const r = ranges.find(r => r.name === userRole);
       console.log('Found range for role:', r);
       return r?.id;
@@ -794,8 +820,8 @@ export default function App() {
   }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId]);
 
   const comprehensiveReportData = useMemo(() => {
-    return currentAllocations.map(a => {
-      const allocExpenses = currentExpenses.filter(e => e.allocationId === a.id);
+    return baseAllocations.map(a => {
+      const allocExpenses = baseExpenses.filter(e => e.allocationId === a.id && e.status !== 'rejected');
       const totalExp = allocExpenses.reduce((sum, e) => sum + e.amount, 0);
       const range = ranges.find(r => r.id === a.rangeId);
       const scheme = schemes.find(s => s.id === a.schemeId);
@@ -814,7 +840,7 @@ export default function App() {
 
       return {
         id: a.id,
-        range: range?.name || 'Unknown',
+        range: range?.name === 'Rajgarh Forest Division' ? 'Division' : (range?.name || 'Unknown'),
         scheme: scheme?.name || 'Unknown',
         sector: sector?.name || 'Unknown',
         activity: activity?.name || 'Unknown',
@@ -825,14 +851,14 @@ export default function App() {
         soeBreakdown
       };
     });
-  }, [currentAllocations, currentExpenses, ranges, schemes, sectors, activities, subActivities, soes]);
+  }, [baseAllocations, baseExpenses, ranges, schemes, sectors, activities, subActivities, soes]);
 
   const allocationExpenditureData = useMemo(() => {
     return currentSoes.map(s => {
-      const soeAllocations = currentAllocations.filter(a => 
+      const soeAllocations = baseAllocations.filter(a => 
         a.fundedSOEs?.some(f => f.soeId === s.id)
       );
-      const soeExpenses = currentExpenses.filter(e => e.soeId === s.id);
+      const soeExpenses = baseExpenses.filter(e => e.soeId === s.id && e.status !== 'rejected');
       
       const totalAllocated = soeAllocations.reduce((sum, a) => {
         const funded = a.fundedSOEs?.find(f => f.soeId === s.id)?.amount || 0;
@@ -851,7 +877,7 @@ export default function App() {
         treasuryBalance: approvedBudget - totalAllocated
       };
     });
-  }, [currentSoes, currentAllocations, currentExpenses]);
+  }, [currentSoes, baseAllocations, baseExpenses]);
 
   const combinedReportData = useMemo(() => {
     return [...comprehensiveReportData, ...allocationExpenditureData];
@@ -943,7 +969,7 @@ export default function App() {
       doc.setFontSize(10);
       doc.text(`Financial Year: ${fys.find(f => f.id === selectedFY)?.name || selectedFY}`, 14, 22);
       
-      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Unit", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
       const body: any[] = [];
       
       filteredLedgerData.allocations.forEach(alloc => {
@@ -1027,7 +1053,7 @@ export default function App() {
       sheet.mergeCells(1, 1, 1, 8);
       titleRow.alignment = { horizontal: 'center' };
 
-      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Unit", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
       const headerRow = sheet.addRow(headers);
       headerRow.eachCell((cell) => {
         cell.font = { bold: true };
@@ -1174,6 +1200,108 @@ export default function App() {
     .filter(item => !userRangeId || item.allocated > 0)
     .sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
   }, [currentSoes, baseAllocations, baseExpenses, schemes, sectors, activities, subActivities, userRangeId]);
+
+  const surrenderBudgetStatus = useMemo(() => {
+    const { rangeId, schemeId, sectorId, activityId, subActivityId, soeId } = surrenderFormSelection;
+    if (!rangeId || !soeId) return null;
+
+    const relevantAllocations = baseAllocations.filter(a => 
+      a.rangeId === rangeId &&
+      a.schemeId === schemeId &&
+      (!sectorId || a.sectorId === sectorId) &&
+      (!activityId || a.activityId === activityId) &&
+      (!subActivityId || a.subActivityId === subActivityId)
+    );
+
+    let totalAllocated = 0;
+    let totalSpent = 0;
+
+    relevantAllocations.forEach(alloc => {
+      const funded = alloc.fundedSOEs?.find(f => f.soeId === soeId);
+      if (funded) {
+        totalAllocated += funded.amount;
+        const spent = baseExpenses.filter(e => 
+          e.allocationId === alloc.id && 
+          e.soeId === soeId &&
+          e.status !== 'rejected'
+        ).reduce((sum, e) => sum + e.amount, 0);
+        totalSpent += spent;
+      }
+    });
+
+    return {
+      allocated: totalAllocated,
+      spent: totalSpent,
+      balance: totalAllocated - totalSpent
+    };
+  }, [surrenderFormSelection, baseAllocations, baseExpenses]);
+
+  const masterControlData = useMemo(() => {
+    const map: Record<string, any> = {};
+    
+    baseAllocations.forEach(alloc => {
+      // Apply filters
+      if (reportFilters.scheme && alloc.schemeId !== reportFilters.scheme) return;
+      if (reportFilters.sector && alloc.sectorId !== reportFilters.sector) return;
+      if (reportFilters.activity && alloc.activityId !== reportFilters.activity) return;
+      if (reportFilters.subActivity && alloc.subActivityId !== reportFilters.subActivity) return;
+      if (reportFilters.range && alloc.rangeId !== reportFilters.range) return;
+
+      const range = ranges.find(r => r.id === alloc.rangeId);
+      const sch = schemes.find(s => s.id === alloc.schemeId);
+      const sec = sectors.find(s => s.id === alloc.sectorId);
+      const act = activities.find(a => a.id === alloc.activityId);
+      const sa = subActivities.find(s => s.id === alloc.subActivityId);
+      
+      alloc.fundedSOEs?.forEach(funded => {
+        if (reportFilters.soe && funded.soeId !== reportFilters.soe) return;
+
+        const key = `${alloc.rangeId}-${alloc.schemeId}-${alloc.sectorId}-${alloc.activityId}-${alloc.subActivityId}-${funded.soeId}`;
+        const spent = baseExpenses.filter(e => 
+          e.allocationId === alloc.id && 
+          e.soeId === funded.soeId &&
+          e.status !== 'rejected'
+        ).reduce((sum, e) => sum + e.amount, 0);
+        
+        if (map[key]) {
+          map[key].allocated += funded.amount;
+          map[key].expenditure += spent;
+          map[key].balance = map[key].allocated - map[key].expenditure;
+        } else {
+          const soe = soes.find(s => s.id === funded.soeId);
+          map[key] = {
+            rangeName: range?.name || 'N/A',
+            schemeName: sch?.name || 'N/A',
+            sectorName: sec?.name || 'N/A',
+            activityName: act?.name || 'N/A',
+            subActivityName: sa?.name || 'N/A',
+            soeName: soe?.name || 'N/A',
+            allocated: funded.amount,
+            expenditure: spent,
+            balance: funded.amount - spent
+          };
+        }
+      });
+    });
+    
+    let result = Object.values(map);
+    
+    if (reportSearchTerm) {
+      const lower = reportSearchTerm.toLowerCase();
+      result = result.filter((item: any) => 
+        item.rangeName.toLowerCase().includes(lower) ||
+        item.schemeName.toLowerCase().includes(lower) ||
+        item.soeName.toLowerCase().includes(lower) ||
+        item.activityName.toLowerCase().includes(lower)
+      );
+    }
+
+    return result.sort((a: any, b: any) => 
+      a.rangeName.localeCompare(b.rangeName) || 
+      a.schemeName.localeCompare(b.schemeName) || 
+      a.soeName.localeCompare(b.soeName)
+    );
+  }, [ranges, baseAllocations, baseExpenses, schemes, sectors, activities, subActivities, soes, reportFilters, reportSearchTerm]);
 
   const soeAbstractForAllocations = useMemo(() => {
     return soeAbstractData.filter(item => {
@@ -1560,13 +1688,13 @@ export default function App() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-2">
               <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Table className="h-5 w-5 text-gray-500" /> Range-wise Allocation Summary
+                <Table className="h-5 w-5 text-gray-500" /> Unit-wise Allocation Summary
               </h3>
               <div className="relative w-full md:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                 <input 
                   type="text" 
-                  placeholder="Search range..." 
+                  placeholder="Search unit..." 
                   value={rangeSearch}
                   onChange={(e) => setRangeSearch(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
@@ -1577,7 +1705,7 @@ export default function App() {
               <table className="w-full text-left border-collapse text-sm min-w-[800px]">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 font-semibold">
-                    <th className="p-3 border-b">Range</th>
+                    <th className="p-3 border-b">Unit</th>
                     <th className="p-3 border-b">Scheme</th>
                     <th className="p-3 border-b">Sector</th>
                     <th className="p-3 border-b">Activity</th>
@@ -1637,7 +1765,7 @@ export default function App() {
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
-                    <th className="p-3 border-b">Range</th>
+                    <th className="p-3 border-b">Unit</th>
                     <th className="p-3 border-b">SOE</th>
                     <th className="p-3 border-b text-right">Approval ID</th>
                     <th className="p-3 border-b text-right">Amount</th>
@@ -1716,7 +1844,7 @@ export default function App() {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
         <div className="flex justify-between items-center mb-4 border-b pb-2">
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Activity className="h-5 w-5 text-emerald-600" /> My Range Summary
+            <Activity className="h-5 w-5 text-emerald-600" /> My Unit Summary
           </h3>
         </div>
         <div className="overflow-x-auto max-h-80">
@@ -1744,7 +1872,7 @@ export default function App() {
               ))}
               {summaryData.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-4 text-center text-gray-500">No allocations found for your range.</td>
+                  <td colSpan={5} className="p-4 text-center text-gray-500">No allocations found for your unit.</td>
                 </tr>
               )}
             </tbody>
@@ -1854,8 +1982,23 @@ export default function App() {
     return hierarchy || 'Global (No Hierarchy)';
   };
 
+  const formatHierarchyText = (item: any) => {
+    const sch = schemes.find(sc => sc.id === item.schemeId);
+    const sec = sectors.find(sec => sec.id === item.sectorId);
+    const act = activities.find(a => a.id === item.activityId);
+    const sa = subActivities.find(sa => sa.id === item.subActivityId);
+
+    const parts = [];
+    if (sch) parts.push(`Scheme: ${sch.name}`);
+    if (sec) parts.push(`Sector: ${sec.name}`);
+    if (act) parts.push(`Activity: ${act.name}`);
+    if (sa) parts.push(`Sub-Activity: ${sa.name}`);
+
+    return parts.length > 0 ? parts.join(' | ') : 'Global (No Hierarchy)';
+  };
+
   const renderHierarchy = (item: any) => {
-    return <span className="text-xs text-gray-500">{getHierarchyText(item)}</span>;
+    return <span className="text-xs text-gray-500">{formatHierarchyText(item)}</span>;
   };
 
 
@@ -1972,7 +2115,7 @@ export default function App() {
                   <th className="px-4 py-3 font-bold border-r border-emerald-500">SOE Head</th>
                   <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Total Sanction (Approved)</th>
                   <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Received Budget (Try)</th>
-                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Allocated to Ranges</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Allocated to Units</th>
                   <th className="px-4 py-3 font-bold text-right">Balance to Allocate</th>
                 </tr>
               </thead>
@@ -2120,6 +2263,74 @@ export default function App() {
     );
   };
 
+  const renderSoeExpModal = () => {
+    if (!viewingSoeExp) return null;
+
+    const relevantExpenses = expenses.filter(e => e.soeId === viewingSoeExp.soeId && e.status !== 'rejected');
+    const total = relevantExpenses.reduce((sum, e) => sum + e.amount, 0);
+
+    return (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[200] p-4">
+        <div className="bg-white rounded-xl shadow-xl w-full max-w-4xl overflow-hidden animate-in zoom-in duration-200">
+          <div className="bg-emerald-600 p-4 text-white flex justify-between items-center">
+            <div>
+              <h3 className="font-bold">Expenditure Details</h3>
+              <div className="text-[10px] opacity-90 font-medium uppercase tracking-wider">{viewingSoeExp.hierarchy} | {viewingSoeExp.soeName}</div>
+            </div>
+            <button onClick={() => setViewingSoeExp(null)} className="hover:bg-emerald-700 p-1 rounded-full transition-colors">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="p-6">
+            <div className="overflow-y-auto max-h-[60vh]">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 text-gray-600 text-[10px] uppercase font-bold">
+                    <th className="p-2 border-b">Date</th>
+                    <th className="p-2 border-b">Approval ID</th>
+                    <th className="p-2 border-b">Description</th>
+                    <th className="p-2 border-b text-right">Amount</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {relevantExpenses.map(exp => (
+                    <tr key={exp.id} className="border-b hover:bg-gray-50 text-xs">
+                      <td className="p-2">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
+                      <td className="p-2 font-mono text-gray-500">{exp.approvalId ? `#${exp.approvalId}` : '-'}</td>
+                      <td className="p-2">{exp.description}</td>
+                      <td className="p-2 text-right font-bold text-red-600">₹{exp.amount.toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {relevantExpenses.length === 0 && (
+                    <tr>
+                      <td colSpan={4} className="p-8 text-center text-gray-500 italic">No expenditures found for this SOE Head.</td>
+                    </tr>
+                  )}
+                </tbody>
+                {relevantExpenses.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-gray-50 font-bold">
+                      <td colSpan={3} className="p-2 text-right text-gray-700">TOTAL EXPENDITURE:</td>
+                      <td className="p-2 text-right text-red-700">₹{total.toLocaleString()}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button 
+                onClick={() => setViewingSoeExp(null)}
+                className="bg-gray-100 text-gray-600 px-4 py-2 rounded-lg hover:bg-gray-200 transition-colors font-medium text-sm"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderFundingModal = () => {
     if (!fundingAllocation) return null;
 
@@ -2152,7 +2363,7 @@ export default function App() {
             <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
               <div className="text-xs text-gray-500 uppercase font-bold mb-2">Allocation Details</div>
               <div className="text-sm font-medium">{renderHierarchy(fundingAllocation)}</div>
-              <div className="text-xs text-gray-400 mt-1">Range: {ranges.find(r => r.id === fundingAllocation.rangeId)?.name}</div>
+              <div className="text-xs text-gray-400 mt-1">Unit: {ranges.find(r => r.id === fundingAllocation.rangeId)?.name}</div>
               <div className="mt-3 flex justify-between items-end">
                 <div>
                   <div className="text-[10px] text-gray-400 uppercase">Sanctioned</div>
@@ -2220,6 +2431,284 @@ export default function App() {
           </div>
         </div>
       </div>
+    );
+  };
+
+  const handleSurrender = async (e: any) => {
+    e.preventDefault();
+    const formData = new FormData(e.target);
+    const rangeId = formData.get('rangeId') as string;
+    const schemeId = formData.get('schemeId') as string;
+    const sectorId = formData.get('sectorId') as string;
+    const activityId = formData.get('activityId') as string;
+    const subActivityId = formData.get('subActivityId') as string;
+    const soeId = formData.get('soeId') as string;
+    const amount = Number(formData.get('amount'));
+    const remarks = formData.get('remarks') as string;
+    const date = formData.get('date') as string;
+
+    if (!rangeId || !soeId || amount <= 0) {
+      showAlert("Please fill all required fields and enter a valid amount.");
+      return;
+    }
+
+    const rangeAlloc = allocations.find(a => 
+      a.rangeId === rangeId && 
+      a.schemeId === schemeId && 
+      a.sectorId === sectorId && 
+      a.activityId === activityId && 
+      a.subActivityId === subActivityId &&
+      a.fundedSOEs.some(s => s.soeId === soeId)
+    );
+
+    if (!rangeAlloc) {
+      showAlert("No allocation found for this selection in the source unit.");
+      return;
+    }
+
+    const soeFund = rangeAlloc.fundedSOEs.find(s => s.soeId === soeId);
+    if (!soeFund || soeFund.amount < amount) {
+      showAlert("Surrender amount exceeds allocated amount in the source unit.");
+      return;
+    }
+
+    try {
+      const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
+      const fyId = activeFy ? activeFy.id : selectedFY;
+
+      // 1. Add Surrender record
+      await addDoc(collection(db, 'surrenders'), {
+        rangeId, schemeId, sectorId, activityId, subActivityId, soeId,
+        amount, date, remarks, fyId, financialYear: selectedFY,
+        createdAt: Date.now(), updatedAt: Date.now()
+      });
+
+      // 2. Decrease Source Unit Allocation
+      const updatedFundedSOEs = rangeAlloc.fundedSOEs.map(s => 
+        s.soeId === soeId ? { ...s, amount: s.amount - amount } : s
+      );
+      await updateDoc(doc(db, 'allocations', rangeAlloc.id), {
+        fundedSOEs: updatedFundedSOEs,
+        amount: rangeAlloc.amount - amount,
+        updatedAt: Date.now()
+      });
+
+      // 3. Increase Division Allocation
+      let division = ranges.find(r => r.name === 'Division' || r.name === 'Rajgarh Forest Division');
+      if (!division) {
+        // If Division doesn't exist, create it or use a default
+        const divRef = await addDoc(collection(db, 'ranges'), { name: 'Division', createdAt: Date.now(), updatedAt: Date.now() });
+        division = { id: divRef.id, name: 'Division' };
+      }
+
+      const divisionAlloc = allocations.find(a => 
+        a.rangeId === division.id && 
+        a.schemeId === schemeId && 
+        a.sectorId === sectorId && 
+        a.activityId === activityId && 
+        a.subActivityId === subActivityId
+      );
+
+      if (divisionAlloc) {
+        const divFundedSOEs = [...divisionAlloc.fundedSOEs];
+        const divSoeIndex = divFundedSOEs.findIndex(s => s.soeId === soeId);
+        if (divSoeIndex > -1) {
+          divFundedSOEs[divSoeIndex].amount += amount;
+        } else {
+          divFundedSOEs.push({ soeId, amount });
+        }
+        await updateDoc(doc(db, 'allocations', divisionAlloc.id), {
+          fundedSOEs: divFundedSOEs,
+          amount: divisionAlloc.amount + amount,
+          updatedAt: Date.now()
+        });
+      } else {
+        await addDoc(collection(db, 'allocations'), {
+          rangeId: division.id, schemeId, sectorId, activityId, subActivityId,
+          amount, status: 'Funded', fundedSOEs: [{ soeId, amount }],
+          fyId, financialYear: selectedFY, remarks: 'Surrendered from ' + (ranges.find(r => r.id === rangeId)?.name || 'Unknown Unit'),
+          createdAt: Date.now(), updatedAt: Date.now()
+        });
+      }
+
+      showAlert("Amount surrendered successfully to Division.");
+      setEditingItem(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, 'surrenders');
+    }
+  };
+
+  const renderSurrenderTab = () => {
+    const filteredSurrenders = surrenders.filter(s => {
+      const r = ranges.find(range => range.id === s.rangeId);
+      const sch = schemes.find(scheme => scheme.id === s.schemeId);
+      const soe = soes.find(soe => soe.id === s.soeId);
+
+      const matchesSearch = 
+        (r?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (sch?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (soe?.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (s.remarks || '').toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesFilters = 
+        (!surrenderFilters.rangeId || s.rangeId === surrenderFilters.rangeId) &&
+        (!surrenderFilters.schemeId || s.schemeId === surrenderFilters.schemeId) &&
+        (!surrenderFilters.sectorId || soe?.sectorId === surrenderFilters.sectorId) &&
+        (!surrenderFilters.activityId || soe?.activityId === surrenderFilters.activityId) &&
+        (!surrenderFilters.subActivityId || soe?.subActivityId === surrenderFilters.subActivityId) &&
+        (!surrenderFilters.soeId || s.soeId === surrenderFilters.soeId);
+
+      return matchesSearch && matchesFilters;
+    });
+
+    return renderSimpleManager(
+      'Surrender',
+      filteredSurrenders,
+      [
+        { key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : '' },
+        { key: 'rangeId', label: 'Unit', render: (val) => ranges.find(r => r.id === val)?.name || 'N/A' },
+        { key: 'soeId', label: 'SOE', render: (val) => soes.find(s => s.id === val)?.name || 'N/A' },
+        { key: 'amount', label: 'Amount', render: (val) => `₹${val.toLocaleString()}` },
+        { key: 'remarks', label: 'Remarks' }
+      ],
+      handleSurrender,
+      (id) => handleDelete('surrenders', id),
+      (
+        <div className="space-y-3">
+          <CascadingDropdowns 
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+            editingItem={editingItem} type="Surrender" userRangeId={userRangeId}
+            onSelectionChange={setSurrenderFormSelection}
+          >
+            {surrenderBudgetStatus && (
+              <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100 mb-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="text-center">
+                    <p className="text-[9px] font-bold text-emerald-800 uppercase">Allocated</p>
+                    <p className="text-xs font-bold text-emerald-700">₹{surrenderBudgetStatus.allocated.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center border-x border-emerald-100">
+                    <p className="text-[9px] font-bold text-red-800 uppercase">Spent</p>
+                    <p className="text-xs font-bold text-red-700">₹{surrenderBudgetStatus.spent.toLocaleString()}</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-[9px] font-bold text-blue-800 uppercase">Balance</p>
+                    <p className="text-xs font-bold text-blue-700">₹{surrenderBudgetStatus.balance.toLocaleString()}</p>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Date</label>
+              <input type="date" name="date" required className="w-full p-1.5 border rounded text-sm" defaultValue={editingItem?.type === 'Surrender' ? editingItem.item.date : new Date().toISOString().split('T')[0]} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Amount to Surrender</label>
+              <input type="number" name="amount" required defaultValue={editingItem?.type === 'Surrender' ? editingItem.item.amount : ''} placeholder="Amount" className="w-full p-1.5 border rounded text-sm" />
+            </div>
+            <div>
+              <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Remarks</label>
+              <textarea name="remarks" defaultValue={editingItem?.type === 'Surrender' ? editingItem.item.remarks : ''} placeholder="Remarks" className="w-full p-1.5 border rounded text-sm" rows={2}></textarea>
+            </div>
+          </CascadingDropdowns>
+        </div>
+      ),
+      null,
+      undefined,
+      undefined,
+      null,
+      false,
+      undefined,
+      undefined,
+      (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+            <select 
+              value={surrenderFilters.rangeId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, rangeId: e.target.value })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All Units</option>
+              {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+            <select 
+              value={surrenderFilters.schemeId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '', soeId: '' })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All Schemes</option>
+              {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+            <select 
+              value={surrenderFilters.sectorId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, sectorId: e.target.value, activityId: '', subActivityId: '', soeId: '' })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All Sectors</option>
+              {sectors.filter(s => !surrenderFilters.schemeId || s.schemeId === surrenderFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+            <select 
+              value={surrenderFilters.activityId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, activityId: e.target.value, subActivityId: '', soeId: '' })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All Activities</option>
+              {activities.filter(a => {
+                if (surrenderFilters.sectorId) return a.sectorId === surrenderFilters.sectorId;
+                if (surrenderFilters.schemeId) return a.schemeId === surrenderFilters.schemeId;
+                return true;
+              }).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+            <select 
+              value={surrenderFilters.subActivityId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, subActivityId: e.target.value, soeId: '' })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All Sub-Activities</option>
+              {subActivities.filter(sa => !surrenderFilters.activityId || sa.activityId === surrenderFilters.activityId).map(sa => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
+            <select 
+              value={surrenderFilters.soeId}
+              onChange={(e) => setSurrenderFilters({ ...surrenderFilters, soeId: e.target.value })}
+              className="w-full p-1.5 border rounded text-xs bg-white"
+            >
+              <option value="">All SOEs</option>
+              {soes.filter(s => {
+                if (surrenderFilters.subActivityId) return s.subActivityId === surrenderFilters.subActivityId;
+                if (surrenderFilters.activityId) return s.activityId === surrenderFilters.activityId;
+                if (surrenderFilters.sectorId) return s.sectorId === surrenderFilters.sectorId;
+                if (surrenderFilters.schemeId) return s.schemeId === surrenderFilters.schemeId;
+                return true;
+              }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="xl:col-span-6 flex justify-end">
+            <button 
+              onClick={() => setSurrenderFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' })}
+              className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+            >
+              <X className="w-3 h-3" />
+              Reset Filters
+            </button>
+          </div>
+        </div>
+      )
     );
   };
 
@@ -2506,7 +2995,7 @@ export default function App() {
                   <tr className="bg-emerald-800 text-white">
                     <th className="p-3 border border-emerald-700 text-left sticky left-0 bg-emerald-800 z-10" rowSpan={2}>Hierarchy (Sector/Activity/Sub-Activity)</th>
                     <th className="p-3 border border-emerald-700 text-center" rowSpan={2}>Approved Budget</th>
-                    <th className="p-3 border border-emerald-700 text-left" rowSpan={2}>Range Name</th>
+                    <th className="p-3 border border-emerald-700 text-left" rowSpan={2}>Unit Name</th>
                     <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Amount Allocated</th>
                     <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Budget to be Allocated</th>
                     <th className="p-3 border border-emerald-700 text-center" colSpan={4}>SOE Distribution (Editable)</th>
@@ -2681,13 +3170,24 @@ export default function App() {
 
   const renderSOEHeads = () => {
     const filteredItems = currentSoes.filter(s => {
+      // Search filter
       const search = searchTerm.toLowerCase();
       const nameMatch = (s.name || '').toLowerCase().includes(search);
       const schemeMatch = s.schemeId && schemes.find(sch => sch.id === s.schemeId)?.name.toLowerCase().includes(search);
       const sectorMatch = s.sectorId && sectors.find(sec => sec.id === s.sectorId)?.name.toLowerCase().includes(search);
       const activityMatch = s.activityId && activities.find(act => act.id === s.activityId)?.name.toLowerCase().includes(search);
       const subActivityMatch = s.subActivityId && subActivities.find(sub => sub.id === s.subActivityId)?.name.toLowerCase().includes(search);
-      return nameMatch || schemeMatch || sectorMatch || activityMatch || subActivityMatch;
+      const matchesSearch = !searchTerm || nameMatch || schemeMatch || sectorMatch || activityMatch || subActivityMatch;
+
+      // Hierarchy filters
+      const matchesScheme = !soeFilters.schemeId || s.schemeId === soeFilters.schemeId;
+      const matchesSector = !soeFilters.sectorId || s.sectorId === soeFilters.sectorId;
+      const matchesActivity = !soeFilters.activityId || s.activityId === soeFilters.activityId;
+      const matchesSubActivity = !soeFilters.subActivityId || s.subActivityId === soeFilters.subActivityId;
+      const matchesSoeName = !soeFilters.soeName || s.name === soeFilters.soeName;
+      const matchesRange = !soeFilters.rangeId || allocations.some(a => a.rangeId === soeFilters.rangeId && a.fundedSOEs?.some(f => f.soeId === s.id));
+
+      return matchesSearch && matchesScheme && matchesSector && matchesActivity && matchesSubActivity && matchesSoeName && matchesRange;
     });
 
     return (
@@ -2818,18 +3318,29 @@ export default function App() {
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All Sub-Activities</option>
-                    {subActivities.filter(sa => !soeFilters.activityId || sa.activityId === soeFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    {subActivities.filter(sa => {
+                      if (soeFilters.activityId) return sa.activityId === soeFilters.activityId;
+                      if (soeFilters.sectorId) {
+                        const act = activities.find(a => a.id === sa.activityId);
+                        return act?.sectorId === soeFilters.sectorId;
+                      }
+                      if (soeFilters.schemeId) {
+                        const act = activities.find(a => a.id === sa.activityId);
+                        return act?.schemeId === soeFilters.schemeId || sectors.find(s => s.id === act?.sectorId)?.schemeId === soeFilters.schemeId;
+                      }
+                      return true;
+                    }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
                   <select 
                     value={soeFilters.rangeId}
                     onChange={(e) => setSoeFilters({ ...soeFilters, rangeId: e.target.value })}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
-                    <option value="">All Ranges</option>
-                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    <option value="">All Units</option>
+                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -2840,7 +3351,16 @@ export default function App() {
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All SOEs</option>
-                    {ALLOWED_SOES.map(n => <option key={n} value={n}>{n}</option>)}
+                    {ALLOWED_SOES.filter(n => {
+                      if (!soeFilters.schemeId && !soeFilters.sectorId && !soeFilters.activityId && !soeFilters.subActivityId) return true;
+                      return currentSoes.some(s => {
+                        const matchesScheme = !soeFilters.schemeId || s.schemeId === soeFilters.schemeId;
+                        const matchesSector = !soeFilters.sectorId || s.sectorId === soeFilters.sectorId;
+                        const matchesActivity = !soeFilters.activityId || s.activityId === soeFilters.activityId;
+                        const matchesSubActivity = !soeFilters.subActivityId || s.subActivityId === soeFilters.subActivityId;
+                        return s.name === n && matchesScheme && matchesSector && matchesActivity && matchesSubActivity;
+                      });
+                    }).map(n => <option key={n} value={n}>{n}</option>)}
                   </select>
                 </div>
                 <div className="md:col-span-3 lg:col-span-6 flex justify-end">
@@ -2946,7 +3466,7 @@ export default function App() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeTab]);
+  }, [activeTab, searchTerm, expFilters, allocFilters, billExpFilters, selectedFY, expDateRange, expenditureSubTab]);
 
   const renderSimpleManager = (
     title: string, 
@@ -3069,7 +3589,7 @@ export default function App() {
                   type="text" 
                   placeholder={`Search ${title}s...`} 
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
                   className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
                 />
               </div>
@@ -3725,9 +4245,10 @@ export default function App() {
   };
 
   const handleDelete = (collectionName: string, id: string) => {
-    showConfirm('Are you sure you want to delete this entry?', async () => {
+    showConfirm(`Are you sure you want to delete this ${collectionName.slice(0, -1)}?`, async () => {
       try {
         await deleteDoc(doc(db, collectionName, id));
+        showAlert("Deleted successfully.");
         if (editingItem?.item?.id === id) {
           setEditingItem(null);
         }
@@ -3865,7 +4386,7 @@ export default function App() {
 
     autoTable(doc, {
       startY: 55,
-      head: [['SrNo', 'Date', 'Range', 'SOE', 'Hierarchy', 'Description', 'Amount']],
+      head: [['SrNo', 'Date', 'Unit', 'SOE', 'Hierarchy', 'Description', 'Amount']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [16, 185, 129] },
@@ -3894,7 +4415,7 @@ export default function App() {
     setViewingBillPdf({ url, bill });
   };
 
-  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh') => {
+  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: Date.now() });
     } catch (error) {
@@ -4010,7 +4531,7 @@ export default function App() {
           />
           <select 
             value={newUserRole}
-            onChange={(e) => setNewUserRole(e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
+            onChange={(e) => setNewUserRole(e.target.value as any)}
             className="p-2 border rounded"
           >
             <option value="admin">Admin</option>
@@ -4019,7 +4540,7 @@ export default function App() {
             <option value="Sarahan">Sarahan</option>
             <option value="Narag">Narag</option>
             <option value="Habban">Habban</option>
-            <option value="Rajgarh">Rajgarh</option>
+            <option value="Division">Division</option>
           </select>
           <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700">
             Create User
@@ -4088,7 +4609,7 @@ export default function App() {
                 <td className="p-3">
                   <select 
                     value={u.role} 
-                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Rajgarh')}
+                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division')}
                     className="p-1 border rounded text-sm"
                   >
                     <option value="admin">Admin</option>
@@ -4097,7 +4618,7 @@ export default function App() {
                     <option value="Sarahan">Sarahan</option>
                     <option value="Narag">Narag</option>
                     <option value="Habban">Habban</option>
-                    <option value="Rajgarh">Rajgarh</option>
+                    <option value="Division">Division</option>
                   </select>
                 </td>
                 <td className="p-3 text-right flex justify-end gap-2">
@@ -4147,7 +4668,7 @@ export default function App() {
       }
 
       doc.setFontSize(12);
-      doc.text("Detailed Range-wise Report", 14, finalY + 15);
+      doc.text("Detailed Unit-wise Report", 14, finalY + 15);
       autoTable(doc, {
         head: [detailedHeaders],
         body: detailedData,
@@ -4216,7 +4737,7 @@ export default function App() {
       const detailedSheet = workbook.addWorksheet("Detailed Report");
       
       // Add Title
-      const dTitleRow = detailedSheet.addRow(["Detailed Range-wise Report"]);
+      const dTitleRow = detailedSheet.addRow(["Detailed Unit-wise Report"]);
       dTitleRow.font = { bold: true, size: 14 };
       detailedSheet.mergeCells(1, 1, 1, detailedHeaders.length);
       dTitleRow.alignment = { horizontal: 'center' };
@@ -4272,7 +4793,7 @@ export default function App() {
       const zip = new JSZip();
       
       // 1. Allocations
-      const allocHeaders = ['ID', 'SOE', 'Range', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
+      const allocHeaders = ['ID', 'SOE', 'Unit', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
       const allocData = currentAllocations.map(a => [
         a.id,
         a.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).join(', ') || 'Pending',
@@ -4415,7 +4936,7 @@ export default function App() {
     const uniqueActivities = Array.from(new Set(combinedReportData.map(r => r.activity))).filter(Boolean).sort();
     const uniqueSubActivities = Array.from(new Set(combinedReportData.map(r => r.subActivity))).filter(Boolean).sort();
     const uniqueSoes = Array.from(new Set(soes.map(s => s.name))).filter(Boolean).sort();
-    const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name))).filter(Boolean).sort();
+    const uniqueRangesList = Array.from(new Set(ranges.map(r => r.name === 'Rajgarh Forest Division' ? 'Division' : r.name))).filter(Boolean).sort();
 
     const renderAllocationExpenditureReport = () => {
       const searchLower = reportSearchTerm.toLowerCase();
@@ -4467,7 +4988,7 @@ export default function App() {
       const totalPages = reportItemsPerPage === -1 ? 1 : Math.ceil(filtered.length / reportItemsPerPage);
       const paginatedData = reportItemsPerPage === -1 ? filtered : filtered.slice((reportPage - 1) * reportItemsPerPage, reportPage * reportItemsPerPage);
 
-      const headers = ['Date', 'Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
+      const headers = ['Date', 'Unit', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
       const tableData = filtered.map(r => [
         r.date, r.range, r.scheme, r.sector, r.activity, r.subActivity, r.soe, r.description, r.allocation, r.expenditure, r.balance
       ]);
@@ -4480,7 +5001,7 @@ export default function App() {
                 <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                 <input
                   type="text"
-                  placeholder="Search by scheme, sector, activity, range, description..."
+                  placeholder="Search by scheme, sector, activity, unit, description..."
                   value={reportSearchTerm}
                   onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
                   className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
@@ -4525,13 +5046,13 @@ export default function App() {
                 <div className="mb-6 animate-in fade-in slide-in-from-top-2">
                   <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
                       <select 
                         value={reportFilters.range}
                         onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
-                        <option value="">All Ranges</option>
+                        <option value="">All Units</option>
                         {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
@@ -4665,7 +5186,7 @@ export default function App() {
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">Date</th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
                     <div className="flex items-center justify-between">
-                      Range <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                      Unit <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
                     </div>
                   </th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
@@ -4933,7 +5454,7 @@ export default function App() {
     ]);
 
     const isGlobalUser = userRole === 'admin' || userRole === 'deo' || userRole === 'approver';
-    const detailedHeaders = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
+    const detailedHeaders = ['Unit', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
     if (!userRangeId) detailedHeaders.push('Total Budget');
     detailedHeaders.push('Allocation');
     detailedHeaders.push('Expenditure', 'Balance to Book');
@@ -4962,22 +5483,36 @@ export default function App() {
             >
               Allocation & Expenditure Details
             </button>
+            <button
+              onClick={() => { setReportSubTab('ledger'); setReportPage(1); }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'ledger' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Scheme Wise Ledger
+            </button>
+            {(userRole === 'admin' || userRole === 'Division') && (
+              <button
+                onClick={() => { setReportSubTab('master-control'); setReportPage(1); }}
+                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'master-control' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              >
+                Master Control
+              </button>
+            )}
           </div>
 
-          {reportSubTab === 'summary' ? (
-            <>
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-                <h3 className="text-lg font-semibold flex items-center gap-2">
-                  <FileBarChart className="text-emerald-600" /> Comprehensive Budget Report
-                </h3>
-                <div className="flex flex-wrap gap-1">
-                  <button 
-                    onClick={() => setShowReportFilters(!showReportFilters)}
-                    className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-gray-200 transition-colors border border-gray-200"
-                  >
-                    <Filter className="w-3 h-3" /> {showReportFilters ? 'Hide' : 'Show'} Filters
-                    {showReportFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                  </button>
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+            <h3 className="text-lg font-semibold flex items-center gap-2">
+              <FileBarChart className="text-emerald-600" /> {reportSubTab === 'summary' ? 'Comprehensive Budget Report' : reportSubTab === 'ledger' ? 'Scheme Wise Ledger' : 'Allocation & Expenditure Details'}
+            </h3>
+            <div className="flex flex-wrap gap-1">
+              <button 
+                onClick={() => setShowReportFilters(!showReportFilters)}
+                className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-gray-200 transition-colors border border-gray-200"
+              >
+                <Filter className="w-3 h-3" /> {showReportFilters ? 'Hide' : 'Show'} Filters
+                {showReportFilters ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              {reportSubTab === 'summary' && (
+                <>
                   <button 
                     onClick={() => downloadPDF('Comprehensive Budget Report', (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractTableData : [], (userRole === 'admin' || userRole === 'deo' || userRole === 'approver') ? abstractHeaders : [], detailedTableData, detailedHeaders)}
                     className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
@@ -4996,131 +5531,221 @@ export default function App() {
                   >
                     <Download className="w-3 h-3" /> ZIP
                   </button>
-                </div>
-              </div>
+                </>
+              )}
+              {reportSubTab === 'ledger' && (
+                <button 
+                  onClick={downloadLedgerPDF}
+                  className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
+                >
+                  <Download className="w-3 h-3" /> PDF
+                </button>
+              )}
+              {reportSubTab === 'master-control' && (
+                <>
+                  <button 
+                    onClick={() => {
+                      const headers = ["Range", "Scheme", "Sector", "Activity", "Sub-Activity", "SOE", "Allocated", "Expenditure", "Balance"];
+                      const data = masterControlData.map(r => [r.rangeName, r.schemeName, r.sectorName, r.activityName, r.subActivityName, r.soeName, r.allocated, r.expenditure, r.balance]);
+                      downloadPDF('Master Control Budget Report', [], [], data, headers);
+                    }}
+                    className="bg-red-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-red-700 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3 h-3" /> PDF
+                  </button>
+                  <button 
+                    onClick={() => {
+                      const headers = ["Range", "Scheme", "Sector", "Activity", "Sub-Activity", "SOE", "Allocated", "Expenditure", "Balance"];
+                      const data = masterControlData.map(r => [r.rangeName, r.schemeName, r.sectorName, r.activityName, r.subActivityName, r.soeName, r.allocated, r.expenditure, r.balance]);
+                      downloadExcel('Master Control Budget Report', [], [], data, headers);
+                    }}
+                    className="bg-emerald-600 text-white px-2 py-0.5 rounded text-[10px] flex items-center justify-center gap-1 hover:bg-emerald-700 transition-colors shadow-sm"
+                  >
+                    <Download className="w-3 h-3" /> Excel
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
 
-              {showReportFilters && (
-                <div className="mb-6 animate-in fade-in slide-in-from-top-2">
-                  <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
-                      <select 
-                        value={reportFilters.range}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All Ranges</option>
-                        {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
+          {showReportFilters && (
+            <div className="mb-6 animate-in fade-in slide-in-from-top-2">
+                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-6">
+                {reportSubTab === 'summary' && (
+                  <div className="lg:col-span-1 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <h5 className="text-xs font-bold text-gray-700 uppercase mb-3 flex items-center gap-2">
+                      <PieChartIcon className="w-3 h-3 text-emerald-600" /> Budget Distribution
+                    </h5>
+                    <div className="h-40">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie 
+                            data={[
+                              { name: 'Spent', value: calculateTotals(sortedData).expenditure },
+                              { name: 'Balance', value: calculateTotals(sortedData).remaining }
+                            ]} 
+                            innerRadius={35} 
+                            outerRadius={50} 
+                            paddingAngle={5} 
+                            dataKey="value"
+                          >
+                            <Cell fill="#dc3545" />
+                            <Cell fill="#10b981" />
+                          </Pie>
+                          <Tooltip formatter={(value: number) => `₹${value.toLocaleString()}`} />
+                        </PieChart>
+                      </ResponsiveContainer>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
-                      <select 
-                        value={reportFilters.scheme}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All Schemes</option>
-                        {uniqueSchemes.filter(s => {
-                          if (!reportFilters.range) return true;
-                          return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
-                        }).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
-                      <select 
-                        value={reportFilters.sector}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All Sectors</option>
-                        {uniqueSectors.filter(s => {
-                          if (!reportFilters.range && !reportFilters.scheme) return true;
-                          return combinedReportData.some(r => {
-                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                            return rangeMatch && schemeMatch && r.sector === s;
-                          });
-                        }).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
-                      <select 
-                        value={reportFilters.activity}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All Activities</option>
-                        {uniqueActivities.filter(a => {
-                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
-                          return combinedReportData.some(r => {
-                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                            return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
-                          });
-                        }).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
-                      <select 
-                        value={reportFilters.subActivity}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All Sub-Activities</option>
-                        {uniqueSubActivities.filter(sa => {
-                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
-                          return combinedReportData.some(r => {
-                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
-                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
-                          });
-                        }).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
-                      <select 
-                        value={reportFilters.soe}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value }); setReportPage(1); }}
-                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
-                      >
-                        <option value="">All SOEs</option>
-                        {uniqueSoes.filter(s => {
-                          if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity && !reportFilters.subActivity) return true;
-                          return combinedReportData.some(r => {
-                            const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
-                            const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
-                            const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
-                            const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
-                            const subActivityMatch = !reportFilters.subActivity || r.subActivity === reportFilters.subActivity;
-                            return rangeMatch && schemeMatch && sectorMatch && activityMatch && subActivityMatch && (r as any).soe.includes(s);
-                          });
-                        }).map(s => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div className="lg:col-span-6 flex justify-end">
-                      <button 
-                        onClick={() => {
-                          setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
-                          setSoeAbstractSearch('');
-                          setReportPage(1);
-                        }}
-                        className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
-                      >
-                        <X className="w-3 h-3" />
-                        Reset Filters
-                      </button>
+                    <div className="flex justify-center gap-4 mt-2">
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 rounded-full bg-red-500"></div>
+                        <span className="text-[10px] text-gray-500">Spent</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                        <span className="text-[10px] text-gray-500">Balance</span>
+                      </div>
                     </div>
                   </div>
+                )}
+                    
+                <div className={`${reportSubTab === 'summary' ? 'lg:col-span-3' : 'lg:col-span-4'} grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-xl border border-gray-200`}>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                    <select 
+                      value={reportFilters.range}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Units</option>
+                      {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
+                    <select 
+                      value={reportFilters.scheme}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Schemes</option>
+                      {uniqueSchemes.filter(s => {
+                        if (!reportFilters.range) return true;
+                        return combinedReportData.some(r => r.range === reportFilters.range && r.scheme === s);
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
+                    <select 
+                      value={reportFilters.sector}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sectors</option>
+                      {uniqueSectors.filter(s => {
+                        if (!reportFilters.range && !reportFilters.scheme) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          return rangeMatch && schemeMatch && r.sector === s;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
+                    <select 
+                      value={reportFilters.activity}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Activities</option>
+                      {uniqueActivities.filter(a => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          return rangeMatch && schemeMatch && sectorMatch && r.activity === a;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
+                    <select 
+                      value={reportFilters.subActivity}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Sub-Activities</option>
+                      {uniqueSubActivities.filter(sa => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && r.subActivity === sa;
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
+                    <select 
+                      value={reportFilters.soe}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value }); setReportPage(1); }}
+                      className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All SOEs</option>
+                      {uniqueSoes.filter(s => {
+                        if (!reportFilters.range && !reportFilters.scheme && !reportFilters.sector && !reportFilters.activity && !reportFilters.subActivity) return true;
+                        return combinedReportData.some(r => {
+                          const rangeMatch = !reportFilters.range || r.range === reportFilters.range;
+                          const schemeMatch = !reportFilters.scheme || r.scheme === reportFilters.scheme;
+                          const sectorMatch = !reportFilters.sector || r.sector === reportFilters.sector;
+                          const activityMatch = !reportFilters.activity || r.activity === reportFilters.activity;
+                          const subActivityMatch = !reportFilters.subActivity || r.subActivity === reportFilters.subActivity;
+                          return rangeMatch && schemeMatch && sectorMatch && activityMatch && subActivityMatch && (r as any).soe.includes(s);
+                        });
+                      }).map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  {reportSubTab === 'ledger' && (
+                    <div className="lg:col-span-2">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Search Ledger</label>
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Search hierarchy, SOE, unit..."
+                          value={ledgerSearchTerm}
+                          onChange={(e) => setLedgerSearchTerm(e.target.value)}
+                          className="pl-9 pr-4 py-2 border border-gray-300 rounded text-xs bg-white w-full"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <div className={`${reportSubTab === 'ledger' ? 'lg:col-span-4' : 'lg:col-span-6'} flex justify-end`}>
+                    <button 
+                      onClick={() => {
+                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                        setSoeAbstractSearch('');
+                        setLedgerSearchTerm('');
+                        setReportPage(1);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 font-medium flex items-center gap-1"
+                    >
+                      <X className="w-3 h-3" />
+                      Reset Filters
+                    </button>
+                  </div>
+                </div>
+                  </div>
                   {sortedData.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-3 bg-emerald-50 rounded-b-lg border-x border-b border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-3 bg-emerald-50 rounded-lg border border-gray-200">
                       <div className="flex justify-between items-center px-2">
                         <span className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocation:</span>
                         <span className="text-sm font-bold text-emerald-700">₹{calculateTotals(sortedData).allocated.toLocaleString()}</span>
@@ -5133,13 +5758,27 @@ export default function App() {
                         <span className="text-[10px] font-bold text-blue-800 uppercase">Total Balance:</span>
                         <span className="text-sm font-bold text-blue-700">₹{calculateTotals(sortedData).remaining.toLocaleString()}</span>
                       </div>
+                      <div className="px-2">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-[10px] font-bold text-gray-600 uppercase">Usage:</span>
+                          <span className="text-[10px] font-bold text-gray-700">{calculateTotals(sortedData).allocated > 0 ? `${((calculateTotals(sortedData).expenditure / calculateTotals(sortedData).allocated) * 100).toFixed(1)}%` : '0%'}</span>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-1.5">
+                          <div 
+                            className="bg-emerald-600 h-1.5 rounded-full" 
+                            style={{ width: `${Math.min(100, calculateTotals(sortedData).allocated > 0 ? (calculateTotals(sortedData).expenditure / calculateTotals(sortedData).allocated) * 100 : 0)}%` }}
+                          ></div>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
               )}
 
-              {/* SOE Abstract Summary Table */}
-              {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver') && (
+              {reportSubTab === 'summary' && (
+                <>
+                  {/* SOE Abstract Summary Table */}
+              {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || userRole === 'Division') && (
                 <div className="mb-10">
                   <div 
                     className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
@@ -5185,8 +5824,16 @@ export default function App() {
                               <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
                               <td className="p-1.5 text-[10px] border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
                               <td className="p-1.5 text-[10px] border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
-                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                              <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.remaining.toLocaleString()}</td>
+                              <td 
+                                className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium cursor-pointer hover:underline"
+                                onClick={() => setViewingSoeExp({ soeId: row.soeId, soeName: row.soeName, hierarchy: row.hierarchy })}
+                                title="Click to view expenditure details"
+                              >
+                                ₹{row.expenditure.toLocaleString()}
+                              </td>
+                              <td className={`p-1.5 text-[10px] border border-gray-300 text-right font-bold ${row.remaining < 0 ? 'text-red-600 bg-red-50' : 'text-blue-700'}`}>
+                                ₹{row.remaining.toLocaleString()}
+                              </td>
                             </tr>
                           ))}
                           {abstractRows.length === 0 && (
@@ -5201,60 +5848,129 @@ export default function App() {
                 </div>
               )}
 
-              <div className="mb-4">
-                <h4 className="text-md font-bold text-gray-800 mb-2 flex items-center gap-2">
-                  <Table className="w-4 h-4 text-emerald-600" /> Detailed Range-wise Report
-                </h4>
-              </div>
+              <div className="mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                <div 
+                  className="flex items-center justify-between cursor-pointer group"
+                  onClick={() => setShowDetailedReport(!showDetailedReport)}
+                >
+                  <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+                    <Table className="w-4 h-4 text-emerald-600" /> Detailed Unit-wise Report
+                  </h4>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
+                      {showDetailedReport ? 'Click to collapse' : 'Click to expand'}
+                    </span>
+                    <button type="button" className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-all">
+                      {showDetailedReport ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                    </button>
+                  </div>
+                </div>
+                
+                {showDetailedReport && (
+                  <div className="overflow-x-auto mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <table className="w-full text-left border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-gray-100 border-b border-gray-300">
+                          {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {groupedData.map((row, i) => {
+                          let rowClass = "border-b border-gray-300 hover:bg-gray-50";
+                          let textClass = "text-[10px]";
+                          if (row.isTotal) {
+                            textClass = "text-[9px] uppercase tracking-tight";
+                            if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
+                            else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
+                            else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
+                            else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
+                            else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
+                          }
 
+                          return (
+                            <tr key={i} className={rowClass}>
+                              <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
+                              <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
+                              <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
+                              <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
+                              <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
+                              <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
+                              {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
+                              <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
+                              <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
+                              <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+                            </tr>
+                          );
+                        })}
+                        {groupedData.length === 0 && (
+                          <tr>
+                            <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+          
+          {reportSubTab === 'ledger' && renderSchemeWiseLedger()}
+          {reportSubTab === 'allocation-expenditure' && renderAllocationExpenditureReport()}
+          {reportSubTab === 'master-control' && (
+            <>
+              <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                  <p className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocated</p>
+                  <p className="text-lg font-bold text-emerald-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.allocated, 0).toLocaleString()}</p>
+                </div>
+                <div className="bg-red-50 p-3 rounded-lg border border-red-100">
+                  <p className="text-[10px] font-bold text-red-800 uppercase">Total Expenditure</p>
+                  <p className="text-lg font-bold text-red-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.expenditure, 0).toLocaleString()}</p>
+                </div>
+                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                  <p className="text-[10px] font-bold text-blue-800 uppercase">Total Balance</p>
+                  <p className="text-lg font-bold text-blue-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.balance, 0).toLocaleString()}</p>
+                </div>
+              </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse border border-gray-300">
                   <thead>
-                    <tr className="bg-gray-100 border-b border-gray-300">
-                      {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                    <tr className="bg-emerald-50 border-b border-gray-300">
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Range</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Scheme</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sector</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Activity</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sub-Activity</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">SOE</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Allocated</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Expenditure</th>
+                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Balance</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {groupedData.map((row, i) => {
-                      let rowClass = "border-b border-gray-300 hover:bg-gray-50";
-                      let textClass = "text-[10px]";
-                      if (row.isTotal) {
-                        textClass = "text-[9px] uppercase tracking-tight";
-                        if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
-                        else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
-                        else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
-                        else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
-                        else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
-                      }
-
-                      return (
-                        <tr key={i} className={rowClass}>
-                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
-                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
-                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
-                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
-                          <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
-                          <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
-                          {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
-                          <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
-                          <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
-                          <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
-                        </tr>
-                      );
-                    })}
-                    {groupedData.length === 0 && (
+                    {masterControlData.map((row, i) => (
+                      <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30">
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.rangeName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.schemeName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.sectorName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.activityName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.subActivityName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.balance.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                    {masterControlData.length === 0 && (
                       <tr>
-                        <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
+                        <td colSpan={9} className="p-8 text-center text-gray-400 italic">No budget data found for the selected filters.</td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-              
-              {renderSchemeWiseLedger()}
             </>
-          ) : (
-            renderAllocationExpenditureReport()
           )}
         </div>
       </div>
@@ -5272,13 +5988,32 @@ export default function App() {
       const sec = sectors.find(s => s.id === alloc.sectorId);
       const act = activities.find(a => a.id === alloc.activityId);
       const sa = subActivities.find(s => s.id === alloc.subActivityId);
+      const r = ranges.find(r => r.id === alloc.rangeId);
+      const rangeName = r?.name === 'Rajgarh Forest Division' ? 'Division' : (r?.name || '');
       
-      return (
+      const matchesFilters = (
         (!reportFilters.scheme || sch?.name === reportFilters.scheme) &&
         (!reportFilters.sector || sec?.name === reportFilters.sector) &&
         (!reportFilters.activity || act?.name === reportFilters.activity) &&
-        (!reportFilters.subActivity || sa?.name === reportFilters.subActivity)
+        (!reportFilters.subActivity || sa?.name === reportFilters.subActivity) &&
+        (!reportFilters.range || rangeName === reportFilters.range)
       );
+
+      if (!matchesFilters) return false;
+
+      if (ledgerSearchTerm) {
+        const searchLower = ledgerSearchTerm.toLowerCase();
+        const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(' ') || '';
+        const hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+        return (
+          hierarchy.toLowerCase().includes(searchLower) ||
+          soeNames.toLowerCase().includes(searchLower) ||
+          rangeName.toLowerCase().includes(searchLower) ||
+          alloc.remarks?.toLowerCase().includes(searchLower)
+        );
+      }
+
+      return true;
     });
 
     filteredAllocations.forEach(alloc => {
@@ -5624,12 +6359,12 @@ export default function App() {
           
           <div className={`${menuOpen ? 'grid' : 'hidden'} lg:flex grid-cols-2 sm:grid-cols-3 lg:flex-row flex-wrap gap-1 p-2`}>
             {(userRole === 'admin' ? [
-              'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
-              'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports', 'Users'
+              'Dashboard', 'Financial Years', 'Units', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
+              'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Surrender', 'Ledger', 'Reports', 'Users'
             ] : userRole === 'DA' ? [
               'Dashboard', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports'
             ] : [
-              'Dashboard', 'Allocations', 'Expenditures', 'Ledger', 'Reports'
+              'Dashboard', 'Allocations', 'Expenditures', 'Surrender', 'Ledger', 'Reports'
             ]).map((item) => (
               <button 
                 key={item} 
@@ -5646,6 +6381,20 @@ export default function App() {
                 className={`px-3 py-2 text-xs sm:text-sm font-medium rounded transition-all text-left lg:text-center flex items-center gap-2 ${activeTab === item ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
               >
                 {item === 'Dashboard' && <Home className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Financial Years' && <Calendar className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Units' && <Map className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Schemes' && <TreePine className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Sectors' && <Shield className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Activities' && <Activity className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Sub-Activities' && <TrendingUp className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'SOE Heads' && <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Allocations' && <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Reconciliation' && <RefreshCcw className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Expenditures' && <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Surrender' && <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Ledger' && <FileText className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Reports' && <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Users' && <User className="w-3 h-3 sm:w-4 sm:h-4" />}
                 <span className="truncate">{item}</span>
               </button>
             ))}
@@ -5676,13 +6425,13 @@ export default function App() {
           (item) => setEditingItem({ type: 'Financial Year', item })
         )}
 
-        {activeTab === 'Ranges' && renderSimpleManager(
-          'Range', 
+        {activeTab === 'Units' && renderSimpleManager(
+          'Unit', 
           ranges, 
-          [{key: 'name', label: 'Range Name'}], 
+          [{key: 'name', label: 'Unit Name', render: (val) => val === 'Rajgarh Forest Division' ? 'Division' : val}], 
           handleAddRange, 
           (id) => handleDelete('ranges', id), 
-          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Range Name" className="w-full p-1.5 border rounded text-sm" />,
+          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Unit Name" className="w-full p-1.5 border rounded text-sm" />,
           (item) => setEditingItem({ type: 'Range', item })
         )}
 
@@ -5812,7 +6561,7 @@ export default function App() {
               currentAllocations, 
               [
                 {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item), searchableText: (_, item) => getHierarchyText(item)},
-                {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
+                {key: 'rangeId', label: 'Unit', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
                 {key: 'amount', label: 'Sanctioned Amount', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className="font-medium">₹{val.toLocaleString()}</span>
@@ -5886,8 +6635,8 @@ export default function App() {
                 onSelectionChange={setAllocationFormFilters}
               >
                 <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
-                  <option value="">Select Range</option>
-                  {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  <option value="">Select Unit</option>
+                  {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
                 </select>
                 <input 
                   name="amount" 
@@ -5915,7 +6664,7 @@ export default function App() {
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
                   <select 
                     value={allocFilters.schemeId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '', soeId: '' })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, schemeId: e.target.value, sectorId: '', activityId: '', subActivityId: '', soeId: '' }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All Schemes</option>
@@ -5926,7 +6675,7 @@ export default function App() {
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
                   <select 
                     value={allocFilters.sectorId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, sectorId: e.target.value, activityId: '', subActivityId: '', soeId: '' })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, sectorId: e.target.value, activityId: '', subActivityId: '', soeId: '' }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All Sectors</option>
@@ -5937,7 +6686,7 @@ export default function App() {
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
                   <select 
                     value={allocFilters.activityId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, activityId: e.target.value, subActivityId: '', soeId: '' })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, activityId: e.target.value, subActivityId: '', soeId: '' }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All Activities</option>
@@ -5952,7 +6701,7 @@ export default function App() {
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
                   <select 
                     value={allocFilters.subActivityId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, subActivityId: e.target.value, soeId: '' })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, subActivityId: e.target.value, soeId: '' }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All Sub-Activities</option>
@@ -5960,21 +6709,21 @@ export default function App() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
                   <select 
                     value={allocFilters.rangeId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, rangeId: e.target.value })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, rangeId: e.target.value }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
-                    <option value="">All Ranges</option>
-                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    <option value="">All Units</option>
+                    {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE Head</label>
                   <select 
                     value={allocFilters.soeId}
-                    onChange={(e) => setAllocFilters({ ...allocFilters, soeId: e.target.value })}
+                    onChange={(e) => { setAllocFilters({ ...allocFilters, soeId: e.target.value }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
                     <option value="">All SOEs</option>
@@ -6023,7 +6772,7 @@ export default function App() {
                 currentExpenses, 
                 [
                   {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
-                  {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
+                  {key: 'allocationId', label: 'Hierarchy / Unit / SOE', 
                     searchableText: (val, item) => {
                       const al = allocations.find(a => a.id === val);
                       const r = ranges.find(r => r.id === al?.rangeId);
@@ -6229,14 +6978,14 @@ export default function App() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
                     <select 
                       value={expFilters.rangeId}
                       onChange={(e) => setExpFilters({ ...expFilters, rangeId: e.target.value })}
                       className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                     >
-                      <option value="">All Ranges</option>
-                      {ranges.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                      <option value="">All Units</option>
+                      {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                     </select>
                   </div>
                 </>,
@@ -6326,8 +7075,8 @@ export default function App() {
                           onChange={(e) => setBillExpFilters({...billExpFilters, rangeId: e.target.value})}
                           className="text-[10px] p-1 border rounded bg-white"
                         >
-                          <option value="">All Ranges</option>
-                          {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                          <option value="">All Units</option>
+                          {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
                         </select>
                         <select 
                           value={billExpFilters.soeId} 
@@ -6421,11 +7170,9 @@ export default function App() {
                             <div 
                               key={exp.id} 
                               onClick={() => {
-                                if (isSelected) {
-                                  setSelectedExpensesForBill(selectedExpensesForBill.filter(id => id !== exp.id));
-                                } else {
-                                  setSelectedExpensesForBill([...selectedExpensesForBill, exp.id]);
-                                }
+                                setSelectedExpensesForBill(prev => 
+                                  prev.includes(exp.id) ? prev.filter(id => id !== exp.id) : [...prev, exp.id]
+                                );
                               }}
                               className={`p-2 text-[10px] cursor-pointer transition-colors flex items-start gap-2 ${isSelected ? 'bg-emerald-50 border-l-2 border-emerald-500' : 'hover:bg-white'}`}
                             >
@@ -6437,7 +7184,7 @@ export default function App() {
                                   <span className="font-bold text-gray-900">{exp.date ? exp.date.split('-').reverse().join('/') : 'N/A'}</span>
                                   <span className="font-bold text-emerald-600">₹{exp.amount.toLocaleString()}</span>
                                 </div>
-                                <div className="text-gray-600 font-medium mb-1">Range: {r?.name} | SOE: {s?.name}</div>
+                                <div className="text-gray-600 font-medium mb-1">Unit: {r?.name} | SOE: {s?.name}</div>
                                 <div className="text-gray-500 text-[9px] mb-1 italic">{hierarchy}</div>
                                 <div className="text-gray-400 truncate">{exp.description}</div>
                               </div>
@@ -6532,6 +7279,8 @@ export default function App() {
           </div>
         )}
 
+        {activeTab === 'Surrender' && renderSurrenderTab()}
+
         {activeTab === 'Reconciliation' && renderReconciliation()}
 
         {activeTab === 'Ledger' && (
@@ -6583,13 +7332,13 @@ export default function App() {
               <div className="mb-6 animate-in fade-in slide-in-from-top-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
                     <select 
                       value={ledgerFilters.range}
                       onChange={(e) => setLedgerFilters({ ...ledgerFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' })}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
-                      <option value="">All Ranges</option>
+                      <option value="">All Units</option>
                       {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -6710,7 +7459,7 @@ export default function App() {
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
-                    <th className="p-3 border-b">Range</th>
+                    <th className="p-3 border-b">Unit</th>
                     <th className="p-3 border-b">Hierarchy & SOE</th>
                     <th className="p-3 border-b">Description</th>
                     <th className="p-3 border-b">Approval ID</th>
@@ -6785,8 +7534,18 @@ export default function App() {
                       </React.Fragment>
                     );
                   })}
-                  {filteredLedgerData.allocations.length === 0 && <tr><td colSpan={7} className="p-4 text-center text-gray-500">No allocations found for this Financial Year.</td></tr>}
+                  {filteredLedgerData.allocations.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-gray-500">No allocations found for this Financial Year.</td></tr>}
                 </tbody>
+                {filteredLedgerData.allocations.length > 0 && (
+                  <tfoot className="bg-gray-50 font-bold border-t-2 border-gray-200">
+                    <tr>
+                      <td colSpan={5} className="p-3 text-right text-gray-700">GRAND TOTAL:</td>
+                      <td className="p-3 text-right text-emerald-700">₹{filteredLedgerData.totals.credit.toLocaleString()}</td>
+                      <td className="p-3 text-right text-red-700">₹{filteredLedgerData.totals.debit.toLocaleString()}</td>
+                      <td className="p-3 text-right text-blue-700">₹{filteredLedgerData.totals.balance.toLocaleString()}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
@@ -6797,6 +7556,7 @@ export default function App() {
 
         {renderFundingModal()}
         {renderApprovalModal()}
+        {renderSoeExpModal()}
 
         {/* Global Alert Modal */}
         {alertModal.isOpen && (
@@ -6934,13 +7694,14 @@ function CascadingDropdowns({
   const [soeId, setSoeId] = useState('');
   const [allocationId, setAllocationId] = useState('');
   const [fundingSoeName, setFundingSoeName] = useState('');
+  const [rangeId, setRangeId] = useState(userRangeId || '');
 
   // Notify parent of selection changes
   useEffect(() => {
     if (onSelectionChange) {
-      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName });
+      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId });
     }
-  }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, onSelectionChange]);
+  }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, onSelectionChange]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -6951,6 +7712,7 @@ function CascadingDropdowns({
       let currentActivityId = '';
       let currentSectorId = '';
       let currentSchemeId = '';
+      let currentRangeId = userRangeId || '';
 
       if (type === 'Expenditure') {
         const alloc = allocations.find((a: any) => a.id === item.allocationId);
@@ -6960,12 +7722,14 @@ function CascadingDropdowns({
         currentActivityId = alloc?.activityId || '';
         currentSectorId = alloc?.sectorId || '';
         currentSchemeId = alloc?.schemeId || '';
+        currentRangeId = alloc?.rangeId || userRangeId || '';
       } else if (type === 'Allocation') {
         currentSoeId = item.soeId;
         currentSubActivityId = item.subActivityId || '';
         currentActivityId = item.activityId || '';
         currentSectorId = item.sectorId || '';
         currentSchemeId = item.schemeId || '';
+        currentRangeId = item.rangeId || userRangeId || '';
         
         // Initialize fundingSoeName if it's an allocation with funded SOEs
         if (item.fundedSOEs && item.fundedSOEs.length > 0) {
@@ -6988,6 +7752,13 @@ function CascadingDropdowns({
         currentActivityId = item.activityId || '';
         currentSectorId = item.sectorId || '';
         currentSchemeId = item.schemeId || '';
+      } else if (type === 'Surrender') {
+        currentSoeId = item.soeId;
+        currentSubActivityId = item.subActivityId || '';
+        currentActivityId = item.activityId || '';
+        currentSectorId = item.sectorId || '';
+        currentSchemeId = item.schemeId || '';
+        currentRangeId = item.rangeId || userRangeId || '';
       }
 
       if (currentSoeId) {
@@ -7016,6 +7787,10 @@ function CascadingDropdowns({
       if (currentSchemeId) {
         setSchemeId(currentSchemeId);
       }
+
+      if (currentRangeId) {
+        setRangeId(currentRangeId);
+      }
     } else {
       // Reset if not editing
       setSchemeId('');
@@ -7025,12 +7800,13 @@ function CascadingDropdowns({
       setSoeId('');
       setAllocationId('');
       setFundingSoeName('');
+      setRangeId(userRangeId || '');
     }
-  }, [editingItem, type]); // Reduced dependencies to avoid unnecessary resets during selection
+  }, [editingItem, type]); 
 
-  const filteredSchemes = type === 'Expenditure' 
-    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id))
-    : schemes;
+  const filteredSchemes = useMemo(() => (type === 'Expenditure' || type === 'Surrender')
+    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id && (!rangeId || a.rangeId === rangeId)))
+    : schemes, [schemes, allocations, rangeId, type]);
 
   // Deduplicate by name to remove repeated items
   const getUniqueByName = (items: any[]) => {
@@ -7043,14 +7819,18 @@ function CascadingDropdowns({
     });
   };
 
-  const filteredSectors = sectors.filter((s: any) => {
+  const filteredSectors = useMemo(() => sectors.filter((s: any) => {
     if (!schemeId) return false;
     if (s.schemeId !== schemeId) return false;
-    if (type === 'Expenditure' && !allocations.some((a: any) => a.sectorId === s.id)) return false;
+    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((a: any) => 
+      a.sectorId === s.id && 
+      (!rangeId || a.rangeId === rangeId) &&
+      (!schemeId || a.schemeId === schemeId)
+    )) return false;
     return true;
-  });
+  }), [sectors, schemeId, type, allocations, rangeId]);
 
-  const filteredActivities = activities.filter((a: any) => {
+  const filteredActivities = useMemo(() => activities.filter((a: any) => {
     if (!schemeId) return false;
     if (a.schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
@@ -7059,33 +7839,56 @@ function CascadingDropdowns({
       const sec = sectors.find((s: any) => s.id === a.sectorId);
       if (sec && sec.schemeId !== schemeId) return false;
     }
-    if (type === 'Expenditure' && !allocations.some((al: any) => al.activityId === a.id)) return false;
+    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((al: any) => 
+      al.activityId === a.id && 
+      (!rangeId || al.rangeId === rangeId) &&
+      (!schemeId || al.schemeId === schemeId) &&
+      (!sectorId || al.sectorId === sectorId)
+    )) return false;
     return true;
-  });
+  }), [activities, schemeId, sectorId, type, allocations, rangeId, sectors]);
 
-  const filteredSubActivities = subActivities.filter((sa: any) => {
+  const filteredSubActivities = useMemo(() => subActivities.filter((sa: any) => {
     if (!activityId) return false;
     if (sa.activityId !== activityId) return false;
-    if (type === 'Expenditure' && !allocations.some((al: any) => al.subActivityId === sa.id)) return false;
+    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((al: any) => 
+      al.subActivityId === sa.id && 
+      (!rangeId || al.rangeId === rangeId) &&
+      (!schemeId || al.schemeId === schemeId) &&
+      (!sectorId || al.sectorId === sectorId) &&
+      (!activityId || al.activityId === activityId)
+    )) return false;
     return true;
-  });
+  }), [subActivities, activityId, type, allocations, rangeId, schemeId, sectorId]);
 
-  const filteredSoes = soes.filter((s: any) => {
+  const filteredSoes = useMemo(() => soes.filter((s: any) => {
     if (!schemeId) return false;
     if (s.schemeId && s.schemeId !== schemeId) return false;
     if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
     if (activityId && s.activityId && s.activityId !== activityId) return false;
     if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+    if (type === 'Surrender') {
+      return allocations.some((al: any) => 
+        al.rangeId === rangeId && 
+        al.schemeId === schemeId &&
+        (!sectorId || al.sectorId === sectorId) &&
+        (!activityId || al.activityId === activityId) &&
+        (!subActivityId || al.subActivityId === subActivityId) &&
+        al.fundedSOEs?.some(f => f.soeId === s.id)
+      );
+    }
     // Relaxed Expenditure check to show all SOEs matching the hierarchy
     return true;
-  });
-  const filteredAllocations = allocations.filter((a: any) => {
+  }), [soes, schemeId, sectorId, activityId, subActivityId, type, allocations, rangeId]);
+
+  const filteredAllocations = useMemo(() => allocations.filter((a: any) => {
+    if (rangeId && a.rangeId !== rangeId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     if (activityId && a.activityId !== activityId) return false;
     if (subActivityId && a.subActivityId !== subActivityId) return false;
     return true;
-  });
+  }), [allocations, rangeId, schemeId, sectorId, activityId, subActivityId]);
 
   // Auto-selection logic
   useEffect(() => {
@@ -7125,12 +7928,28 @@ function CascadingDropdowns({
 
   return (
     <>
+      {type === 'Surrender' && (
+        <div className="flex gap-2">
+          <select 
+            className="w-full p-1.5 border rounded text-sm" 
+            value={rangeId} 
+            onChange={(e) => { setRangeId(e.target.value); setSchemeId(''); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); }}
+            required
+            name="rangeId"
+          >
+            <option value="">Select Unit</option>
+            {ranges.filter((r: any) => r.name !== 'Division' && r.name !== 'Rajgarh Forest Division').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+        </div>
+      )}
+
       <div className="flex gap-2">
         <select 
           className="w-full p-1.5 border rounded text-sm" 
           value={schemeId} 
           onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
           required={type !== 'Activity'}
+          name="schemeId"
         >
           <option value="">Select Scheme</option>
           {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -7138,12 +7957,13 @@ function CascadingDropdowns({
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
       </div>
 
-      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
             value={sectorId} 
             onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+            name="sectorId"
           >
             <option value="">Select Sector (Optional)</option>
             {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -7152,27 +7972,29 @@ function CascadingDropdowns({
         </div>
       )}
 
-      {(type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            required={type !== 'SOE Name' && type !== 'Allocation'}
+            required={type !== 'SOE Name' && type !== 'Allocation' && type !== 'Surrender'}
+            name="activityId"
           >
-            <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation') ? '(Optional)' : ''}</option>
+            <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation' || type === 'Surrender') ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Activity">+</button>
         </div>
       )}
 
-      {(type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure') && (
+      {(type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
             value={subActivityId} 
             onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
+            name="subActivityId"
           >
             <option value="">Select Sub-Activity (Optional)</option>
             {filteredSubActivities.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
@@ -7182,10 +8004,29 @@ function CascadingDropdowns({
       )}
       
       {/* Hidden inputs to ensure correct fields are submitted */}
-      <input type="hidden" name="schemeId" value={schemeId} />
-      <input type="hidden" name="sectorId" value={sectorId} />
-      <input type="hidden" name="activityId" value={activityId} />
-      <input type="hidden" name="subActivityId" value={subActivityId} />
+      {type !== 'Surrender' && (
+        <>
+          <input type="hidden" name="schemeId" value={schemeId} />
+          <input type="hidden" name="sectorId" value={sectorId} />
+          <input type="hidden" name="activityId" value={activityId} />
+          <input type="hidden" name="subActivityId" value={subActivityId} />
+        </>
+      )}
+
+      {(type === 'Surrender') && (
+        <div className="flex gap-2">
+          <select 
+            className="w-full p-1.5 border rounded text-sm" 
+            value={soeId} 
+            onChange={(e) => setSoeId(e.target.value)}
+            required
+            name="soeId"
+          >
+            <option value="">Select SOE Head</option>
+            {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
 
       {type === 'Allocation' && (
         <div className="flex flex-col gap-2">
@@ -7273,7 +8114,7 @@ function CascadingDropdowns({
                 onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
                 required
               >
-                <option value="">Select Allocation (Range)</option>
+                <option value="">Select Allocation (Unit)</option>
                 {filteredAllocations.map((a: any) => {
                   const r = ranges.find((r: any) => r.id === a.rangeId);
                   return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
@@ -7286,7 +8127,7 @@ function CascadingDropdowns({
               <input type="hidden" name="allocationId" value={allocationId} />
               {allocationId && (
                 <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
-                  <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
+                  <span>Unit: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
                   <span>Limit: ₹{allocations.find((a: any) => a.id === allocationId)?.amount.toLocaleString()}</span>
                 </div>
               )}

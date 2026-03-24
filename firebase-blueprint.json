@@ -165,6 +165,25 @@
         "createdBy": { "type": "string", "description": "UID of the user who created the bill" }
       },
       "required": ["billNo", "billDate", "expenseIds", "fyId", "financialYear", "totalAmount", "status"]
+    },
+    "Surrender": {
+      "title": "Surrender",
+      "description": "Represents a budget surrender entry",
+      "type": "object",
+      "properties": {
+        "rangeId": { "type": "string", "description": "ID of the range" },
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "sectorId": { "type": "string", "description": "ID of the sector" },
+        "activityId": { "type": "string", "description": "ID of the activity" },
+        "subActivityId": { "type": "string", "description": "ID of the sub-activity" },
+        "soeId": { "type": "string", "description": "ID of the SOE head" },
+        "amount": { "type": "number", "description": "The surrendered amount" },
+        "date": { "type": "string", "description": "The date of surrender (ISO format)" },
+        "remarks": { "type": "string", "description": "Optional remarks" },
+        "fyId": { "type": "string", "description": "ID of the financial year" },
+        "financialYear": { "type": "string", "description": "Name of the financial year" }
+      },
+      "required": ["rangeId", "schemeId", "sectorId", "activityId", "subActivityId", "soeId", "amount", "date", "fyId", "financialYear"]
     }
   },
   "firestore": {
@@ -180,6 +199,7 @@
     "/allocations": { "schema": "Allocation", "description": "Collection of budget allocations" },
     "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
     "/users": { "schema": "User", "description": "Collection of application users" },
-    "/bills": { "schema": "Bill", "description": "Collection of treasury bills" }
+    "/bills": { "schema": "Bill", "description": "Collection of treasury bills" },
+    "/surrenders": { "schema": "Surrender", "description": "Collection of budget surrenders" }
   }
 }

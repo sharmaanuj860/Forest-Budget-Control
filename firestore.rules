@@ -13,20 +13,20 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (request.auth.token.email == "sharmaanuj860@gmail.com" ||
-         request.auth.token.email.lower() == "admin@rajgarhforest.app" ||
+         (request.auth.token.email != null && request.auth.token.email.lower() == "admin@rajgarhforest.app") ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
     
     function isDEO() {
       return isAuthenticated() && 
-        (request.auth.token.email.lower() == "da123@rajgarhforest.app" ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo'));
+        (request.auth.token.email != null && request.auth.token.email.lower() == "da123@rajgarhforest.app") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo');
     }
 
     function isApprover() {
       return isAuthenticated() && 
-        (request.auth.token.email.lower() == "da789@rajgarhforest.app" ||
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver'));
+        (request.auth.token.email != null && request.auth.token.email.lower() == "da789@rajgarhforest.app") ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver');
     }
 
     function isDA() {
@@ -132,6 +132,11 @@ service cloud.firestore {
       allow create: if canWrite();
       allow update: if isAdmin() || (isDEO() && resource.data.status == 'draft');
       allow delete: if isAdmin() || (isDEO() && resource.data.status == 'draft');
+    }
+
+    match /surrenders/{id} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if canWrite();
     }
   }
 }
