@@ -90,7 +90,7 @@ type Bill = {
   remarks?: string;
 };
 
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division'; password?: string };
+type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'; password?: string };
 
 type Surrender = {
   id: string;
@@ -216,7 +216,7 @@ export default function App() {
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
   const [showReconSummary, setShowReconSummary] = useState(false);
   const [user, setUser] = useState<any>(null);
-  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | null>(null);
+  const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh' | null>(null);
   const [loading, setLoading] = useState(true);
   const [fundingAllocation, setFundingAllocation] = useState<Allocation | null>(null);
   const [isSoesLoaded, setIsSoesLoaded] = useState(false);
@@ -257,7 +257,7 @@ export default function App() {
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
-  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division'>('deo');
+  const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'>('deo');
   const [visiblePasswords, setVisiblePasswords] = useState<{[key: string]: boolean}>({});
   const [editingPasswordId, setEditingPasswordId] = useState<string | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
@@ -692,7 +692,7 @@ export default function App() {
   const currentSubActivities = subActivities;
   const userRangeId = useMemo(() => {
     console.log('Calculating userRangeId. userRole:', userRole);
-    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Division'].includes(userRole)) {
+    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userRole)) {
       const r = ranges.find(r => r.name === userRole);
       console.log('Found range for role:', r);
       return r?.id;
@@ -969,7 +969,7 @@ export default function App() {
       doc.setFontSize(10);
       doc.text(`Financial Year: ${fys.find(f => f.id === selectedFY)?.name || selectedFY}`, 14, 22);
       
-      const headers = ["Date", "Unit", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
       const body: any[] = [];
       
       filteredLedgerData.allocations.forEach(alloc => {
@@ -1053,7 +1053,7 @@ export default function App() {
       sheet.mergeCells(1, 1, 1, 8);
       titleRow.alignment = { horizontal: 'center' };
 
-      const headers = ["Date", "Unit", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
       const headerRow = sheet.addRow(headers);
       headerRow.eachCell((cell) => {
         cell.font = { bold: true };
@@ -1688,7 +1688,7 @@ export default function App() {
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 lg:col-span-2">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4 border-b pb-2">
               <h3 className="text-lg font-semibold flex items-center gap-2">
-                <Table className="h-5 w-5 text-gray-500" /> Unit-wise Allocation Summary
+                <Table className="h-5 w-5 text-gray-500" /> Range-wise Allocation Summary
               </h3>
               <div className="relative w-full md:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
@@ -1705,7 +1705,7 @@ export default function App() {
               <table className="w-full text-left border-collapse text-sm min-w-[800px]">
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 font-semibold">
-                    <th className="p-3 border-b">Unit</th>
+                    <th className="p-3 border-b">Range</th>
                     <th className="p-3 border-b">Scheme</th>
                     <th className="p-3 border-b">Sector</th>
                     <th className="p-3 border-b">Activity</th>
@@ -1765,7 +1765,7 @@ export default function App() {
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
-                    <th className="p-3 border-b">Unit</th>
+                    <th className="p-3 border-b">Range</th>
                     <th className="p-3 border-b">SOE</th>
                     <th className="p-3 border-b text-right">Approval ID</th>
                     <th className="p-3 border-b text-right">Amount</th>
@@ -1844,7 +1844,7 @@ export default function App() {
       <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-6">
         <div className="flex justify-between items-center mb-4 border-b pb-2">
           <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Activity className="h-5 w-5 text-emerald-600" /> My Unit Summary
+            <Activity className="h-5 w-5 text-emerald-600" /> My Range Summary
           </h3>
         </div>
         <div className="overflow-x-auto max-h-80">
@@ -2115,7 +2115,7 @@ export default function App() {
                   <th className="px-4 py-3 font-bold border-r border-emerald-500">SOE Head</th>
                   <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Total Sanction (Approved)</th>
                   <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Received Budget (Try)</th>
-                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Allocated to Units</th>
+                  <th className="px-4 py-3 font-bold border-r border-emerald-500 text-right">Allocated to Ranges</th>
                   <th className="px-4 py-3 font-bold text-right">Balance to Allocate</th>
                 </tr>
               </thead>
@@ -2363,7 +2363,7 @@ export default function App() {
             <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
               <div className="text-xs text-gray-500 uppercase font-bold mb-2">Allocation Details</div>
               <div className="text-sm font-medium">{renderHierarchy(fundingAllocation)}</div>
-              <div className="text-xs text-gray-400 mt-1">Unit: {ranges.find(r => r.id === fundingAllocation.rangeId)?.name}</div>
+              <div className="text-xs text-gray-400 mt-1">Range: {ranges.find(r => r.id === fundingAllocation.rangeId)?.name}</div>
               <div className="mt-3 flex justify-between items-end">
                 <div>
                   <div className="text-[10px] text-gray-400 uppercase">Sanctioned</div>
@@ -2526,7 +2526,7 @@ export default function App() {
         await addDoc(collection(db, 'allocations'), {
           rangeId: division.id, schemeId, sectorId, activityId, subActivityId,
           amount, status: 'Funded', fundedSOEs: [{ soeId, amount }],
-          fyId, financialYear: selectedFY, remarks: 'Surrendered from ' + (ranges.find(r => r.id === rangeId)?.name || 'Unknown Unit'),
+          fyId, financialYear: selectedFY, remarks: 'Surrendered from ' + (ranges.find(r => r.id === rangeId)?.name || 'Unknown Range'),
           createdAt: Date.now(), updatedAt: Date.now()
         });
       }
@@ -2566,7 +2566,7 @@ export default function App() {
       filteredSurrenders,
       [
         { key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : '' },
-        { key: 'rangeId', label: 'Unit', render: (val) => ranges.find(r => r.id === val)?.name || 'N/A' },
+        { key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name || 'N/A' },
         { key: 'soeId', label: 'SOE', render: (val) => soes.find(s => s.id === val)?.name || 'N/A' },
         { key: 'amount', label: 'Amount', render: (val) => `₹${val.toLocaleString()}` },
         { key: 'remarks', label: 'Remarks' }
@@ -2623,13 +2623,13 @@ export default function App() {
       (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
           <div>
-            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+            <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
             <select 
               value={surrenderFilters.rangeId}
               onChange={(e) => setSurrenderFilters({ ...surrenderFilters, rangeId: e.target.value })}
               className="w-full p-1.5 border rounded text-xs bg-white"
             >
-              <option value="">All Units</option>
+              <option value="">All Ranges</option>
               {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
@@ -2995,7 +2995,7 @@ export default function App() {
                   <tr className="bg-emerald-800 text-white">
                     <th className="p-3 border border-emerald-700 text-left sticky left-0 bg-emerald-800 z-10" rowSpan={2}>Hierarchy (Sector/Activity/Sub-Activity)</th>
                     <th className="p-3 border border-emerald-700 text-center" rowSpan={2}>Approved Budget</th>
-                    <th className="p-3 border border-emerald-700 text-left" rowSpan={2}>Unit Name</th>
+                    <th className="p-3 border border-emerald-700 text-left" rowSpan={2}>Range Name</th>
                     <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Amount Allocated</th>
                     <th className="p-3 border border-emerald-700 text-right" rowSpan={2}>Budget to be Allocated</th>
                     <th className="p-3 border border-emerald-700 text-center" colSpan={4}>SOE Distribution (Editable)</th>
@@ -3333,13 +3333,13 @@ export default function App() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                   <select 
                     value={soeFilters.rangeId}
                     onChange={(e) => setSoeFilters({ ...soeFilters, rangeId: e.target.value })}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
-                    <option value="">All Units</option>
+                    <option value="">All Ranges</option>
                     {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                   </select>
                 </div>
@@ -4386,7 +4386,7 @@ export default function App() {
 
     autoTable(doc, {
       startY: 55,
-      head: [['SrNo', 'Date', 'Unit', 'SOE', 'Hierarchy', 'Description', 'Amount']],
+      head: [['SrNo', 'Date', 'Range', 'SOE', 'Hierarchy', 'Description', 'Amount']],
       body: tableData,
       theme: 'grid',
       headStyles: { fillColor: [16, 185, 129] },
@@ -4415,7 +4415,7 @@ export default function App() {
     setViewingBillPdf({ url, bill });
   };
 
-  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division') => {
+  const handleUserRoleChange = async (userId: string, newRole: 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh') => {
     try {
       await updateDoc(doc(db, 'users', userId), { role: newRole, updatedAt: Date.now() });
     } catch (error) {
@@ -4541,6 +4541,7 @@ export default function App() {
             <option value="Narag">Narag</option>
             <option value="Habban">Habban</option>
             <option value="Division">Division</option>
+            <option value="Rajgarh">Rajgarh</option>
           </select>
           <button type="submit" className="bg-emerald-600 text-white px-4 py-2 rounded hover:bg-emerald-700">
             Create User
@@ -4609,7 +4610,7 @@ export default function App() {
                 <td className="p-3">
                   <select 
                     value={u.role} 
-                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division')}
+                    onChange={(e) => handleUserRoleChange(u.id, e.target.value as 'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh')}
                     className="p-1 border rounded text-sm"
                   >
                     <option value="admin">Admin</option>
@@ -4619,6 +4620,7 @@ export default function App() {
                     <option value="Narag">Narag</option>
                     <option value="Habban">Habban</option>
                     <option value="Division">Division</option>
+                    <option value="Rajgarh">Rajgarh</option>
                   </select>
                 </td>
                 <td className="p-3 text-right flex justify-end gap-2">
@@ -4668,7 +4670,7 @@ export default function App() {
       }
 
       doc.setFontSize(12);
-      doc.text("Detailed Unit-wise Report", 14, finalY + 15);
+      doc.text("Detailed Range-wise Report", 14, finalY + 15);
       autoTable(doc, {
         head: [detailedHeaders],
         body: detailedData,
@@ -4737,7 +4739,7 @@ export default function App() {
       const detailedSheet = workbook.addWorksheet("Detailed Report");
       
       // Add Title
-      const dTitleRow = detailedSheet.addRow(["Detailed Unit-wise Report"]);
+      const dTitleRow = detailedSheet.addRow(["Detailed Range-wise Report"]);
       dTitleRow.font = { bold: true, size: 14 };
       detailedSheet.mergeCells(1, 1, 1, detailedHeaders.length);
       dTitleRow.alignment = { horizontal: 'center' };
@@ -4793,7 +4795,7 @@ export default function App() {
       const zip = new JSZip();
       
       // 1. Allocations
-      const allocHeaders = ['ID', 'SOE', 'Unit', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
+      const allocHeaders = ['ID', 'SOE', 'Range', 'Amount', 'Scheme', 'Sector', 'Activity', 'SubActivity'];
       const allocData = currentAllocations.map(a => [
         a.id,
         a.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).join(', ') || 'Pending',
@@ -4988,7 +4990,7 @@ export default function App() {
       const totalPages = reportItemsPerPage === -1 ? 1 : Math.ceil(filtered.length / reportItemsPerPage);
       const paginatedData = reportItemsPerPage === -1 ? filtered : filtered.slice((reportPage - 1) * reportItemsPerPage, reportPage * reportItemsPerPage);
 
-      const headers = ['Date', 'Unit', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
+      const headers = ['Date', 'Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE', 'Description', 'Allocation', 'Expenditure', 'Balance to Book'];
       const tableData = filtered.map(r => [
         r.date, r.range, r.scheme, r.sector, r.activity, r.subActivity, r.soe, r.description, r.allocation, r.expenditure, r.balance
       ]);
@@ -5046,13 +5048,13 @@ export default function App() {
                 <div className="mb-6 animate-in fade-in slide-in-from-top-2">
                   <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
                     <div>
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                       <select 
                         value={reportFilters.range}
                         onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
-                        <option value="">All Units</option>
+                        <option value="">All Ranges</option>
                         {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
                     </div>
@@ -5186,7 +5188,7 @@ export default function App() {
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">Date</th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
                     <div className="flex items-center justify-between">
-                      Unit <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
+                      Range <Filter className="w-3 h-3 cursor-pointer hover:text-emerald-600" onClick={() => setShowReportFilters(!showReportFilters)} />
                     </div>
                   </th>
                   <th className="p-2 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">
@@ -5454,7 +5456,7 @@ export default function App() {
     ]);
 
     const isGlobalUser = userRole === 'admin' || userRole === 'deo' || userRole === 'approver';
-    const detailedHeaders = ['Unit', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
+    const detailedHeaders = ['Range', 'Scheme', 'Sector', 'Activity', 'Sub-Activity', 'SOE Head'];
     if (!userRangeId) detailedHeaders.push('Total Budget');
     detailedHeaders.push('Allocation');
     detailedHeaders.push('Expenditure', 'Balance to Book');
@@ -5611,13 +5613,13 @@ export default function App() {
                     
                 <div className={`${reportSubTab === 'summary' ? 'lg:col-span-3' : 'lg:col-span-4'} grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-xl border border-gray-200`}>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                     <select 
                       value={reportFilters.range}
                       onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
-                      <option value="">All Units</option>
+                      <option value="">All Ranges</option>
                       {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -5720,7 +5722,7 @@ export default function App() {
                         <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                         <input
                           type="text"
-                          placeholder="Search hierarchy, SOE, unit..."
+                          placeholder="Search hierarchy, SOE, range..."
                           value={ledgerSearchTerm}
                           onChange={(e) => setLedgerSearchTerm(e.target.value)}
                           className="pl-9 pr-4 py-2 border border-gray-300 rounded text-xs bg-white w-full"
@@ -5854,7 +5856,7 @@ export default function App() {
                   onClick={() => setShowDetailedReport(!showDetailedReport)}
                 >
                   <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
-                    <Table className="w-4 h-4 text-emerald-600" /> Detailed Unit-wise Report
+                    <Table className="w-4 h-4 text-emerald-600" /> Detailed Range-wise Report
                   </h4>
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
@@ -6359,7 +6361,7 @@ export default function App() {
           
           <div className={`${menuOpen ? 'grid' : 'hidden'} lg:flex grid-cols-2 sm:grid-cols-3 lg:flex-row flex-wrap gap-1 p-2`}>
             {(userRole === 'admin' ? [
-              'Dashboard', 'Financial Years', 'Units', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
+              'Dashboard', 'Financial Years', 'Ranges', 'Schemes', 'Sectors', 'Activities', 'Sub-Activities', 
               'SOE Heads', 'Allocations', 'Reconciliation', 'Expenditures', 'Surrender', 'Ledger', 'Reports', 'Users'
             ] : userRole === 'DA' ? [
               'Dashboard', 'Allocations', 'Reconciliation', 'Expenditures', 'Ledger', 'Reports'
@@ -6382,7 +6384,7 @@ export default function App() {
               >
                 {item === 'Dashboard' && <Home className="w-3 h-3 sm:w-4 sm:h-4" />}
                 {item === 'Financial Years' && <Calendar className="w-3 h-3 sm:w-4 sm:h-4" />}
-                {item === 'Units' && <Map className="w-3 h-3 sm:w-4 sm:h-4" />}
+                {item === 'Ranges' && <Map className="w-3 h-3 sm:w-4 sm:h-4" />}
                 {item === 'Schemes' && <TreePine className="w-3 h-3 sm:w-4 sm:h-4" />}
                 {item === 'Sectors' && <Shield className="w-3 h-3 sm:w-4 sm:h-4" />}
                 {item === 'Activities' && <Activity className="w-3 h-3 sm:w-4 sm:h-4" />}
@@ -6425,13 +6427,13 @@ export default function App() {
           (item) => setEditingItem({ type: 'Financial Year', item })
         )}
 
-        {activeTab === 'Units' && renderSimpleManager(
-          'Unit', 
+        {activeTab === 'Ranges' && renderSimpleManager(
+          'Range', 
           ranges, 
-          [{key: 'name', label: 'Unit Name', render: (val) => val === 'Rajgarh Forest Division' ? 'Division' : val}], 
+          [{key: 'name', label: 'Range Name', render: (val) => val === 'Rajgarh Forest Division' ? 'Division' : val}], 
           handleAddRange, 
           (id) => handleDelete('ranges', id), 
-          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Unit Name" className="w-full p-1.5 border rounded text-sm" />,
+          <input name="name" required defaultValue={editingItem?.type === 'Range' ? editingItem.item.name : ''} placeholder="Range Name" className="w-full p-1.5 border rounded text-sm" />,
           (item) => setEditingItem({ type: 'Range', item })
         )}
 
@@ -6561,7 +6563,7 @@ export default function App() {
               currentAllocations, 
               [
                 {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item), searchableText: (_, item) => getHierarchyText(item)},
-                {key: 'rangeId', label: 'Unit', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
+                {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
                 {key: 'amount', label: 'Sanctioned Amount', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className="font-medium">₹{val.toLocaleString()}</span>
@@ -6635,7 +6637,7 @@ export default function App() {
                 onSelectionChange={setAllocationFormFilters}
               >
                 <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
-                  <option value="">Select Unit</option>
+                  <option value="">Select Range</option>
                   {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
                 </select>
                 <input 
@@ -6709,13 +6711,13 @@ export default function App() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                  <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                   <select 
                     value={allocFilters.rangeId}
                     onChange={(e) => { setAllocFilters({ ...allocFilters, rangeId: e.target.value }); setCurrentPage(1); }}
                     className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                   >
-                    <option value="">All Units</option>
+                    <option value="">All Ranges</option>
                     {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                   </select>
                 </div>
@@ -6772,7 +6774,7 @@ export default function App() {
                 currentExpenses, 
                 [
                   {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
-                  {key: 'allocationId', label: 'Hierarchy / Unit / SOE', 
+                  {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
                     searchableText: (val, item) => {
                       const al = allocations.find(a => a.id === val);
                       const r = ranges.find(r => r.id === al?.rangeId);
@@ -6978,13 +6980,13 @@ export default function App() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                     <select 
                       value={expFilters.rangeId}
                       onChange={(e) => setExpFilters({ ...expFilters, rangeId: e.target.value })}
                       className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
                     >
-                      <option value="">All Units</option>
+                      <option value="">All Ranges</option>
                       {ranges.map(s => <option key={s.id} value={s.id}>{s.name === 'Rajgarh Forest Division' ? 'Division' : s.name}</option>)}
                     </select>
                   </div>
@@ -7075,7 +7077,7 @@ export default function App() {
                           onChange={(e) => setBillExpFilters({...billExpFilters, rangeId: e.target.value})}
                           className="text-[10px] p-1 border rounded bg-white"
                         >
-                          <option value="">All Units</option>
+                          <option value="">All Ranges</option>
                           {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
                         </select>
                         <select 
@@ -7184,7 +7186,7 @@ export default function App() {
                                   <span className="font-bold text-gray-900">{exp.date ? exp.date.split('-').reverse().join('/') : 'N/A'}</span>
                                   <span className="font-bold text-emerald-600">₹{exp.amount.toLocaleString()}</span>
                                 </div>
-                                <div className="text-gray-600 font-medium mb-1">Unit: {r?.name} | SOE: {s?.name}</div>
+                                <div className="text-gray-600 font-medium mb-1">Range: {r?.name} | SOE: {s?.name}</div>
                                 <div className="text-gray-500 text-[9px] mb-1 italic">{hierarchy}</div>
                                 <div className="text-gray-400 truncate">{exp.description}</div>
                               </div>
@@ -7332,13 +7334,13 @@ export default function App() {
               <div className="mb-6 animate-in fade-in slide-in-from-top-2">
                 <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 p-4 bg-gray-50 rounded-t-lg border border-gray-200">
                   <div>
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Unit</label>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                     <select 
                       value={ledgerFilters.range}
                       onChange={(e) => setLedgerFilters({ ...ledgerFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' })}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
-                      <option value="">All Units</option>
+                      <option value="">All Ranges</option>
                       {uniqueRangesList.map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
@@ -7459,7 +7461,7 @@ export default function App() {
                 <thead>
                   <tr className="bg-gray-50 text-gray-600 text-sm">
                     <th className="p-3 border-b">Date</th>
-                    <th className="p-3 border-b">Unit</th>
+                    <th className="p-3 border-b">Range</th>
                     <th className="p-3 border-b">Hierarchy & SOE</th>
                     <th className="p-3 border-b">Description</th>
                     <th className="p-3 border-b">Approval ID</th>
@@ -7937,7 +7939,7 @@ function CascadingDropdowns({
             required
             name="rangeId"
           >
-            <option value="">Select Unit</option>
+            <option value="">Select Range</option>
             {ranges.filter((r: any) => r.name !== 'Division' && r.name !== 'Rajgarh Forest Division').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
         </div>
@@ -8114,7 +8116,7 @@ function CascadingDropdowns({
                 onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
                 required
               >
-                <option value="">Select Allocation (Unit)</option>
+                <option value="">Select Allocation (Range)</option>
                 {filteredAllocations.map((a: any) => {
                   const r = ranges.find((r: any) => r.id === a.rangeId);
                   return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
@@ -8127,7 +8129,7 @@ function CascadingDropdowns({
               <input type="hidden" name="allocationId" value={allocationId} />
               {allocationId && (
                 <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
-                  <span>Unit: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
+                  <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
                   <span>Limit: ₹{allocations.find((a: any) => a.id === allocationId)?.amount.toLocaleString()}</span>
                 </div>
               )}
