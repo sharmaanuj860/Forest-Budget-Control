@@ -184,6 +184,21 @@
         "financialYear": { "type": "string", "description": "Name of the financial year" }
       },
       "required": ["rangeId", "schemeId", "sectorId", "activityId", "subActivityId", "soeId", "amount", "date", "fyId", "financialYear"]
+    },
+    "Payee": {
+      "title": "Payee",
+      "description": "Represents a payee detail",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "The name of the payee" },
+        "address": { "type": "string", "description": "The address of the payee" },
+        "accountNumber": { "type": "string", "description": "The bank account number of the payee" },
+        "rangeId": { "type": "string", "description": "ID of the range (optional)" },
+        "createdBy": { "type": "string", "description": "UID of the user who created the payee" },
+        "createdAt": { "type": "number", "description": "Timestamp of creation" },
+        "updatedAt": { "type": "number", "description": "Timestamp of last update" }
+      },
+      "required": ["name", "address", "accountNumber", "createdBy", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -200,6 +215,7 @@
     "/expenditures": { "schema": "Expenditure", "description": "Collection of expenditures" },
     "/users": { "schema": "User", "description": "Collection of application users" },
     "/bills": { "schema": "Bill", "description": "Collection of treasury bills" },
-    "/surrenders": { "schema": "Surrender", "description": "Collection of budget surrenders" }
+    "/surrenders": { "schema": "Surrender", "description": "Collection of budget surrenders" },
+    "/payees": { "schema": "Payee", "description": "Collection of payee details" }
   }
 }

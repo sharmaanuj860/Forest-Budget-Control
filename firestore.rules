@@ -3,6 +3,23 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: payees
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required) - Payee name
+    //   - address: string (required) - Payee address
+    //   - accountNumber: string (required) - Bank account number
+    //   - rangeId: string (optional) - Associated range ID
+    //   - createdBy: string (required) - Creator UID
+    //   - createdAt: number (required) - Creation timestamp
+    //   - updatedAt: number (required) - Update timestamp
+    //
+    // ===============================================================
+    
+    // ===============================================================
     // Helper Functions
     // ===============================================================
     
@@ -48,6 +65,25 @@ service cloud.firestore {
 
     function canApproveExpenditure() {
       return isAdmin() || isApprover() || isDA();
+    }
+
+    function hasRequiredFields(fields) {
+       return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function isValidPayee(data) {
+      return hasRequiredFields(['name', 'address', 'accountNumber', 'createdBy', 'createdAt', 'updatedAt']) &&
+             hasOnlyAllowedFields(['name', 'address', 'accountNumber', 'rangeId', 'createdBy', 'createdAt', 'updatedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
+             data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
+             data.accountNumber is string && data.accountNumber.size() > 0 && data.accountNumber.size() < 50 &&
+             data.createdBy is string &&
+             data.createdAt is number &&
+             data.updatedAt is number;
     }
 
     // ===============================================================
@@ -137,6 +173,13 @@ service cloud.firestore {
     match /surrenders/{id} {
       allow read: if isAuthenticated();
       allow create, update, delete: if canWrite();
+    }
+
+    match /payees/{id} {
+      allow read: if isAuthenticated();
+      allow create: if canWrite() && isValidPayee(request.resource.data);
+      allow update: if canWrite() && isValidPayee(request.resource.data);
+      allow delete: if canWrite();
     }
   }
 }

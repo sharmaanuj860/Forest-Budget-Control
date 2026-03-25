@@ -1,11 +1,11 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
   auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence,
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction, writeBatch
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -74,6 +74,7 @@ type Expense = {
   updatedAt?: number;
   createdAt?: number;
   approvalReason?: string;
+  payeeId?: string;
 };
 
 type Bill = {
@@ -88,6 +89,17 @@ type Bill = {
   createdAt: number;
   updatedAt: number;
   remarks?: string;
+};
+
+type Payee = {
+  id: string;
+  name: string;
+  address: string;
+  accountNumber: string;
+  rangeId?: string;
+  createdAt: number;
+  updatedAt: number;
+  createdBy: string;
 };
 
 type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'; password?: string };
@@ -198,6 +210,149 @@ const getReceivedInTry = (s: any) => {
 
 const ALLOWED_SOES = ['20 OC', '21 Maint', '30MV', '33M&S', '36M&W', 'Provisional'];
 
+// --- Payee Selector Component ---
+const PayeeSelector = ({ 
+  payees, 
+  selectedPayees, 
+  onSelect, 
+  onRemove, 
+  onAmountChange,
+  ranges,
+  availableBalance
+}: { 
+  payees: Payee[], 
+  selectedPayees: { payeeId: string, amount: string }[], 
+  onSelect: (payeeId: string) => void, 
+  onRemove: (payeeId: string) => void, 
+  onAmountChange: (payeeId: string, amount: string) => void,
+  ranges: Range[],
+  availableBalance?: number
+}) => {
+  const [search, setSearch] = useState('');
+  const [showResults, setShowResults] = useState(false);
+
+  const filteredPayees = useMemo(() => {
+    const lower = search.toLowerCase();
+    return payees.filter(p => 
+      p.name.toLowerCase().includes(lower) || 
+      p.accountNumber.toLowerCase().includes(lower)
+    ).filter(p => !selectedPayees.some(sp => sp.payeeId === p.id));
+  }, [search, payees, selectedPayees]);
+
+  const totalAmount = useMemo(() => 
+    selectedPayees.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+  , [selectedPayees]);
+
+  return (
+    <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+      <div className="flex justify-between items-center">
+        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee Selection (Multiple Allowed)</label>
+        {availableBalance !== undefined && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-gray-500 uppercase">Available:</span>
+            <span className="text-xs font-bold text-blue-700">₹{availableBalance.toLocaleString()}</span>
+          </div>
+        )}
+      </div>
+      
+      <div className="relative">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-2 top-2.5 w-4 h-4 text-gray-400" />
+            <input 
+              type="text" 
+              placeholder="Search payee by name or account..." 
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setShowResults(true); }}
+              onFocus={() => setShowResults(true)}
+              className="w-full pl-8 p-2 text-sm border rounded bg-white"
+            />
+          </div>
+        </div>
+
+        {showResults && search && (
+          <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+            {filteredPayees.length > 0 ? (
+              filteredPayees.map(p => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    onSelect(p.id);
+                    setSearch('');
+                    setShowResults(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-sm hover:bg-emerald-50 border-b last:border-0"
+                >
+                  <div className="font-medium">{p.name}</div>
+                  <div className="text-[10px] text-gray-500">{p.accountNumber} | {ranges.find(r => r.id === p.rangeId)?.name || 'N/A'}</div>
+                </button>
+              ))
+            ) : (
+              <div className="px-4 py-2 text-sm text-gray-500 italic">No payees found</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {selectedPayees.length > 0 && (
+        <div className="space-y-2">
+          {selectedPayees.map(sp => {
+            const p = payees.find(payee => payee.id === sp.payeeId);
+            return (
+              <div key={sp.payeeId} className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs font-bold truncate">{p?.name}</div>
+                  <div className="text-[10px] text-gray-400 truncate">{p?.accountNumber}</div>
+                </div>
+                <div className="w-36 shrink-0">
+                  <input 
+                    type="text" 
+                    inputMode="decimal"
+                    placeholder="Amount" 
+                    value={sp.amount}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                        onAmountChange(sp.payeeId, val);
+                      }
+                    }}
+                    className="w-full p-1.5 text-sm border-2 border-emerald-100 rounded text-right font-bold text-emerald-700 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+                    required
+                  />
+                </div>
+                <div className="shrink-0">
+                  <button 
+                    type="button"
+                    onClick={() => onRemove(sp.payeeId)}
+                    className="p-1 text-red-500 hover:bg-red-50 rounded"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+          <div className="space-y-1 pt-2 border-t border-gray-200">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-bold text-gray-500 uppercase">Total Allocated:</span>
+              <span className="text-sm font-bold text-emerald-600">₹{totalAmount.toLocaleString()}</span>
+            </div>
+            {availableBalance !== undefined && (
+              <div className="flex justify-between items-center">
+                <span className="text-[10px] font-bold text-gray-500 uppercase">Remaining Balance:</span>
+                <span className={`text-sm font-bold ${availableBalance - totalAmount < 0 ? 'text-red-600' : 'text-blue-600'}`}>
+                  ₹{(availableBalance - totalAmount).toLocaleString()}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [allocationAmount, setAllocationAmount] = useState<string>('');
@@ -254,6 +409,7 @@ export default function App() {
   const [allocations, setAllocations] = useState<Allocation[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [bills, setBills] = useState<Bill[]>([]);
+  const [payees, setPayees] = useState<Payee[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
@@ -265,11 +421,12 @@ export default function App() {
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
-  const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills'>('list');
+  const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees'>('list');
   const [selectedExpensesForBill, setSelectedExpensesForBill] = useState<string[]>([]);
   const [billFilters, setBillFilters] = useState({ billNo: '', startDate: '', endDate: '' });
   const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [isBillFormFullScreen, setIsBillFormFullScreen] = useState(false);
+  const [isTableFullScreen, setIsTableFullScreen] = useState(false);
   const [viewingBillPdf, setViewingBillPdf] = useState<{ url: string; bill: any } | null>(null);
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
@@ -410,9 +567,25 @@ export default function App() {
   const [reconSchemeId, setReconSchemeId] = useState('');
   const [reconSearchTerm, setReconSearchTerm] = useState('');
   const [reconData, setReconData] = useState<any>({});
+  const [selectedPayeesForExpense, setSelectedPayeesForExpense] = useState<{ payeeId: string; amount: string }[]>([]);
+  const [currentSoeBalance, setCurrentSoeBalance] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    if (activeTab !== 'Expenditures') {
+      setCurrentSoeBalance(undefined);
+      setSelectedPayeesForExpense([]);
+    }
+  }, [activeTab]);
 
   // --- Editing State ---
   const [editingItem, setEditingItem] = useState<{ type: string; item: any } | null>(null);
+
+  useEffect(() => {
+    if (!editingItem) {
+      setCurrentSoeBalance(undefined);
+      setSelectedPayeesForExpense([]);
+    }
+  }, [editingItem]);
   const [viewingSoeExp, setViewingSoeExp] = useState<{ soeId: string; soeName: string; hierarchy: string } | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -571,9 +744,14 @@ export default function App() {
       setUsers(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
 
+    const unsubPayees = onSnapshot(collection(db, 'payees'), (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Payee));
+      setPayees(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'payees'));
+
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
-      unsubSubActivities(); unsubUsers();
+      unsubSubActivities(); unsubUsers(); unsubPayees();
     };
   }, [user, userRole]);
 
@@ -757,19 +935,6 @@ export default function App() {
   };
 
 
-  useEffect(() => {
-    if (ranges.length > 0 && !ranges.some(r => r.name === 'Division')) {
-      const addDivision = async () => {
-        try {
-          await addDoc(collection(db, 'ranges'), { name: 'Division', createdAt: Date.now(), updatedAt: Date.now() });
-        } catch (e) {
-          console.error("Error adding Division unit:", e);
-        }
-      };
-      addDivision();
-    }
-  }, [ranges]);
-
   // --- Derived Data / Helpers ---
   const currentSchemes = schemes;
   const currentSectors = sectors;
@@ -851,9 +1016,18 @@ export default function App() {
     if (allocFilters.soeId) {
       filtered = filtered.filter(a => a.fundedSOEs && a.fundedSOEs.some(f => f.soeId === allocFilters.soeId));
     }
+
+    // Filter out "Division" allocations with 0 amount to avoid cluttering as requested
+    filtered = filtered.filter(a => {
+      const r = ranges.find(range => range.id === a.rangeId);
+      const isDivision = r?.name === 'Division' || r?.name === 'Rajgarh Forest Division';
+      if (isDivision && a.amount === 0) return false;
+      return true;
+    });
+
     console.log('currentAllocations count:', filtered.length);
     return filtered;
-  }, [baseAllocations, allocFilters, userRangeId]);
+  }, [baseAllocations, allocFilters, userRangeId, ranges]);
 
   const currentExpenses = useMemo(() => {
     let filtered = expenses;
@@ -1406,6 +1580,7 @@ export default function App() {
       return true;
     });
   }, [soeAbstractData, allocationFormFilters, soeSearchTerm]);
+
 
   // --- Render Functions for Tabs ---
   const renderDashboard = () => {
@@ -2552,8 +2727,18 @@ export default function App() {
     }
 
     const soeFund = rangeAlloc.fundedSOEs.find(s => s.soeId === soeId);
-    if (!soeFund || soeFund.amount < amount) {
-      showAlert("Surrender amount exceeds allocated amount in the source unit.");
+    if (!soeFund) {
+      showAlert("No funds found for this SOE in the selected allocation.");
+      return;
+    }
+
+    // Validation: Ensure surrender doesn't leave allocation below expenditure for this SOE
+    const spentForSoe = expenses
+      .filter(e => e.allocationId === rangeAlloc.id && e.soeId === soeId && e.status !== 'rejected')
+      .reduce((sum, e) => sum + e.amount, 0);
+
+    if (soeFund.amount - amount < spentForSoe) {
+      showAlert(`Cannot surrender ₹${amount.toLocaleString()}. Remaining SOE budget (₹${(soeFund.amount - amount).toLocaleString()}) would be less than expenditure (₹${spentForSoe.toLocaleString()}) for this SOE.`);
       return;
     }
 
@@ -2578,45 +2763,7 @@ export default function App() {
         updatedAt: Date.now()
       });
 
-      // 3. Increase Division Allocation
-      let division = ranges.find(r => r.name === 'Division' || r.name === 'Rajgarh Forest Division');
-      if (!division) {
-        // If Division doesn't exist, create it or use a default
-        const divRef = await addDoc(collection(db, 'ranges'), { name: 'Division', createdAt: Date.now(), updatedAt: Date.now() });
-        division = { id: divRef.id, name: 'Division' };
-      }
-
-      const divisionAlloc = allocations.find(a => 
-        a.rangeId === division.id && 
-        a.schemeId === schemeId && 
-        a.sectorId === sectorId && 
-        a.activityId === activityId && 
-        a.subActivityId === subActivityId
-      );
-
-      if (divisionAlloc) {
-        const divFundedSOEs = [...divisionAlloc.fundedSOEs];
-        const divSoeIndex = divFundedSOEs.findIndex(s => s.soeId === soeId);
-        if (divSoeIndex > -1) {
-          divFundedSOEs[divSoeIndex].amount += amount;
-        } else {
-          divFundedSOEs.push({ soeId, amount });
-        }
-        await updateDoc(doc(db, 'allocations', divisionAlloc.id), {
-          fundedSOEs: divFundedSOEs,
-          amount: divisionAlloc.amount + amount,
-          updatedAt: Date.now()
-        });
-      } else {
-        await addDoc(collection(db, 'allocations'), {
-          rangeId: division.id, schemeId, sectorId, activityId, subActivityId,
-          amount, status: 'Funded', fundedSOEs: [{ soeId, amount }],
-          fyId, financialYear: selectedFY, remarks: 'Surrendered from ' + (ranges.find(r => r.id === rangeId)?.name || 'Unknown Range'),
-          createdAt: Date.now(), updatedAt: Date.now()
-        });
-      }
-
-      showAlert("Amount surrendered successfully to Division.");
+      showAlert("Amount surrendered successfully. It is now available for reallocation from the Sector-wide budget.");
       setEditingItem(null);
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'surrenders');
@@ -2651,10 +2798,19 @@ export default function App() {
       filteredSurrenders,
       [
         { key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : '' },
-        { key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name || 'N/A' },
-        { key: 'soeId', label: 'SOE', render: (val) => soes.find(s => s.id === val)?.name || 'N/A' },
-        { key: 'amount', label: 'Amount', render: (val) => `₹${val.toLocaleString()}` },
-        { key: 'remarks', label: 'Remarks' }
+        { key: 'rangeId', label: 'Hierarchy / Unit', render: (_, item) => {
+          const r = ranges.find(r => r.id === item.rangeId);
+          const hText = getHierarchyText(item);
+          return (
+            <div className="max-w-[200px]">
+              <div className="font-bold text-gray-900 truncate leading-tight">{r?.name === 'Rajgarh Forest Division' ? 'Division' : r?.name}</div>
+              <div className="text-[9px] text-gray-500 truncate" title={hText}>{hText}</div>
+            </div>
+          );
+        }, searchableText: (_, item) => getHierarchyText(item) },
+        { key: 'soeId', label: 'SOE', render: (val) => <span className="font-medium text-gray-700">{soes.find(s => s.id === val)?.name || 'N/A'}</span> },
+        { key: 'amount', label: 'Amount', render: (val) => <span className="font-bold text-red-600">₹{val.toLocaleString()}</span> },
+        { key: 'remarks', label: 'Remarks', render: (val) => <div className="text-[10px] italic text-gray-500 max-w-[150px] whitespace-normal break-words" title={val}>{val || '-'}</div> }
       ],
       handleSurrender,
       (id) => handleDelete('surrenders', id),
@@ -2698,7 +2854,7 @@ export default function App() {
           </CascadingDropdowns>
         </div>
       ),
-      null,
+      (item) => setEditingItem({ type: 'Surrender', item }),
       undefined,
       undefined,
       null,
@@ -3463,7 +3619,7 @@ export default function App() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className="bg-gray-50 text-gray-600 font-medium border-b">
                 <tr>
@@ -3562,7 +3718,7 @@ export default function App() {
     onAdd: (e: React.FormEvent) => void, 
     onDelete: (id: string) => void,
     formContent: React.ReactNode,
-    onEdit: (item: any) => void,
+    onEdit?: (item: any) => void,
     canEditDelete?: (item: any) => boolean,
     extraContent?: React.ReactNode,
     customActions?: (item: any) => React.ReactNode,
@@ -3595,9 +3751,9 @@ export default function App() {
     }
 
     return (
-    <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start relative">
-      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && (
-        <div className={`bg-white p-3 rounded-xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
+    <div className={`grid grid-cols-1 ${isFullScreen ? '' : 'lg:grid-cols-4'} gap-6 items-start relative`}>
+      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && !isTableFullScreen && (
+        <div className={`bg-white p-4 rounded-2xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
             onClick={() => setIsFormExpanded(!isFormExpanded)}
@@ -3664,43 +3820,53 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${isFullScreen ? 'hidden' : ((userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4')}`}>
+      <div className={`space-y-6 ${isTableFullScreen ? 'fixed inset-0 z-[60] bg-white p-6 overflow-y-auto' : (isFullScreen ? 'hidden' : ((userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4'))}`}>
         {extraContent}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-2">
-            <h3 className="text-lg font-semibold">Existing {title}s</h3>
-            <div className="flex items-center gap-2">
-              <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+        <div className={`bg-white ${isTableFullScreen ? '' : 'p-4 rounded-2xl shadow-sm border border-gray-100'}`}>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-3">
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-gray-800">Existing {title}s</h3>
+                <button
+                  type="button"
+                  onClick={() => setIsTableFullScreen(!isTableFullScreen)}
+                  className="p-2 hover:bg-gray-100 rounded-xl text-gray-500 transition-colors border border-gray-100"
+                  title={isTableFullScreen ? "Exit Full Screen" : "Expand to Full Screen"}
+                >
+                  {isTableFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                </button>
+              </div>
+            <div className="flex items-center gap-3">
+              <div className="relative group">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
                 <input 
                   type="text" 
                   placeholder={`Search ${title}s...`} 
                   value={searchTerm}
                   onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
-                  className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
+                  className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 w-full sm:w-64 transition-all"
                 />
               </div>
               {filterContent && setIsFilterExpanded && (
                 <button 
                   onClick={() => setIsFilterExpanded(!isFilterExpanded)}
-                  className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${isFilterExpanded ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
+                  className={`flex items-center gap-1 px-2 py-1.5 border rounded-lg text-xs transition-colors ${isFilterExpanded ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
                 >
-                  <Filter className="w-4 h-4" />
-                  <span>Filters</span>
-                  {isFilterExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  <Filter className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Filters</span>
+                  {isFilterExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                 </button>
               )}
             </div>
           </div>
 
           {isFilterExpanded && filterContent && (
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200 mb-4 animate-in fade-in slide-in-from-top-2">
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-2 p-2 bg-gray-50 rounded-lg border border-gray-200 mb-3 animate-in fade-in slide-in-from-top-2">
               {filterContent}
               {onResetFilters && (
                 <div className="md:col-span-3 lg:col-span-5 flex justify-end">
                   <button 
                     onClick={onResetFilters}
-                    className="text-[10px] text-red-600 hover:text-red-800 font-bold uppercase flex items-center gap-1"
+                    className="text-[9px] text-red-600 hover:text-red-800 font-bold uppercase flex items-center gap-1"
                   >
                     Reset Filters
                   </button>
@@ -3708,66 +3874,63 @@ export default function App() {
               )}
             </div>
           )}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse min-w-[800px]">
-            <thead>
-              <tr className="bg-gray-50 text-gray-600 text-sm">
-                <th className="p-3 border-b">SrNo</th>
-                {columns.map(c => <th key={c.key} className="p-3 border-b">{c.label}</th>)}
-                {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && <th className="p-3 border-b text-right">Actions</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {filteredItems
-                .sort((a, b) => {
-                  // Priority 1: Status (Funded/Approved first)
-                  const statusA = a.status === 'Funded' || a.status === 'approved';
-                  const statusB = b.status === 'Funded' || b.status === 'approved';
-                  
-                  // If one is funded and other is not, funded wins
-                  if (statusA !== statusB) return statusA ? -1 : 1;
-                  
-                  // Priority 2: updatedAt (Descending)
-                  return (b.updatedAt || 0) - (a.updatedAt || 0);
-                })
-                .slice((currentPage - 1) * itemsPerPage, itemsPerPage === -1 ? filteredItems.length : currentPage * itemsPerPage)
-                .map((item, index) => (
-                <tr key={item.id} className="border-b last:border-0 hover:bg-gray-50">
-                  <td className="p-3 text-gray-500 font-medium">{(currentPage - 1) * itemsPerPage + index + 1}</td>
-                  {columns.map(c => <td key={c.key} className="p-3">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                  {(customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
-                    <td className="p-3 text-right flex justify-end gap-2">
-                      {customActions && customActions(item)}
-                      {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
-                        <>
-                          <button 
-                            onClick={() => {
-                              onEdit(item);
-                              setIsFormExpanded(true);
-                              window.scrollTo({ top: 0, behavior: 'smooth' });
-                            }} 
-                            className="text-blue-500 hover:text-blue-700 p-1"
-                            title="Edit"
-                          >
-                            <Pencil className="w-4 h-4"/>
-                          </button>
-                          <button 
-                            onClick={() => onDelete(item.id)} 
-                            className="text-red-500 hover:text-red-700 p-1"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4"/>
-                          </button>
-                        </>
-                      )}
-                    </td>
-                  )}
+          <div className="overflow-x-auto rounded-xl border border-gray-100">
+            <table className="w-full text-left border-collapse">
+              <thead className="bg-gray-50/50 text-gray-500 font-bold uppercase tracking-wider text-[10px]">
+                <tr>
+                  <th className="p-3 border-b border-gray-100 whitespace-nowrap w-12 text-center">#</th>
+                  {columns.map(c => <th key={c.key} className="p-3 border-b border-gray-100 whitespace-nowrap">{c.label}</th>)}
+                  {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && <th className="p-3 border-b border-gray-100 text-right whitespace-nowrap">Actions</th>}
                 </tr>
-              ))}
-              {filteredItems.length === 0 && <tr><td colSpan={columns.length + ((customActions || (canEditDelete ? items.some(canEditDelete) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) ? 1 : 0)} className="p-4 text-center text-gray-500">No records found.</td></tr>}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {filteredItems
+                  .sort((a, b) => {
+                    const statusA = a.status === 'Funded' || a.status === 'approved';
+                    const statusB = b.status === 'Funded' || b.status === 'approved';
+                    if (statusA !== statusB) return statusA ? -1 : 1;
+                    return (b.updatedAt || 0) - (a.updatedAt || 0);
+                  })
+                  .slice((currentPage - 1) * itemsPerPage, itemsPerPage === -1 ? filteredItems.length : currentPage * itemsPerPage)
+                  .map((item, index) => (
+                  <tr key={item.id} className="hover:bg-emerald-50/30 transition-colors group">
+                    <td className="p-3 text-gray-400 font-medium text-center text-[11px]">{(currentPage - 1) * itemsPerPage + index + 1}</td>
+                    {columns.map(c => <td key={c.key} className="p-3 text-gray-600 text-[11px] leading-relaxed">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
+                    {(customActions || (canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
+                      <td className="p-3 text-right">
+                        <div className="flex justify-end gap-1 transition-opacity">
+                          {customActions && customActions(item)}
+                          {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
+                            <>
+                              <button 
+                                onClick={() => {
+                                  onEdit?.(item);
+                                  setIsFormExpanded(true);
+                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                }} 
+                                className="text-blue-500 hover:bg-blue-100 rounded-lg p-1.5 transition-colors"
+                                title="Edit"
+                              >
+                                <Pencil className="w-3.5 h-3.5"/>
+                              </button>
+                              <button 
+                                onClick={() => onDelete(item.id)} 
+                                className="text-red-500 hover:bg-red-100 rounded-lg p-1.5 transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-3.5 h-3.5"/>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {filteredItems.length === 0 && <tr><td colSpan={columns.length + 2} className="p-8 text-center text-gray-400 text-sm italic">No records found matching your criteria.</td></tr>}
+              </tbody>
+            </table>
+          </div>
         <Pagination 
           totalEntries={filteredItems.length} 
           currentPage={currentPage} 
@@ -3999,15 +4162,23 @@ export default function App() {
 
 
 
-  const isAllocationInvalid = useMemo(() => {
-    if (activeTab !== 'Allocations' || !allocationFormFilters.schemeId) return false;
+  const allocationBudgetStatus = useMemo(() => {
+    if (activeTab !== 'Allocations' || !allocationFormFilters.schemeId) return { isInvalid: false, remaining: 0, availableBudget: 0, currentAllocated: 0 };
     const amount = parseFloat(allocationAmount);
-    if (isNaN(amount) || amount <= 0) return false;
+    const isEditing = editingItem?.type === 'Allocation';
 
     const { schemeId, sectorId, activityId, subActivityId, fundingSoeName } = allocationFormFilters;
 
+    // Check against expenditure if editing
+    if (isEditing) {
+      const spent = expenses
+        .filter(e => e.allocationId === editingItem.item.id && e.status !== 'rejected')
+        .reduce((sum, e) => sum + e.amount, 0);
+      if (!isNaN(amount) && amount < spent) return { isInvalid: true, remaining: 0, availableBudget: 0, currentAllocated: 0, error: `Amount cannot be less than expenditure (₹${spent.toLocaleString()})` };
+    }
+
     // Get all SOEs in this Sector (or Scheme if no sector)
-    const sectorSoes = currentSoes.filter((s: any) => 
+    const sectorSoes = soes.filter((s: any) => 
       s.schemeId === schemeId && 
       (s.sectorId || null) === (sectorId || null)
     );
@@ -4016,28 +4187,31 @@ export default function App() {
     let currentAllocated = 0;
 
     if (fundingSoeName) {
-      // Validate against the specific SOE's sector-wide balance
       const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
       availableBudget = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      currentAllocated = baseAllocations.reduce((sum, a) => {
+      currentAllocated = allocations.reduce((sum, a) => {
         const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
-        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        const currentAllocId = isEditing ? editingItem.item.id : null;
         if (a.id === currentAllocId) return sum;
         return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
       }, 0);
     } else {
-      // Fallback to sector-wide validation if no SOE selected yet
       availableBudget = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      currentAllocated = baseAllocations.reduce((sum, a) => {
+      currentAllocated = allocations.reduce((sum, a) => {
         if (a.schemeId !== schemeId || (a.sectorId || null) !== (sectorId || null)) return sum;
-        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        const currentAllocId = isEditing ? editingItem.item.id : null;
         if (a.id === currentAllocId) return sum;
         return sum + a.amount;
       }, 0);
     }
 
-    return amount > (availableBudget - currentAllocated);
-  }, [activeTab, allocationAmount, allocationFormFilters, currentSoes, baseAllocations, editingItem]);
+    const remaining = availableBudget - currentAllocated;
+    const isInvalid = !isNaN(amount) && amount > 0 && amount > remaining;
+
+    return { isInvalid, remaining, availableBudget, currentAllocated };
+  }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, editingItem]);
+
+  const isAllocationInvalid = allocationBudgetStatus.isInvalid;
 
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
@@ -4056,9 +4230,21 @@ export default function App() {
       showAlert("Please enter a valid positive amount.");
       return;
     }
+
+    // Validation: Check against expenditure if editing
+    if (editingItem?.type === 'Allocation') {
+      const spent = expenses
+        .filter(e => e.allocationId === editingItem.item.id && e.status !== 'rejected')
+        .reduce((sum, e) => sum + e.amount, 0);
+      if (amount < spent) {
+        showAlert(`Cannot reduce allocation below expenditure. Already spent: ₹${spent.toLocaleString()}`);
+        return;
+      }
+    }
     
     // Validation: Check against Sector-wide Received Budget
-    const sectorSoes = currentSoes.filter(s => 
+    // Use full 'soes' and 'allocations' for global validation
+    const sectorSoes = soes.filter(s => 
       s.schemeId === schemeId && 
       (s.sectorId || null) === sectorId
     );
@@ -4067,7 +4253,7 @@ export default function App() {
     if (fundingSoeName) {
       const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
       const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      const allocated = baseAllocations.reduce((sum, a) => {
+      const allocated = allocations.reduce((sum, a) => {
         const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
         const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
         if (a.id === currentAllocId) return sum;
@@ -4082,7 +4268,7 @@ export default function App() {
     } else {
       // General sector-wide validation
       const totalReceivedInSector = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      const totalAllocatedInSector = baseAllocations
+      const totalAllocatedInSector = allocations
         .filter(a => 
           a.schemeId === schemeId && 
           (a.sectorId || null) === sectorId &&
@@ -4109,7 +4295,7 @@ export default function App() {
         for (const soe of matchedSoes) {
           if (remainingToFund <= 0) break;
           const received = getReceivedInTry(soe);
-          const allocated = baseAllocations.reduce((sum, a) => {
+          const allocated = allocations.reduce((sum, a) => {
             const fundedFromThis = a.fundedSOEs?.find((f: any) => f.soeId === soe.id);
             const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
             if (a.id === currentAllocId) return sum;
@@ -4137,48 +4323,14 @@ export default function App() {
         });
         setEditingItem(null);
       } else {
-        // Check if an allocation for the same hierarchy already exists
-        const existingAlloc = baseAllocations.find(a => 
-          a.rangeId === rangeId && 
-          a.schemeId === schemeId && 
-          (a.sectorId || null) === (sectorId || null) && 
-          (a.activityId || null) === (activityId || null) && 
-          (a.subActivityId || null) === (subActivityId || null) &&
-          a.financialYear === targetFyId
-        );
-
-        if (existingAlloc) {
-          // Merge with existing
-          const updatedFundedSOEs = [...(existingAlloc.fundedSOEs || [])];
-          fundedSOEs.forEach(newSoe => {
-            const idx = updatedFundedSOEs.findIndex(f => f.soeId === newSoe.soeId);
-            if (idx >= 0) {
-              updatedFundedSOEs[idx].amount += newSoe.amount;
-            } else {
-              updatedFundedSOEs.push(newSoe);
-            }
-          });
-          
-          const newTotalAmount = existingAlloc.amount + amount;
-          const totalFundedNow = updatedFundedSOEs.reduce((sum, f) => sum + f.amount, 0);
-          const newStatus = totalFundedNow >= newTotalAmount ? 'Funded' : 'Pending SOE Funds';
-
-          await updateDoc(doc(db, 'allocations', existingAlloc.id), { 
-            amount: newTotalAmount,
-            status: newStatus,
-            fundedSOEs: updatedFundedSOEs,
-            remarks: existingAlloc.remarks ? `${existingAlloc.remarks}\n${remarks}` : remarks,
-            updatedAt: Date.now()
-          });
-        } else {
-          await addDoc(collection(db, 'allocations'), { 
-            rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
-            status,
-            fundedSOEs,
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          });
-        }
+        // Always create a new entry for every allocation as requested
+        await addDoc(collection(db, 'allocations'), { 
+          rangeId, amount, remarks, schemeId, sectorId, activityId, subActivityId, financialYear: targetFyId,
+          status,
+          fundedSOEs,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
       }
       e.target.reset();
       setAllocationAmount('');
@@ -4287,11 +4439,41 @@ export default function App() {
     }
   };
 
+  const handleResetUnbilledExpenses = async () => {
+    const unbilledApproved = expenses.filter(e => 
+      e.status === 'approved' && 
+      !bills.some(b => b.expenseIds.includes(e.id))
+    );
+
+    if (unbilledApproved.length === 0) {
+      showAlert("No unbilled approved expenditures found.");
+      return;
+    }
+
+    showConfirm(`Are you sure you want to reset ${unbilledApproved.length} unbilled approved expenditures to pending?`, async () => {
+      try {
+        const batch = writeBatch(db);
+        unbilledApproved.forEach(exp => {
+          batch.update(doc(db, 'expenditures', exp.id), {
+            status: 'pending',
+            isLocked: false,
+            approvalId: null,
+            updatedAt: Date.now()
+          });
+        });
+        await batch.commit();
+        showAlert(`Successfully reset ${unbilledApproved.length} expenditures to pending.`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
+      }
+    });
+  };
+
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
     const allocationId = e.target.allocationId.value;
     const soeId = e.target.soeId.value;
-    const amount = parseFloat(e.target.amount.value);
+    const amount = parseFloat(e.target.amount?.value || '0');
     const date = e.target.date.value;
     const description = e.target.description.value;
     const targetFyId = selectedFY;
@@ -4311,6 +4493,50 @@ export default function App() {
       return;
     }
 
+    // If we have selected payees, we create multiple expenditures
+    if (selectedPayeesForExpense.length > 0 && editingItem?.type !== 'Expenditure') {
+      const totalAmount = selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+      
+      const currentSpentOnSoe = expenses
+        .filter(ex => ex.allocationId === allocationId && ex.soeId === soeId && ex.status !== 'rejected')
+        .reduce((sum, ex) => sum + ex.amount, 0);
+
+      if (totalAmount > (fundedSoe.amount - currentSpentOnSoe)) {
+        showAlert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
+        return;
+      }
+
+      try {
+        const batch = writeBatch(db);
+        for (const p of selectedPayeesForExpense) {
+          const docRef = doc(collection(db, 'expenditures'));
+          batch.set(docRef, {
+            allocationId, soeId, amount: parseFloat(p.amount) || 0, date, description, financialYear: targetFyId,
+            rangeId: alloc.rangeId,
+            createdBy: user.uid,
+            status: 'pending',
+            isLocked: false,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            payeeId: p.payeeId
+          });
+        }
+        await batch.commit();
+        setSelectedPayeesForExpense([]);
+        setCurrentSoeBalance(undefined);
+        e.target.reset();
+        showAlert(`${selectedPayeesForExpense.length} expenditures added successfully.`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, 'expenditures');
+      }
+      return;
+    }
+
+    if (!amount || amount <= 0) {
+      showAlert("Please provide a valid amount.");
+      return;
+    }
+
     const currentSpentOnSoe = expenses
       .filter(ex => ex.allocationId === allocationId && ex.soeId === soeId && ex.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? ex.id !== editingItem.item.id : true))
       .reduce((sum, ex) => sum + ex.amount, 0);
@@ -4322,13 +4548,19 @@ export default function App() {
 
     try {
       if (editingItem?.type === 'Expenditure') {
+        const payeeId = e.target.payeeId?.value;
+        const payeeName = e.target.payeeName?.value;
         await updateDoc(doc(db, 'expenditures', editingItem.item.id), { 
           allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId,
+          payeeId: payeeId || null,
+          payeeName: payeeName || null,
           updatedAt: Date.now()
         });
         setEditingItem(null);
+        setCurrentSoeBalance(undefined);
         e.target.reset();
       } else {
+        const payeeName = e.target.payeeName?.value;
         await addDoc(collection(db, 'expenditures'), { 
           allocationId, soeId, amount, date, description, financialYear: targetFyId,
           rangeId: alloc.rangeId,
@@ -4336,13 +4568,45 @@ export default function App() {
           status: 'pending',
           isLocked: false,
           createdAt: Date.now(),
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          payeeName: payeeName || null
         });
+        setCurrentSoeBalance(undefined);
         // Clear only the amount field to allow quick entry for same activity/SOE
         if (e.target.amount) e.target.amount.value = '';
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
+    }
+  };
+
+  const handleAddPayee = async (e: any) => {
+    e.preventDefault();
+    const name = e.target.name.value;
+    const address = e.target.address.value;
+    const accountNumber = e.target.accountNumber.value;
+    const rangeId = e.target.rangeId.value;
+
+    try {
+      if (editingItem?.type === 'Payee') {
+        await updateDoc(doc(db, 'payees', editingItem.item.id), {
+          name, address, accountNumber, rangeId: rangeId || null,
+          updatedAt: Date.now()
+        });
+        setEditingItem(null);
+        e.target.reset();
+      } else {
+        await addDoc(collection(db, 'payees'), {
+          name, address, accountNumber, rangeId: rangeId || null,
+          createdBy: user.uid,
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        });
+        e.target.reset();
+      }
+      showAlert(`Payee ${editingItem?.type === 'Payee' ? 'updated' : 'added'} successfully.`);
+    } catch (error) {
+      handleFirestoreError(error, editingItem?.type === 'Payee' ? OperationType.UPDATE : OperationType.CREATE, 'payees');
     }
   };
 
@@ -6689,21 +6953,30 @@ export default function App() {
               'Allocation', 
               currentAllocations, 
               [
-                {key: 'hierarchy', label: 'Hierarchy', render: (_, item) => renderHierarchy(item), searchableText: (_, item) => getHierarchyText(item)},
+                {key: 'hierarchy', label: 'Hierarchy / Unit', render: (_, item) => {
+                  const r = ranges.find(r => r.id === item.rangeId);
+                  const hText = getHierarchyText(item);
+                  return (
+                    <div className="max-w-[180px]">
+                      <div className="font-bold text-gray-900 truncate leading-tight">{r?.name === 'Rajgarh Forest Division' ? 'Division' : r?.name}</div>
+                      <div className="text-[9px] text-gray-500 truncate" title={hText}>{hText}</div>
+                    </div>
+                  );
+                }, searchableText: (_, item) => getHierarchyText(item)},
                 {key: 'rangeId', label: 'Range', render: (val) => ranges.find(r => r.id === val)?.name, searchableText: (val) => ranges.find(r => r.id === val)?.name || ''},
                 {key: 'amount', label: 'Sanctioned Amount', render: (val, item) => (
-                  <div className="flex flex-col">
-                    <span className="font-medium">₹{val.toLocaleString()}</span>
+                  <div className="flex flex-col min-w-[80px]">
+                    <span className="font-bold text-gray-900">₹{val.toLocaleString()}</span>
                     <div className="mt-1 space-y-0.5 border-t pt-1">
                       {item.fundedSOEs && item.fundedSOEs.length > 0 ? (
                         item.fundedSOEs.map((f: any, idx: number) => (
-                          <div key={idx} className="text-[9px] text-gray-400 flex justify-between gap-1">
-                            <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
+                          <div key={idx} className="text-[8px] text-gray-400 flex justify-between gap-1 leading-none">
+                            <span className="truncate max-w-[40px]">{soes.find(s => s.id === f.soeId)?.name}:</span>
                             <span>₹{f.amount.toLocaleString()}</span>
                           </div>
                         ))
                       ) : (
-                        <div className="text-[9px] text-orange-400 italic">No SOE funding assigned</div>
+                        <div className="text-[8px] text-orange-400 italic">No SOE funding</div>
                       )}
                     </div>
                   </div>
@@ -6712,20 +6985,30 @@ export default function App() {
                   key: 'expenditure', 
                   label: 'Expenditure', 
                   render: (_, item) => {
-                    const expenditure = baseExpenses.filter(e => e.allocationId === item.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
+                    // Row-specific expenditure (only expenses linked to this specific allocation ID)
+                    const expenditure = baseExpenses
+                      .filter(e => e.allocationId === item.id && e.status !== 'rejected')
+                      .reduce((sum, e) => sum + e.amount, 0);
                     return <span className="font-medium text-red-600">₹{expenditure.toLocaleString()}</span>;
                   }
                 },
                 {
                   key: 'balance', 
-                  label: 'Balance', 
+                  label: 'Total Balance', 
                   render: (_, item) => {
-                    const expenditure = baseExpenses.filter(e => e.allocationId === item.id && e.status !== 'rejected').reduce((sum, e) => sum + e.amount, 0);
+                    const expenditure = baseExpenses
+                      .filter(e => e.allocationId === item.id && e.status !== 'rejected')
+                      .reduce((sum, e) => sum + e.amount, 0);
                     const balance = item.amount - expenditure;
-                    return <span className={`font-bold ${balance < 0 ? 'text-red-700' : 'text-blue-700'}`}>₹{balance.toLocaleString()}</span>;
+                    return (
+                      <div className="flex flex-col">
+                        <span className={`font-bold ${balance < 0 ? 'text-red-700' : 'text-blue-700'}`}>₹{balance.toLocaleString()}</span>
+                        <span className="text-[8px] text-gray-400 uppercase leading-none">Row Balance</span>
+                      </div>
+                    );
                   }
                 },
-                {key: 'remarks', label: 'Description / Remarks', render: (val) => <span className="text-xs italic text-gray-500">{val || '-'}</span>},
+                {key: 'remarks', label: 'Description / Remarks', render: (val) => <div className="text-[10px] italic text-gray-500 max-w-[150px] whitespace-normal break-words" title={val}>{val || '-'}</div>},
                 {key: 'status', label: 'Funding Status', render: (val, item) => (
                   <div className="flex flex-col">
                     <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full w-fit ${val === 'Funded' ? 'bg-green-100 text-green-800' : 'bg-orange-100 text-orange-800'}`}>
@@ -6758,29 +7041,61 @@ export default function App() {
               ], 
               handleAddAllocation, 
               (id) => handleDelete('allocations', id), 
-              <CascadingDropdowns 
-                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                editingItem={editingItem} type="Allocation" userRangeId={userRangeId}
-                onSelectionChange={setAllocationFormFilters}
-              >
-                <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
-                  <option value="">Select Range</option>
-                  {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
-                </select>
-                <input 
-                  name="amount" 
-                  type="number" 
-                  required 
-                  value={allocationAmount}
-                  onChange={(e) => setAllocationAmount(e.target.value)}
-                  placeholder="Amount (₹)" 
-                  className={`w-full p-1.5 border rounded text-sm ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
-                />
-                {isAllocationInvalid && (
-                  <p className="text-[10px] text-red-600 font-bold px-1">Amount exceeds available budget!</p>
-                )}
-                <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-1.5 border rounded text-sm" rows={2} />
-              </CascadingDropdowns>,
+              <div className="space-y-4">
+                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex flex-wrap gap-4 items-center justify-between">
+                  <div>
+                    <h4 className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">Sector Budget Status</h4>
+                    <div className="flex gap-4">
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.availableBudget.toLocaleString()}</span>
+                        <span className="text-[9px] text-blue-500 uppercase">Total Available</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.currentAllocated.toLocaleString()}</span>
+                        <span className="text-[9px] text-blue-500 uppercase">Already Allocated</span>
+                      </div>
+                      <div className="flex flex-col">
+                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.remaining.toLocaleString()}</span>
+                        <span className="text-[9px] text-blue-500 uppercase">Remaining to Allocate</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-blue-400 italic max-w-[200px] leading-tight">
+                    * Surrendered budgets are automatically returned to the sector-wide pool and become available for reallocation.
+                  </div>
+                </div>
+
+                <CascadingDropdowns 
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                  editingItem={editingItem} type="Allocation" userRangeId={userRangeId}
+                  onSelectionChange={setAllocationFormFilters}
+                >
+                  <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
+                    <option value="">Select Range</option>
+                    {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
+                  </select>
+                  <input 
+                    name="amount" 
+                    type="number" 
+                    required 
+                    value={allocationAmount}
+                    onChange={(e) => setAllocationAmount(e.target.value)}
+                    placeholder="Amount (₹)" 
+                    className={`w-full p-1.5 border rounded text-sm ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                  />
+                  <div className="flex justify-between items-center px-1">
+                    <span className="text-[10px] text-gray-500 font-medium">
+                      Remaining Budget: ₹{allocationBudgetStatus.remaining.toLocaleString()}
+                    </span>
+                    {isAllocationInvalid && (
+                      <span className="text-[10px] text-red-600 font-bold animate-pulse">
+                        {allocationBudgetStatus.error || 'Amount exceeds available budget!'}
+                      </span>
+                    )}
+                  </div>
+                  <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-1.5 border rounded text-sm" rows={2} />
+                </CascadingDropdowns>
+              </div>,
               (item) => setEditingItem({ type: 'Allocation', item }),
               (item) => userRole === 'admin' || userRole === 'deo',
               null,
@@ -6893,66 +7208,64 @@ export default function App() {
                   {expenditureSubTab === 'bills' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
                 </button>
               )}
+              {(userRole === 'admin' || userRole === 'deo') && (
+                <button 
+                  onClick={() => setExpenditureSubTab('payees')}
+                  className={`pb-2 px-4 text-sm font-medium transition-colors relative ${expenditureSubTab === 'payees' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
+                >
+                  Add Payee
+                  {expenditureSubTab === 'payees' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
+                </button>
+              )}
             </div>
 
-            {expenditureSubTab === 'list' ? (
+            {expenditureSubTab === 'list' && (
               renderSimpleManager(
                 'Expenditure', 
                 currentExpenses, 
                 [
                   {key: 'date', label: 'Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
-                  {key: 'allocationId', label: 'Hierarchy / Range / SOE', 
+                  {key: 'payeeId', label: 'Payee', 
+                    searchableText: (val, item) => payees.find(p => p.id === val)?.name || item.payeeName || 'N/A',
+                    render: (val, item) => {
+                      const p = payees.find(p => p.id === val);
+                      if (p) {
+                        return (
+                          <div>
+                            <div className="font-medium text-emerald-700">{p.name}</div>
+                            <div className="text-[10px] text-gray-400">{p.accountNumber}</div>
+                          </div>
+                        );
+                      }
+                      if (item.payeeName) {
+                        return <div className="font-medium text-blue-700">{item.payeeName}</div>;
+                      }
+                      return <span className="text-gray-400 italic">No Payee</span>;
+                    }
+                  },
+                  {key: 'allocationId', label: 'Unit / Hierarchy / SOE', 
                     searchableText: (val, item) => {
                       const al = allocations.find(a => a.id === val);
                       const r = ranges.find(r => r.id === al?.rangeId);
                       const s = soes.find(s => s.id === item.soeId);
-                      let hierarchy = '';
-                      if (al?.subActivityId) {
-                        const sa = subActivities.find(sa => sa.id === al.subActivityId);
-                        const act = activities.find(a => a.id === sa?.activityId);
-                        const sec = sectors.find(sec => sec.id === act?.sectorId);
-                        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                        hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                      } else if (al?.activityId) {
-                        const act = activities.find(a => a.id === al.activityId);
-                        const sec = sectors.find(sec => sec.id === act?.sectorId);
-                        const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                        hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
-                      }
-                      const actName = item.activityId ? activities.find(a => a.id === item.activityId)?.name : '';
-                      return `${hierarchy} ${r?.name} ${s?.name} ${actName}`;
+                      const hierarchy = al ? getHierarchyText(al) : 'N/A';
+                      return `${hierarchy} ${r?.name} ${s?.name}`;
                     },
                     render: (val, item) => {
-                    const al = allocations.find(a => a.id === val);
-                    const r = ranges.find(r => r.id === al?.rangeId);
-                    const s = soes.find(s => s.id === item.soeId);
-                    let hierarchy = '';
-                    if (al?.subActivityId) {
-                      const sa = subActivities.find(sa => sa.id === al.subActivityId);
-                      const act = activities.find(a => a.id === sa?.activityId);
-                      const sec = sectors.find(sec => sec.id === act?.sectorId);
-                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                      hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' -> ');
-                    } else if (al?.activityId) {
-                      const act = activities.find(a => a.id === al.activityId);
-                      const sec = sectors.find(sec => sec.id === act?.sectorId);
-                      const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
-                      hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' -> ');
+                      const al = allocations.find(a => a.id === val);
+                      const r = ranges.find(r => r.id === al?.rangeId);
+                      const s = soes.find(s => s.id === item.soeId);
+                      const hierarchy = al ? getHierarchyText(al) : 'N/A';
+                      return (
+                        <div className="max-w-[180px]">
+                          <div className="font-bold text-gray-900 truncate leading-tight">{r?.name === 'Rajgarh Forest Division' ? 'Division' : r?.name} / {s?.name || 'N/A'}</div>
+                          <div className="text-[9px] text-gray-500 truncate" title={hierarchy}>{hierarchy}</div>
+                        </div>
+                      );
                     }
-                    return (
-                      <div>
-                        <div className="text-xs text-gray-500">{hierarchy || 'N/A'}</div>
-                        <div className="font-medium">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
-                        {item.activityId && (
-                          <div className="text-[10px] bg-blue-50 text-blue-600 px-1 rounded inline-block mt-1">
-                            Activity: {activities.find(a => a.id === item.activityId)?.name}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  }},
+                  },
                   {key: 'description', label: 'Description', render: (val, item) => (
-                    <div>
+                    <div className="max-w-[200px] whitespace-normal break-words">
                       <div className="text-xs italic text-gray-500">{val}</div>
                       {item.approvalReason && (
                         <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
@@ -6974,27 +7287,96 @@ export default function App() {
                     );
                   }},
                   {key: 'approvalId', label: 'Approval ID', render: (val) => val ? `#${val}` : '-'},
+                  {key: 'isBilled', label: 'Billed', 
+                    searchableText: (_, item) => {
+                      const bill = bills.find(b => b.expenseIds.includes(item.id));
+                      return bill ? `Yes ${bill.billNo}` : 'No';
+                    },
+                    render: (_, item) => {
+                      const bill = bills.find(b => b.expenseIds.includes(item.id));
+                      return (
+                        <span className={`px-2 py-1 rounded-full text-[10px] font-bold uppercase ${bill ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'}`}>
+                          {bill ? `Yes (${bill.billNo})` : 'No'}
+                        </span>
+                      );
+                    }
+                  },
                   {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
                   {key: 'balance', label: 'Balance', 
                     searchableText: (_, item) => {
                       const alloc = allocations.find(a => a.id === item.allocationId);
                       if (!alloc) return 'N/A';
-                      const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
-                      if (!fundedSoe) return 'N/A';
-                      const totalSpentOnSoe = expenses
-                        .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
-                        .reduce((sum, e) => sum + e.amount, 0);
-                      return String(fundedSoe.amount - totalSpentOnSoe);
+                      
+                      const soeName = soes.find(s => s.id === item.soeId)?.name;
+                      if (!soeName) return 'N/A';
+
+                      // Aggregate allocation for this hierarchy and SOE Name
+                      const totalAllocatedForSoe = baseAllocations.filter(a => 
+                        a.rangeId === alloc.rangeId &&
+                        a.schemeId === alloc.schemeId &&
+                        (a.sectorId || null) === (alloc.sectorId || null) &&
+                        (a.activityId || null) === (alloc.activityId || null) &&
+                        (a.subActivityId || null) === (alloc.subActivityId || null)
+                      ).reduce((sum, a) => {
+                        const funded = a.fundedSOEs?.find((f: any) => soes.find(s => s.id === f.soeId)?.name === soeName);
+                        return sum + (funded?.amount || 0);
+                      }, 0);
+
+                      // Aggregate expenditure for this hierarchy and SOE Name
+                      const totalSpentForSoe = baseExpenses.filter(e => {
+                        const eAlloc = allocations.find(a => a.id === e.allocationId);
+                        const eSoeName = soes.find(s => s.id === e.soeId)?.name;
+                        return (
+                          eAlloc &&
+                          eAlloc.rangeId === alloc.rangeId &&
+                          eAlloc.schemeId === alloc.schemeId &&
+                          (eAlloc.sectorId || null) === (alloc.sectorId || null) &&
+                          (eAlloc.activityId || null) === (alloc.activityId || null) &&
+                          (eAlloc.subActivityId || null) === (alloc.subActivityId || null) &&
+                          eSoeName === soeName &&
+                          e.status !== 'rejected'
+                        );
+                      }).reduce((sum, e) => sum + e.amount, 0);
+
+                      return String(totalAllocatedForSoe - totalSpentForSoe);
                     },
                     render: (_, item) => {
                       const alloc = allocations.find(a => a.id === item.allocationId);
                       if (!alloc) return 'N/A';
-                      const fundedSoe = alloc.fundedSOEs?.find(f => f.soeId === item.soeId);
-                      if (!fundedSoe) return 'N/A';
-                      const totalSpentOnSoe = expenses
-                        .filter(e => e.allocationId === item.allocationId && e.soeId === item.soeId && e.status !== 'rejected')
-                        .reduce((sum, e) => sum + e.amount, 0);
-                      return <span className="text-blue-600 font-bold">₹{(fundedSoe.amount - totalSpentOnSoe).toLocaleString()}</span>;
+                      
+                      const soeName = soes.find(s => s.id === item.soeId)?.name;
+                      if (!soeName) return 'N/A';
+
+                      // Aggregate allocation for this hierarchy and SOE Name
+                      const totalAllocatedForSoe = baseAllocations.filter(a => 
+                        a.rangeId === alloc.rangeId &&
+                        a.schemeId === alloc.schemeId &&
+                        (a.sectorId || null) === (alloc.sectorId || null) &&
+                        (a.activityId || null) === (alloc.activityId || null) &&
+                        (a.subActivityId || null) === (alloc.subActivityId || null)
+                      ).reduce((sum, a) => {
+                        const funded = a.fundedSOEs?.find((f: any) => soes.find(s => s.id === f.soeId)?.name === soeName);
+                        return sum + (funded?.amount || 0);
+                      }, 0);
+
+                      // Aggregate expenditure for this hierarchy and SOE Name
+                      const totalSpentForSoe = baseExpenses.filter(e => {
+                        const eAlloc = allocations.find(a => a.id === e.allocationId);
+                        const eSoeName = soes.find(s => s.id === e.soeId)?.name;
+                        return (
+                          eAlloc &&
+                          eAlloc.rangeId === alloc.rangeId &&
+                          eAlloc.schemeId === alloc.schemeId &&
+                          (eAlloc.sectorId || null) === (alloc.sectorId || null) &&
+                          (eAlloc.activityId || null) === (alloc.activityId || null) &&
+                          (eAlloc.subActivityId || null) === (alloc.subActivityId || null) &&
+                          eSoeName === soeName &&
+                          e.status !== 'rejected'
+                        );
+                      }).reduce((sum, e) => sum + e.amount, 0);
+
+                      const balance = totalAllocatedForSoe - totalSpentForSoe;
+                      return <span className={`font-bold ${balance < 0 ? 'text-red-700' : 'text-blue-700'}`}>₹{balance.toLocaleString()}</span>;
                     }
                   }
                 ], 
@@ -7003,8 +7385,44 @@ export default function App() {
                 <CascadingDropdowns 
                   schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
                   editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
+                  onBalanceChange={setCurrentSoeBalance}
                 >
-                  <input name="amount" type="number" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                  {editingItem?.type === 'Expenditure' ? (
+                    <div className="space-y-2">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee</label>
+                        <select name="payeeId" defaultValue={editingItem.item.payeeId || ''} className="w-full p-2 border rounded text-sm">
+                          <option value="">Select Payee (Optional)</option>
+                          {payees.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
+                        </select>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Manual Payee Name</label>
+                        <input name="payeeName" type="text" defaultValue={editingItem.item.payeeName || ''} placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <PayeeSelector 
+                        payees={payees}
+                        selectedPayees={selectedPayeesForExpense}
+                        onSelect={(payeeId) => setSelectedPayeesForExpense([...selectedPayeesForExpense, { payeeId, amount: '' }])}
+                        onRemove={(payeeId) => setSelectedPayeesForExpense(selectedPayeesForExpense.filter(p => p.payeeId !== payeeId))}
+                        onAmountChange={(payeeId, amount) => setSelectedPayeesForExpense(selectedPayeesForExpense.map(p => p.payeeId === payeeId ? { ...p, amount } : p))}
+                        ranges={ranges}
+                        availableBalance={currentSoeBalance}
+                      />
+                      {selectedPayeesForExpense.length === 0 && (
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase">Manual Payee Name</label>
+                          <input name="payeeName" type="text" placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {selectedPayeesForExpense.length === 0 && (
+                    <input name="amount" type="number" required={editingItem?.type === 'Expenditure'} defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                  )}
                   <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
                   <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
                 </CascadingDropdowns>,
@@ -7027,7 +7445,18 @@ export default function App() {
                   }
                   return item.createdBy === user?.uid;
                 },
-                undefined,
+                (userRole === 'admin' || userRole === 'DA' || userRole === 'approver') && (
+                  <div className="flex justify-end mb-2">
+                    <button
+                      onClick={handleResetUnbilledExpenses}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-orange-50 text-orange-700 border border-orange-200 rounded-lg text-xs font-bold hover:bg-orange-100 transition-colors shadow-sm"
+                      title="Reset all approved expenditures that are not part of any bill back to pending status"
+                    >
+                      <RefreshCcw className="w-3.5 h-3.5" />
+                      RESET UNBILLED APPROVED TO PENDING
+                    </button>
+                  </div>
+                ),
                 (item) => (
                   <div className="flex gap-1">
                     {item.status === 'pending' && (userRole === 'approver' || userRole === 'admin' || userRole === 'DA') && (
@@ -7043,13 +7472,20 @@ export default function App() {
                         <ShieldCheck className="w-4 h-4" />
                       </button>
                     )}
-                    {item.isLocked && userRole === 'admin' && (
+                    {item.isLocked && (userRole === 'admin' || ((userRole === 'DA' || userRole === 'approver') && item.status === 'approved' && !bills.some(b => b.expenseIds.includes(item.id)))) && (
                       <button 
-                        onClick={() => handleUpdateExpenseStatus(item.id, 'pending', false)}
+                        onClick={() => {
+                          const isBilled = bills.some(b => b.expenseIds.includes(item.id));
+                          if (isBilled) {
+                            showAlert("This expenditure is already part of a bill and cannot be reset.");
+                            return;
+                          }
+                          showConfirm("Reset this approved expenditure to pending?", () => handleUpdateExpenseStatus(item.id, 'pending', false));
+                        }}
                         className="text-orange-600 hover:text-orange-800 p-1 border border-orange-100 rounded bg-orange-50"
-                        title="Unlock"
+                        title="Reset to Pending"
                       >
-                        <Lock className="w-4 h-4" />
+                        <RefreshCcw className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -7123,7 +7559,9 @@ export default function App() {
                   setSearchTerm('');
                 }
               )
-            ) : (() => {
+            )}
+
+            {expenditureSubTab === 'bills' && (userRole === 'admin' || userRole === 'deo') && (() => {
               const availableApprovedExpenses = expenses.filter(e => e.status === 'approved' && e.financialYear === selectedFY);
               const firstSelectedExp = expenses.find(e => selectedExpensesForBill.includes(e.id));
               const lockedSoeId = firstSelectedExp?.soeId;
@@ -7402,9 +7840,39 @@ export default function App() {
                 () => setBillFilters({ billNo: '', startDate: '', endDate: '' }),
                 isBillFormFullScreen,
                 setIsBillFormFullScreen
-              );
-            })()
-            }
+              )
+            })()}
+
+            {expenditureSubTab === 'payees' && (userRole === 'admin' || userRole === 'deo') && (
+              renderSimpleManager(
+                'Payee',
+                payees,
+                [
+                  { key: 'name', label: 'Name', searchableText: (val) => val },
+                  { key: 'address', label: 'Address', searchableText: (val) => val },
+                  { key: 'accountNumber', label: 'Account Number', searchableText: (val) => val },
+                  { 
+                    key: 'rangeId', 
+                    label: 'Range', 
+                    searchableText: (val) => ranges.find(r => r.id === val)?.name || 'N/A',
+                    render: (val) => ranges.find(r => r.id === val)?.name || <span className="text-gray-400 italic">Not Specified</span>
+                  }
+                ],
+                handleAddPayee,
+                (id) => handleDelete('payees', id),
+                <>
+                  <input name="name" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.name : ''} placeholder="Payee Name" className="w-full p-2 border rounded" />
+                  <input name="address" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.address : ''} placeholder="Address" className="w-full p-2 border rounded" />
+                  <input name="accountNumber" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.accountNumber : ''} placeholder="Account Number" className="w-full p-2 border rounded" />
+                  <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
+                    <option value="">Select Range (Optional)</option>
+                    {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                  </select>
+                </>,
+                (item) => setEditingItem({ type: 'Payee', item }),
+                () => (userRole === 'admin' || userRole === 'deo')
+              )
+            )}
           </div>
         )}
 
@@ -7814,7 +8282,7 @@ export default function App() {
 
 function CascadingDropdowns({ 
   schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, ranges, expenses,
-  editingItem, type, children, onSelectionChange, userRangeId 
+  editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -7831,6 +8299,23 @@ function CascadingDropdowns({
       onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId });
     }
   }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, onSelectionChange]);
+
+  // Calculate and notify parent of balance changes (Expenditure only)
+  useEffect(() => {
+    if (type === 'Expenditure' && onBalanceChange) {
+      if (allocationId && soeId) {
+        const alloc = allocations.find((a: any) => a.id === allocationId);
+        const fundedSoe = alloc?.fundedSOEs?.find((f: any) => f.soeId === soeId);
+        const spent = expenses
+          .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+          .reduce((sum: number, e: any) => sum + e.amount, 0);
+        const balance = (fundedSoe?.amount || 0) - spent;
+        onBalanceChange(balance);
+      } else {
+        onBalanceChange(undefined);
+      }
+    }
+  }, [allocationId, soeId, allocations, expenses, type, onBalanceChange, editingItem]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -8064,7 +8549,6 @@ function CascadingDropdowns({
             value={rangeId} 
             onChange={(e) => { setRangeId(e.target.value); setSchemeId(''); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); }}
             required
-            name="rangeId"
           >
             <option value="">Select Range</option>
             {ranges.filter((r: any) => r.name !== 'Division' && r.name !== 'Rajgarh Forest Division').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
@@ -8078,7 +8562,6 @@ function CascadingDropdowns({
           value={schemeId} 
           onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
           required={type !== 'Activity'}
-          name="schemeId"
         >
           <option value="">Select Scheme</option>
           {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -8092,7 +8575,6 @@ function CascadingDropdowns({
             className="w-full p-1.5 border rounded text-sm" 
             value={sectorId} 
             onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            name="sectorId"
           >
             <option value="">Select Sector (Optional)</option>
             {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -8108,7 +8590,6 @@ function CascadingDropdowns({
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
             required={type !== 'SOE Name' && type !== 'Allocation' && type !== 'Surrender'}
-            name="activityId"
           >
             <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation' || type === 'Surrender') ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -8123,7 +8604,6 @@ function CascadingDropdowns({
             className="w-full p-1.5 border rounded text-sm" 
             value={subActivityId} 
             onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
-            name="subActivityId"
           >
             <option value="">Select Sub-Activity (Optional)</option>
             {filteredSubActivities.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
@@ -8133,14 +8613,13 @@ function CascadingDropdowns({
       )}
       
       {/* Hidden inputs to ensure correct fields are submitted */}
-      {type !== 'Surrender' && (
-        <>
-          <input type="hidden" name="schemeId" value={schemeId} />
-          <input type="hidden" name="sectorId" value={sectorId} />
-          <input type="hidden" name="activityId" value={activityId} />
-          <input type="hidden" name="subActivityId" value={subActivityId} />
-        </>
-      )}
+      <input type="hidden" name="schemeId" value={schemeId} />
+      <input type="hidden" name="sectorId" value={sectorId} />
+      <input type="hidden" name="activityId" value={activityId} />
+      <input type="hidden" name="subActivityId" value={subActivityId} />
+      <input type="hidden" name="soeId" value={soeId} />
+      <input type="hidden" name="allocationId" value={allocationId} />
+      <input type="hidden" name="rangeId" value={rangeId} />
 
       {(type === 'Surrender') && (
         <div className="flex gap-2">
@@ -8149,7 +8628,6 @@ function CascadingDropdowns({
             value={soeId} 
             onChange={(e) => setSoeId(e.target.value)}
             required
-            name="soeId"
           >
             <option value="">Select SOE Head</option>
             {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -8237,7 +8715,6 @@ function CascadingDropdowns({
           {(!userRangeId || filteredAllocations.length > 1) ? (
             <div className="flex gap-2">
               <select 
-                name="allocationId"
                 className="w-full p-1.5 border rounded text-sm" 
                 value={allocationId} 
                 onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
@@ -8267,7 +8744,6 @@ function CascadingDropdowns({
             <div className="flex flex-col gap-1">
               <div className="flex gap-2">
                 <select 
-                  name="soeId"
                   className="w-full p-1.5 border rounded text-sm" 
                   value={soeId} 
                   onChange={(e) => setSoeId(e.target.value)}
