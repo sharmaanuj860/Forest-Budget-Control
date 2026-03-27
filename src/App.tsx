@@ -4487,22 +4487,28 @@ export default function App() {
     const alloc = allocations.find(a => a.id === allocationId);
     if (!alloc) return;
 
-    const fundedSoe = alloc.fundedSOEs.find(f => f.soeId === soeId);
-    if (!fundedSoe) {
-      showAlert("Selected SOE is not funded for this allocation.");
-      return;
-    }
+    const selectedSoe = soes.find(s => s.id === soeId);
+    const selectedName = selectedSoe?.name || 'Unnamed SOE';
+
+    // Find all funded SOEs with the same name in this allocation to handle split funding
+    const matchedFunded = alloc.fundedSOEs.filter((f: any) => {
+      const s = soes.find((soe: any) => soe.id === f.soeId);
+      return (s?.name || 'Unnamed SOE') === selectedName;
+    });
+
+    const totalFunded = matchedFunded.reduce((sum: number, f: any) => sum + f.amount, 0);
+    const matchedSoeIds = matchedFunded.map((f: any) => f.soeId);
 
     // If we have selected payees, we create multiple expenditures
     if (selectedPayeesForExpense.length > 0 && editingItem?.type !== 'Expenditure') {
       const totalAmount = selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       
       const currentSpentOnSoe = expenses
-        .filter(ex => ex.allocationId === allocationId && ex.soeId === soeId && ex.status !== 'rejected')
+        .filter(ex => ex.allocationId === allocationId && matchedSoeIds.includes(ex.soeId) && ex.status !== 'rejected')
         .reduce((sum, ex) => sum + ex.amount, 0);
 
-      if (totalAmount > (fundedSoe.amount - currentSpentOnSoe)) {
-        showAlert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
+      if (totalAmount > (totalFunded - currentSpentOnSoe)) {
+        showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${(totalFunded - currentSpentOnSoe).toLocaleString()}`);
         return;
       }
 
@@ -4538,11 +4544,11 @@ export default function App() {
     }
 
     const currentSpentOnSoe = expenses
-      .filter(ex => ex.allocationId === allocationId && ex.soeId === soeId && ex.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? ex.id !== editingItem.item.id : true))
+      .filter(ex => ex.allocationId === allocationId && matchedSoeIds.includes(ex.soeId) && ex.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? ex.id !== editingItem.item.id : true))
       .reduce((sum, ex) => sum + ex.amount, 0);
 
-    if (amount > (fundedSoe.amount - currentSpentOnSoe)) {
-      showAlert(`Insufficient funds in SOE ${soes.find(s => s.id === soeId)?.name}. Remaining: ₹${(fundedSoe.amount - currentSpentOnSoe).toLocaleString()}`);
+    if (amount > (totalFunded - currentSpentOnSoe)) {
+      showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${(totalFunded - currentSpentOnSoe).toLocaleString()}`);
       return;
     }
 
@@ -6969,12 +6975,15 @@ export default function App() {
                     <span className="font-bold text-gray-900">₹{val.toLocaleString()}</span>
                     <div className="mt-1 space-y-0.5 border-t pt-1">
                       {item.fundedSOEs && item.fundedSOEs.length > 0 ? (
-                        item.fundedSOEs.map((f: any, idx: number) => (
-                          <div key={idx} className="text-[8px] text-gray-400 flex justify-between gap-1 leading-none">
-                            <span className="truncate max-w-[40px]">{soes.find(s => s.id === f.soeId)?.name}:</span>
-                            <span>₹{f.amount.toLocaleString()}</span>
-                          </div>
-                        ))
+                        item.fundedSOEs.map((f: any, idx: number) => {
+                          const s = soes.find(soe => soe.id === f.soeId);
+                          return (
+                            <div key={idx} className="text-[8px] text-gray-400 flex justify-between gap-1 leading-none">
+                              <span className="truncate max-w-[40px]">{s?.name || 'Unnamed'}:</span>
+                              <span>₹{f.amount.toLocaleString()}</span>
+                            </div>
+                          );
+                        })
                       ) : (
                         <div className="text-[8px] text-orange-400 italic">No SOE funding</div>
                       )}
@@ -7016,12 +7025,15 @@ export default function App() {
                     </span>
                     <div className="mt-1 space-y-1">
                       {item.fundedSOEs && item.fundedSOEs.length > 0 ? (
-                        item.fundedSOEs.map((f: any, idx: number) => (
-                          <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
-                            <span>{soes.find(s => s.id === f.soeId)?.name}:</span>
-                            <span className="font-medium">₹{f.amount.toLocaleString()}</span>
-                          </div>
-                        ))
+                        item.fundedSOEs.map((f: any, idx: number) => {
+                          const s = soes.find(soe => soe.id === f.soeId);
+                          return (
+                            <div key={idx} className="text-[10px] text-gray-500 flex justify-between gap-2">
+                              <span>{s?.name || 'Unnamed SOE'}:</span>
+                              <span className="font-medium">₹{f.amount.toLocaleString()}</span>
+                            </div>
+                          );
+                        })
                       ) : (
                         <div className="text-[10px] text-orange-400 italic">Pending funding assignment</div>
                       )}
@@ -8305,17 +8317,40 @@ function CascadingDropdowns({
     if (type === 'Expenditure' && onBalanceChange) {
       if (allocationId && soeId) {
         const alloc = allocations.find((a: any) => a.id === allocationId);
-        const fundedSoe = alloc?.fundedSOEs?.find((f: any) => f.soeId === soeId);
+        if (!alloc || !alloc.fundedSOEs) {
+          onBalanceChange(undefined);
+          return;
+        }
+
+        const selectedSoe = soes.find((s: any) => s.id === soeId);
+        const selectedName = selectedSoe?.name || 'Unnamed SOE';
+
+        // Find all funded SOEs with the same name in this allocation
+        const matchedFunded = alloc.fundedSOEs.filter((f: any) => {
+          const s = soes.find((soe: any) => soe.id === f.soeId);
+          return (s?.name || 'Unnamed SOE') === selectedName;
+        });
+
+        const totalFunded = matchedFunded.reduce((sum: number, f: any) => sum + f.amount, 0);
+        
+        // Find all expenses for these SOE IDs in this allocation
+        const matchedSoeIds = matchedFunded.map((f: any) => f.soeId);
         const spent = expenses
-          .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+          .filter((e: any) => 
+            e.allocationId === allocationId && 
+            matchedSoeIds.includes(e.soeId) && 
+            e.status !== 'rejected' && 
+            (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true)
+          )
           .reduce((sum: number, e: any) => sum + e.amount, 0);
-        const balance = (fundedSoe?.amount || 0) - spent;
+
+        const balance = totalFunded - spent;
         onBalanceChange(balance);
       } else {
         onBalanceChange(undefined);
       }
     }
-  }, [allocationId, soeId, allocations, expenses, type, onBalanceChange, editingItem]);
+  }, [allocationId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -8754,20 +8789,30 @@ function CascadingDropdowns({
                     if (type === 'Expenditure' && allocationId) {
                       const alloc = allocations.find((a: any) => a.id === allocationId);
                       if (alloc && alloc.fundedSOEs) {
-                        return alloc.fundedSOEs
-                          .filter((f: any) => {
-                            const spent = expenses
-                              .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                              .reduce((sum: number, e: any) => sum + e.amount, 0);
-                            return f.amount - spent > 0;
-                          })
-                          .map((f: any) => {
-                            const s = soes.find((soe: any) => soe.id === f.soeId);
-                            const spent = expenses
-                              .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                              .reduce((sum: number, e: any) => sum + e.amount, 0);
-                            return <option key={f.soeId} value={f.soeId}>{s?.name || 'Unnamed SOE'} (Available: ₹{(f.amount - spent).toLocaleString()})</option>;
-                          });
+                        // Group by SOE name to handle split funding (e.g. same name, different IDs)
+                        const groups: Record<string, { name: string, totalAmount: number, totalSpent: number, primarySoeId: string }> = {};
+                        
+                        alloc.fundedSOEs.forEach((f: any) => {
+                          const s = soes.find((soe: any) => soe.id === f.soeId);
+                          const name = s?.name || 'Unnamed SOE';
+                          const spent = expenses
+                            .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                            .reduce((sum: number, e: any) => sum + e.amount, 0);
+                          
+                          if (!groups[name]) {
+                            groups[name] = { name, totalAmount: 0, totalSpent: 0, primarySoeId: f.soeId };
+                          }
+                          groups[name].totalAmount += f.amount;
+                          groups[name].totalSpent += spent;
+                        });
+
+                        return Object.values(groups)
+                          .filter(g => g.totalAmount - g.totalSpent > 0)
+                          .map(g => (
+                            <option key={g.name} value={g.primarySoeId}>
+                              {g.name} (Available: ₹{(g.totalAmount - g.totalSpent).toLocaleString()})
+                            </option>
+                          ));
                       }
                     }
                     return filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>);
