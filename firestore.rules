@@ -86,6 +86,14 @@ service cloud.firestore {
              data.updatedAt is number;
     }
 
+    function isValidFeatureLock(data) {
+      return hasRequiredFields(['feature', 'target', 'isLocked']) &&
+             hasOnlyAllowedFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
+             data.feature in ['Allocation', 'Expenditure'] &&
+             data.target is string &&
+             data.isLocked is bool;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -180,6 +188,11 @@ service cloud.firestore {
       allow create: if canWrite() && isValidPayee(request.resource.data);
       allow update: if canWrite() && isValidPayee(request.resource.data);
       allow delete: if canWrite();
+    }
+
+    match /featureLocks/{id} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidFeatureLock(request.resource.data);
     }
   }
 }

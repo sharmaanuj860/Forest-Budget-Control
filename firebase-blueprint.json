@@ -145,9 +145,24 @@
       "type": "object",
       "properties": {
         "email": { "type": "string", "description": "The user's email" },
-        "role": { "type": "string", "enum": ["admin", "deo"], "description": "The user's role" }
+        "role": { "type": "string", "enum": ["admin", "deo", "approver", "DA", "Sarahan", "Narag", "Habban", "Division", "Rajgarh"], "description": "The user's role" },
+        "maxSessions": { "type": "number", "description": "Maximum allowed concurrent sessions" },
+        "activeSessions": { "type": "array", "items": { "type": "string" }, "description": "List of active session IDs" }
       },
       "required": ["email", "role"]
+    },
+    "FeatureLock": {
+      "title": "Feature Lock",
+      "description": "Represents a lock on a specific feature for a role or range",
+      "type": "object",
+      "properties": {
+        "feature": { "type": "string", "enum": ["Allocation", "Expenditure"], "description": "The feature to lock" },
+        "target": { "type": "string", "description": "The role or range ID to apply the lock to" },
+        "isLocked": { "type": "boolean", "description": "Whether the feature is locked" },
+        "updatedBy": { "type": "string", "description": "UID of the admin who updated the lock" },
+        "updatedAt": { "type": "number", "description": "Timestamp of the update" }
+      },
+      "required": ["feature", "target", "isLocked"]
     },
     "Bill": {
       "title": "Bill",
@@ -216,6 +231,7 @@
     "/users": { "schema": "User", "description": "Collection of application users" },
     "/bills": { "schema": "Bill", "description": "Collection of treasury bills" },
     "/surrenders": { "schema": "Surrender", "description": "Collection of budget surrenders" },
-    "/payees": { "schema": "Payee", "description": "Collection of payee details" }
+    "/payees": { "schema": "Payee", "description": "Collection of payee details" },
+    "/featureLocks": { "schema": "FeatureLock", "description": "Collection of feature locks" }
   }
 }

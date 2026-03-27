@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2 } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -102,7 +102,23 @@ type Payee = {
   createdBy: string;
 };
 
-type AppUser = { id: string; email: string; role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'; password?: string };
+type AppUser = { 
+  id: string; 
+  email: string; 
+  role: 'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'; 
+  password?: string;
+  maxSessions?: number;
+  activeSessions?: string[];
+};
+
+type FeatureLock = {
+  id: string;
+  feature: 'Allocation' | 'Expenditure';
+  target: string; // role or rangeId
+  isLocked: boolean;
+  updatedBy: string;
+  updatedAt: number;
+};
 
 type Surrender = {
   id: string;
@@ -378,6 +394,14 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
+      if (user) {
+        const userDoc = await getDoc(doc(db, 'users', user.uid));
+        if (userDoc.exists()) {
+          const activeSessions = userDoc.data().activeSessions || [];
+          const updatedSessions = activeSessions.filter((id: string) => id !== sessionId);
+          await updateDoc(doc(db, 'users', user.uid), { activeSessions: updatedSessions });
+        }
+      }
       await signOut(auth);
       setUser(null);
       setUserRole(null);
@@ -411,6 +435,8 @@ export default function App() {
   const [bills, setBills] = useState<Bill[]>([]);
   const [payees, setPayees] = useState<Payee[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
+  const [featureLocks, setFeatureLocks] = useState<FeatureLock[]>([]);
+  const [sessionId] = useState(() => Math.random().toString(36).substring(2, 15));
   const [newUserEmail, setNewUserEmail] = useState('');
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserRole, setNewUserRole] = useState<'admin' | 'deo' | 'approver' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh'>('deo');
@@ -616,50 +642,48 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
         setLoading(true);
-        setUser(currentUser);
-        setActiveTab('Dashboard');
         const email = currentUser.email?.toLowerCase();
         
-        // Hardcode roles for specific emails to bypass DB requirement
-        if (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com') {
-           setUserRole('admin');
-           // Try to save it, ignore if fails
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'admin' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
-           setLoading(false);
-           return;
-        } else if (email === 'da123@rajgarhforest.app') {
-           setUserRole('deo');
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'deo' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
-           setLoading(false);
-           return;
-        } else if (email === 'da789@rajgarhforest.app') {
-           setUserRole('approver');
-           setDoc(doc(db, 'users', currentUser.uid), { email: currentUser.email, role: 'approver' }, { merge: true }).catch((error) => handleFirestoreError(error, OperationType.UPDATE, 'users'));
-           setLoading(false);
-           return;
-        }
-
         try {
           const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          if (userDoc.exists()) {
-            setUserRole(userDoc.data().role);
-          } else {
-            // If first user ever, make admin, else wait for admin to assign role
-            try {
-              const usersSnap = await getDocs(collection(db, 'users'));
-              if (usersSnap.empty) {
-                const newRole = 'admin';
-                await setDoc(doc(db, 'users', currentUser.uid), {
-                  email: currentUser.email,
-                  role: newRole
-                });
-                setUserRole(newRole);
-              } else {
-                setUserRole(null);
+          let userData = userDoc.exists() ? userDoc.data() as AppUser : null;
+
+          // Hardcode roles for specific emails
+          if (!userData && (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com')) {
+            userData = { id: currentUser.uid, email: currentUser.email!, role: 'admin', maxSessions: 3, activeSessions: [] };
+            await setDoc(doc(db, 'users', currentUser.uid), userData, { merge: true });
+          }
+
+          if (userData) {
+            // Session Validation
+            const activeSessions = userData.activeSessions || [];
+            if (!activeSessions.includes(sessionId)) {
+              const maxSessions = userData.maxSessions || (userData.role === 'admin' ? 3 : 1);
+              if (activeSessions.length >= maxSessions) {
+                showAlert(`Maximum concurrent sessions (${maxSessions}) reached for this account. Please logout from other devices.`);
+                await signOut(auth);
+                setLoading(false);
+                return;
               }
-            } catch (e) {
-               setUserRole(null);
-               handleFirestoreError(e, OperationType.GET, 'users');
+              // Add current session
+              const updatedSessions = [...activeSessions, sessionId];
+              await updateDoc(doc(db, 'users', currentUser.uid), { activeSessions: updatedSessions });
+            }
+
+            setUser(currentUser);
+            setUserRole(userData.role);
+            setActiveTab('Dashboard');
+          } else {
+            // If first user ever, make admin
+            const usersSnap = await getDocs(collection(db, 'users'));
+            if (usersSnap.empty) {
+              const newRole = 'admin';
+              const newUserData = { email: currentUser.email, role: newRole, maxSessions: 3, activeSessions: [sessionId] };
+              await setDoc(doc(db, 'users', currentUser.uid), newUserData);
+              setUser(currentUser);
+              setUserRole(newRole);
+            } else {
+              setUserRole(null);
             }
           }
         } catch (error) {
@@ -743,6 +767,11 @@ export default function App() {
       const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as AppUser));
       setUsers(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
+
+    const unsubLocks = onSnapshot(collection(db, 'featureLocks'), (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as FeatureLock));
+      setFeatureLocks(data);
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'featureLocks'));
 
     const unsubPayees = onSnapshot(collection(db, 'payees'), (snap) => {
       const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Payee));
@@ -3904,19 +3933,37 @@ export default function App() {
                             <>
                               <button 
                                 onClick={() => {
+                                  if (title === 'Allocation' && isFeatureLocked('Allocation')) {
+                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                    return;
+                                  }
+                                  if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
+                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                    return;
+                                  }
                                   onEdit?.(item);
                                   setIsFormExpanded(true);
                                   window.scrollTo({ top: 0, behavior: 'smooth' });
                                 }} 
-                                className="text-blue-500 hover:bg-blue-100 rounded-lg p-1.5 transition-colors"
-                                title="Edit"
+                                className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-100'}`}
+                                title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Edit"}
                               >
                                 <Pencil className="w-3.5 h-3.5"/>
                               </button>
                               <button 
-                                onClick={() => onDelete(item.id)} 
-                                className="text-red-500 hover:bg-red-100 rounded-lg p-1.5 transition-colors"
-                                title="Delete"
+                                onClick={() => {
+                                  if (title === 'Allocation' && isFeatureLocked('Allocation')) {
+                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                    return;
+                                  }
+                                  if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
+                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                    return;
+                                  }
+                                  onDelete(item.id);
+                                }} 
+                                className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-red-500 hover:bg-red-100'}`}
+                                title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Delete"}
                               >
                                 <Trash2 className="w-3.5 h-3.5"/>
                               </button>
@@ -3988,6 +4035,17 @@ export default function App() {
       setIsInstallable(false);
       setInstallPrompt(null);
     }
+  };
+
+  const isFeatureLocked = (feature: 'Allocation' | 'Expenditure') => {
+    if (userRole === 'admin') return false;
+    const roleLock = featureLocks.find(l => l.feature === feature && l.target === userRole);
+    if (roleLock?.isLocked) return true;
+    if (userRangeId) {
+      const rangeLock = featureLocks.find(l => l.feature === feature && l.target === userRangeId);
+      if (rangeLock?.isLocked) return true;
+    }
+    return false;
   };
 
   // --- Handlers ---
@@ -4215,6 +4273,10 @@ export default function App() {
 
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
+    if (isFeatureLocked('Allocation')) {
+      showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+      return;
+    }
     const rangeId = e.target.rangeId.value;
     const amount = parseFloat(e.target.amount.value);
     const remarks = e.target.remarks.value || '';
@@ -4471,6 +4533,10 @@ export default function App() {
 
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
+    if (isFeatureLocked('Expenditure')) {
+      showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+      return;
+    }
     const allocationId = e.target.allocationId.value;
     const soeId = e.target.soeId.value;
     const amount = parseFloat(e.target.amount?.value || '0');
@@ -4617,6 +4683,14 @@ export default function App() {
   };
 
   const handleDelete = (collectionName: string, id: string) => {
+    if (collectionName === 'allocations' && isFeatureLocked('Allocation')) {
+      showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+      return;
+    }
+    if (collectionName === 'expenditures' && isFeatureLocked('Expenditure')) {
+      showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+      return;
+    }
     showConfirm(`Are you sure you want to delete this ${collectionName.slice(0, -1)}?`, async () => {
       try {
         await deleteDoc(doc(db, collectionName, id));
@@ -4875,6 +4949,46 @@ export default function App() {
     });
   };
 
+  const handleUpdateMaxSessions = async (userId: string, maxSessions: number) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { maxSessions, updatedAt: Date.now() });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
+  };
+
+  const handleClearSessions = async (userId: string) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), { activeSessions: [], updatedAt: Date.now() });
+      showAlert('All active sessions cleared for this user.');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'users');
+    }
+  };
+
+  const handleToggleFeatureLock = async (feature: 'Allocation' | 'Expenditure', target: string) => {
+    const existingLock = featureLocks.find(l => l.feature === feature && l.target === target);
+    try {
+      if (existingLock) {
+        await updateDoc(doc(db, 'featureLocks', existingLock.id), {
+          isLocked: !existingLock.isLocked,
+          updatedBy: user?.email || 'Admin',
+          updatedAt: Date.now()
+        });
+      } else {
+        await addDoc(collection(db, 'featureLocks'), {
+          feature,
+          target,
+          isLocked: true,
+          updatedBy: user?.email || 'Admin',
+          updatedAt: Date.now()
+        });
+      }
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'featureLocks');
+    }
+  };
+
   const renderUserManagement = () => (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
       <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
@@ -4929,6 +5043,8 @@ export default function App() {
               <th className="p-3 border-b">Email</th>
               <th className="p-3 border-b">Password</th>
               <th className="p-3 border-b">Role</th>
+              <th className="p-3 border-b">Max Sessions</th>
+              <th className="p-3 border-b">Active</th>
               <th className="p-3 border-b text-right">Actions</th>
             </tr>
           </thead>
@@ -4995,6 +5111,32 @@ export default function App() {
                     <option value="Rajgarh">Rajgarh</option>
                   </select>
                 </td>
+                <td className="p-3">
+                  <input 
+                    type="number" 
+                    min="1" 
+                    max="10"
+                    value={u.maxSessions || (u.role === 'admin' ? 3 : 1)}
+                    onChange={(e) => handleUpdateMaxSessions(u.id, parseInt(e.target.value))}
+                    className="w-16 p-1 border rounded text-xs"
+                  />
+                </td>
+                <td className="p-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${u.activeSessions?.length ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                      {u.activeSessions?.length || 0} Active
+                    </span>
+                    {u.activeSessions?.length ? (
+                      <button 
+                        onClick={() => handleClearSessions(u.id)}
+                        className="text-red-500 hover:text-red-700 p-1"
+                        title="Clear all sessions"
+                      >
+                        <RefreshCw className="w-3 h-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                </td>
                 <td className="p-3 text-right flex justify-end gap-2">
                   <button 
                     onClick={() => {
@@ -5016,6 +5158,75 @@ export default function App() {
             ))}
           </tbody>
         </table>
+      </div>
+
+      <div className="mt-12 bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
+          <Lock className="h-5 w-5 text-red-600" /> Feature Locking Control
+        </h3>
+        <p className="text-xs text-gray-500 mb-6">Lock specific features for specific roles or ranges. When locked, users cannot add, edit, or delete records for that feature.</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+          {/* Role Based Locks */}
+          <div>
+            <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
+              <Shield className="w-4 h-4 text-gray-400" /> Role-Based Restrictions
+            </h4>
+            <div className="space-y-3">
+              {['deo', 'approver', 'Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].map(role => (
+                <div key={role} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div>
+                    <span className="text-sm font-medium uppercase">{role === 'approver' ? 'DA' : role}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleToggleFeatureLock('Allocation', role)}
+                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Allocation' && l.target === role)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {featureLocks.find(l => l.feature === 'Allocation' && l.target === role)?.isLocked ? 'Allocation Locked' : 'Lock Allocation'}
+                    </button>
+                    <button 
+                      onClick={() => handleToggleFeatureLock('Expenditure', role)}
+                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Expenditure' && l.target === role)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {featureLocks.find(l => l.feature === 'Expenditure' && l.target === role)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Range Based Locks */}
+          <div>
+            <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-gray-400" /> Range-Based Restrictions
+            </h4>
+            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
+              {ranges.map(r => (
+                <div key={r.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div>
+                    <span className="text-sm font-medium">{r.name}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={() => handleToggleFeatureLock('Allocation', r.id)}
+                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Allocation' && l.target === r.id)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {featureLocks.find(l => l.feature === 'Allocation' && l.target === r.id)?.isLocked ? 'Allocation Locked' : 'Lock Allocation'}
+                    </button>
+                    <button 
+                      onClick={() => handleToggleFeatureLock('Expenditure', r.id)}
+                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Expenditure' && l.target === r.id)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      {featureLocks.find(l => l.feature === 'Expenditure' && l.target === r.id)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
