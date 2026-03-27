@@ -35,15 +35,17 @@ service cloud.firestore {
     }
     
     function isDEO() {
-      return isAuthenticated() && 
+      return isAuthenticated() && (
         (request.auth.token.email != null && request.auth.token.email.lower() == "da123@rajgarhforest.app") ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo');
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo')
+      );
     }
 
     function isApprover() {
-      return isAuthenticated() && 
+      return isAuthenticated() && (
         (request.auth.token.email != null && request.auth.token.email.lower() == "da789@rajgarhforest.app") ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver');
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver')
+      );
     }
 
     function isDA() {
@@ -87,11 +89,13 @@ service cloud.firestore {
     }
 
     function isValidFeatureLock(data) {
-      return hasRequiredFields(['feature', 'target', 'isLocked']) &&
+      return hasRequiredFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
              hasOnlyAllowedFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
-             data.feature in ['Allocation', 'Expenditure'] &&
+             data.feature in ['Allocation', 'Expenditure', 'Access'] &&
              data.target is string &&
-             data.isLocked is bool;
+             data.isLocked is bool &&
+             data.updatedBy is string &&
+             data.updatedAt is number;
     }
 
     // ===============================================================
@@ -99,9 +103,18 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow read: if isAuthenticated();
+      allow get: if isAuthenticated();
+      allow list: if isAdmin();
       allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow update, delete: if isAdmin();
+      allow update: if isAuthenticated() && (
+        isAdmin() || 
+        (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeSessions']))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /test/connection {
+      allow get: if true;
     }
 
     match /financialYears/{id} {

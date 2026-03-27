@@ -4,7 +4,7 @@ import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, M
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
-  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence,
+  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence, browserLocalPersistence,
   collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction, writeBatch
 } from './firebase';
 import { jsPDF } from 'jspdf';
@@ -109,11 +109,13 @@ type AppUser = {
   password?: string;
   maxSessions?: number;
   activeSessions?: string[];
+  isDisabled?: boolean;
+  updatedAt?: number;
 };
 
 type FeatureLock = {
   id: string;
-  feature: 'Allocation' | 'Expenditure';
+  feature: 'Allocation' | 'Expenditure' | 'Access';
   target: string; // role or rangeId
   isLocked: boolean;
   updatedBy: string;
@@ -443,6 +445,7 @@ export default function App() {
   const [visiblePasswords, setVisiblePasswords] = useState<{[key: string]: boolean}>({});
   const [editingPasswordId, setEditingPasswordId] = useState<string | null>(null);
   const [newPasswordInput, setNewPasswordInput] = useState('');
+  const [selectedLockTarget, setSelectedLockTarget] = useState<string>('');
 
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
@@ -589,7 +592,7 @@ export default function App() {
   const [surrenderFormSelection, setSurrenderFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [showDetailedReport, setShowDetailedReport] = useState(true);
-  const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '' });
+  const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '', rangeId: '' });
   const [reconSchemeId, setReconSchemeId] = useState('');
   const [reconSearchTerm, setReconSearchTerm] = useState('');
   const [reconData, setReconData] = useState<any>({});
@@ -625,8 +628,32 @@ export default function App() {
 
   // --- Auth & Role Check ---
   useEffect(() => {
-    // Set persistence to session only - will require login if app is closed
-    setPersistence(auth, browserSessionPersistence).catch(err => console.error("Persistence error:", err));
+    // Set persistence to local - will keep user logged in even if tab is closed
+    // But we will manually check for the 10-minute grace period
+    const initAuth = async () => {
+      try {
+        await setPersistence(auth, browserLocalPersistence);
+      } catch (err) {
+        console.error("Persistence error:", err);
+      }
+    };
+    initAuth();
+
+    // --- Grace Period Check ---
+    const lastClosedTime = localStorage.getItem('lastClosedTime');
+    if (lastClosedTime) {
+      const timeDiff = Date.now() - parseInt(lastClosedTime);
+      if (timeDiff > 10 * 60 * 1000) { // 10 minutes
+        signOut(auth).catch(err => console.error("Sign out error:", err));
+        localStorage.removeItem('lastClosedTime');
+      }
+    }
+
+    const handleUnload = () => {
+      localStorage.setItem('lastClosedTime', Date.now().toString());
+    };
+
+    window.addEventListener('beforeunload', handleUnload);
 
     async function testConnection() {
       try {
@@ -649,16 +676,76 @@ export default function App() {
           let userData = userDoc.exists() ? userDoc.data() as AppUser : null;
 
           // Hardcode roles for specific emails
-          if (!userData && (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com')) {
-            userData = { id: currentUser.uid, email: currentUser.email!, role: 'admin', maxSessions: 3, activeSessions: [] };
-            await setDoc(doc(db, 'users', currentUser.uid), userData, { merge: true });
+          if (!userData) {
+            if (email === 'admin@rajgarhforest.app' || email === 'sharmaanuj860@gmail.com') {
+              userData = { id: currentUser.uid, email: currentUser.email!, role: 'admin', maxSessions: 999999, activeSessions: [] };
+              await setDoc(doc(db, 'users', currentUser.uid), userData, { merge: true });
+            } else if (email === 'da123@rajgarhforest.app') {
+              userData = { id: currentUser.uid, email: currentUser.email!, role: 'deo', maxSessions: 999999, activeSessions: [] };
+              await setDoc(doc(db, 'users', currentUser.uid), userData, { merge: true });
+            } else if (email === 'da789@rajgarhforest.app') {
+              userData = { id: currentUser.uid, email: currentUser.email!, role: 'approver', maxSessions: 999999, activeSessions: [] };
+              await setDoc(doc(db, 'users', currentUser.uid), userData, { merge: true });
+            }
           }
 
           if (userData) {
+            // Check if user is disabled individually
+            if (userData.isDisabled) {
+              showAlert("Your account has been disabled by the administrator. Please contact support.");
+              await signOut(auth);
+              setLoading(false);
+              return;
+            }
+
+            // Check if user's role or range is disabled via featureLocks
+            if (userData.role !== 'admin') {
+              try {
+                const locksSnap = await getDocs(query(
+                  collection(db, 'featureLocks'),
+                  where('feature', '==', 'Access'),
+                  where('isLocked', '==', true)
+                ));
+                
+                const activeAccessLocks = locksSnap.docs.map(d => d.data() as FeatureLock);
+                
+                // Check individual user lock via featureLocks (legacy or fallback)
+                if (activeAccessLocks.some(l => l.target === userData!.id)) {
+                  showAlert(`Access for your account has been disabled by the administrator.`);
+                  await signOut(auth);
+                  setLoading(false);
+                  return;
+                }
+                
+                // Check role lock
+                if (activeAccessLocks.some(l => l.target === userData!.role)) {
+                  showAlert(`Access for the ${userData.role.toUpperCase()} role has been disabled by the administrator.`);
+                  await signOut(auth);
+                  setLoading(false);
+                  return;
+                }
+
+                // Check range lock (if role is a range name)
+                if (['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userData.role)) {
+                  const rangesSnap = await getDocs(collection(db, 'ranges'));
+                  const userRange = rangesSnap.docs.find(d => d.data().name === userData!.role);
+                  if (userRange && activeAccessLocks.some(l => l.target === userRange.id)) {
+                    showAlert(`Access for the ${userData.role} range has been disabled by the administrator.`);
+                    await signOut(auth);
+                    setLoading(false);
+                    return;
+                  }
+                }
+              } catch (lockError) {
+                console.warn("Could not check feature locks during login:", lockError);
+              }
+            }
+
             // Session Validation
             const activeSessions = userData.activeSessions || [];
             if (!activeSessions.includes(sessionId)) {
-              const maxSessions = userData.maxSessions || (userData.role === 'admin' ? 3 : 1);
+              // Default to 999999 (unlimited) if not specified, but admins are always unlimited
+              const maxSessions = userData.role === 'admin' ? 999999 : (userData.maxSessions || 999999);
               if (activeSessions.length >= maxSessions) {
                 showAlert(`Maximum concurrent sessions (${maxSessions}) reached for this account. Please logout from other devices.`);
                 await signOut(auth);
@@ -667,27 +754,38 @@ export default function App() {
               }
               // Add current session
               const updatedSessions = [...activeSessions, sessionId];
-              await updateDoc(doc(db, 'users', currentUser.uid), { activeSessions: updatedSessions });
+              try {
+                await updateDoc(doc(db, 'users', currentUser.uid), { activeSessions: updatedSessions });
+              } catch (err) {
+                handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.uid}`);
+              }
             }
 
             setUser(currentUser);
             setUserRole(userData.role);
             setActiveTab('Dashboard');
+            // Clear last closed time as user is now active
+            localStorage.removeItem('lastClosedTime');
           } else {
             // If first user ever, make admin
-            const usersSnap = await getDocs(collection(db, 'users'));
-            if (usersSnap.empty) {
-              const newRole = 'admin';
-              const newUserData = { email: currentUser.email, role: newRole, maxSessions: 3, activeSessions: [sessionId] };
-              await setDoc(doc(db, 'users', currentUser.uid), newUserData);
-              setUser(currentUser);
-              setUserRole(newRole);
-            } else {
+            try {
+              const usersSnap = await getDocs(collection(db, 'users'));
+              if (usersSnap.empty) {
+                const newRole = 'admin';
+                const newUserData = { email: currentUser.email, role: newRole, maxSessions: 999999, activeSessions: [sessionId] };
+                await setDoc(doc(db, 'users', currentUser.uid), newUserData);
+                setUser(currentUser);
+                setUserRole(newRole);
+              } else {
+                setUserRole(null);
+              }
+            } catch (e) {
+              console.warn("Could not check for first user (likely permission denied), assuming not first user.");
               setUserRole(null);
             }
           }
         } catch (error) {
-          handleFirestoreError(error, OperationType.GET, 'users');
+          handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
         }
       } else {
         setUser(null);
@@ -695,21 +793,26 @@ export default function App() {
       }
       setLoading(false);
     });
-    return () => unsubscribe();
+    return () => {
+      unsubscribe();
+      window.removeEventListener('beforeunload', handleUnload);
+    };
   }, []);
 
-  // --- Session Expiry Logic ---
+  // --- Session Expiry Logic (Activity Timer) ---
   useEffect(() => {
-    if (!user) return;
+    if (!user || !userRole) return;
 
     let timeoutId: any;
 
     const resetTimer = () => {
       if (timeoutId) clearTimeout(timeoutId);
+      // Admin: 20 mins, Others: 15 mins
+      const timeoutMinutes = userRole === 'admin' ? 20 : 15;
       timeoutId = setTimeout(() => {
-        showAlert("Session expired due to inactivity (15 mins). Please login again.");
+        showAlert(`Session expired due to inactivity (${timeoutMinutes} mins). Please login again.`);
         handleLogout();
-      }, 15 * 60 * 1000); // 15 minutes
+      }, timeoutMinutes * 60 * 1000);
     };
 
     // Initial start
@@ -727,7 +830,7 @@ export default function App() {
         window.removeEventListener(event, resetTimer);
       });
     };
-  }, [user]);
+  }, [user, userRole]);
 
   // --- Real-time Data Sync (Master Data) ---
   useEffect(() => {
@@ -763,10 +866,24 @@ export default function App() {
       setSubActivities(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'subActivities'));
 
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+    const unsubUsers = userRole === 'admin' ? onSnapshot(collection(db, 'users'), (snap) => {
       const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as AppUser));
       setUsers(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
-    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users'));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'users')) : () => {};
+
+    // Listen to current user's document for real-time disablement (for non-admins)
+    const unsubCurrentUser = user && userRole !== 'admin' ? onSnapshot(doc(db, 'users', user.uid), (snap) => {
+      const userData = snap.data() as AppUser;
+      if (userData?.isDisabled) {
+        showAlert("Your account has been disabled by the administrator. Please contact support.");
+        handleLogout();
+      }
+    }, (error) => {
+      // Ignore permission errors if user is already disabled and doc becomes unreadable
+      if (!error.message.includes('insufficient permissions')) {
+        handleFirestoreError(error, OperationType.GET, `users/${user.uid}`);
+      }
+    }) : () => {};
 
     const unsubLocks = onSnapshot(collection(db, 'featureLocks'), (snap) => {
       const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as FeatureLock));
@@ -780,7 +897,7 @@ export default function App() {
 
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
-      unsubSubActivities(); unsubUsers(); unsubPayees();
+      unsubSubActivities(); unsubUsers(); unsubCurrentUser(); unsubPayees(); unsubLocks();
     };
   }, [user, userRole]);
 
@@ -943,16 +1060,24 @@ export default function App() {
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setLoginError('');
+    if (!navigator.onLine) {
+      setLoginError('No internet connection. Please check your network.');
+      return;
+    }
     setLoading(true);
     try {
       let emailToUse = loginEmail;
       if (!emailToUse.includes('@')) {
         emailToUse = `${emailToUse}@rajgarhforest.app`;
       }
+      // Ensure persistence is set before login
+      await setPersistence(auth, browserLocalPersistence);
       await signInWithEmailAndPassword(auth, emailToUse, loginPassword);
     } catch (error: any) {
       console.error('Auth error:', error);
-      if (error.code === 'auth/operation-not-allowed') {
+      if (error.code === 'auth/network-request-failed') {
+        setLoginError('Network request failed. This may be due to a poor connection or browser restrictions. Please refresh and try again.');
+      } else if (error.code === 'auth/operation-not-allowed') {
         setLoginError('Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
         setLoginError('User not found or invalid credentials.');
@@ -978,6 +1103,22 @@ export default function App() {
     }
     return null;
   }, [userRole, ranges]);
+
+  // --- Real-time Access Control Enforcement ---
+  useEffect(() => {
+    if (!user || userRole === 'admin' || featureLocks.length === 0) return;
+
+    const accessLock = featureLocks.find(l => 
+      l.feature === 'Access' && 
+      l.isLocked && 
+      (l.target === userRole || (userRangeId && l.target === userRangeId) || l.target === user.uid)
+    );
+
+    if (accessLock) {
+      showAlert(`Access for your ${accessLock.target === userRole ? 'role' : (accessLock.target === user.uid ? 'account' : 'range')} has been disabled by the administrator.`);
+      handleLogout();
+    }
+  }, [user, userRole, userRangeId, featureLocks]);
 
   const currentSoes = useMemo(() => {
     let filtered = soes.filter(s => ALLOWED_SOES.includes(s.name || 'Provisional'));
@@ -4269,7 +4410,7 @@ export default function App() {
     return { isInvalid, remaining, availableBudget, currentAllocated };
   }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, editingItem]);
 
-  const isAllocationInvalid = allocationBudgetStatus.isInvalid;
+  const isAllocationInvalid = allocationBudgetStatus.isInvalid || !allocationFormFilters.rangeId;
 
   const handleAddAllocation = async (e: any) => {
     e.preventDefault();
@@ -4966,7 +5107,7 @@ export default function App() {
     }
   };
 
-  const handleToggleFeatureLock = async (feature: 'Allocation' | 'Expenditure', target: string) => {
+  const handleToggleFeatureLock = async (feature: 'Allocation' | 'Expenditure' | 'Access', target: string) => {
     const existingLock = featureLocks.find(l => l.feature === feature && l.target === target);
     try {
       if (existingLock) {
@@ -4986,6 +5127,18 @@ export default function App() {
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'featureLocks');
+    }
+  };
+
+  const handleToggleUserStatus = async (userId: string, isDisabled: boolean) => {
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        isDisabled: !isDisabled,
+        updatedAt: Date.now()
+      });
+      showAlert(`User ${!isDisabled ? 'disabled' : 'enabled'} successfully.`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${userId}`);
     }
   };
 
@@ -5115,8 +5268,8 @@ export default function App() {
                   <input 
                     type="number" 
                     min="1" 
-                    max="10"
-                    value={u.maxSessions || (u.role === 'admin' ? 3 : 1)}
+                    max="999999"
+                    value={u.maxSessions || 999999}
                     onChange={(e) => handleUpdateMaxSessions(u.id, parseInt(e.target.value))}
                     className="w-16 p-1 border rounded text-xs"
                   />
@@ -5150,6 +5303,12 @@ export default function App() {
                   <button onClick={() => handleResetPassword(u.email)} className="text-gray-500 hover:text-gray-700 text-sm border border-gray-200 px-2 py-1 rounded">
                     Send Reset Email
                   </button>
+                  <button 
+                    onClick={() => handleToggleUserStatus(u.id, u.isDisabled || false)}
+                    className={`text-sm border px-2 py-1 rounded transition-colors ${u.isDisabled ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-200 hover:bg-emerald-100'}`}
+                  >
+                    {u.isDisabled ? 'Disabled' : 'Enabled'}
+                  </button>
                   <button onClick={() => handleDeleteUser(u.id)} className="text-red-500 hover:text-red-700 p-1">
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -5166,66 +5325,140 @@ export default function App() {
         </h3>
         <p className="text-xs text-gray-500 mb-6">Lock specific features for specific roles or ranges. When locked, users cannot add, edit, or delete records for that feature.</p>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Role Based Locks */}
-          <div>
-            <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
-              <Shield className="w-4 h-4 text-gray-400" /> Role-Based Restrictions
-            </h4>
-            <div className="space-y-3">
-              {['deo', 'approver', 'Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].map(role => (
-                <div key={role} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <div>
-                    <span className="text-sm font-medium uppercase">{role === 'approver' ? 'DA' : role}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => handleToggleFeatureLock('Allocation', role)}
-                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Allocation' && l.target === role)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      {featureLocks.find(l => l.feature === 'Allocation' && l.target === role)?.isLocked ? 'Allocation Locked' : 'Lock Allocation'}
-                    </button>
-                    <button 
-                      onClick={() => handleToggleFeatureLock('Expenditure', role)}
-                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Expenditure' && l.target === role)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      {featureLocks.find(l => l.feature === 'Expenditure' && l.target === role)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+        <div className="space-y-6">
+          <div className="flex flex-col md:flex-row gap-4 items-end bg-gray-50 p-4 rounded-lg border border-gray-200">
+            <div className="flex-1">
+              <label className="block text-xs font-bold text-gray-500 mb-1 uppercase">Select Range, Role or User</label>
+              <select 
+                value={selectedLockTarget}
+                onChange={(e) => setSelectedLockTarget(e.target.value)}
+                className="w-full p-2 border rounded bg-white text-sm"
+              >
+                <option value="">-- Select Target --</option>
+                <optgroup label="Roles">
+                  <option value="deo">DEO</option>
+                  <option value="approver">DA</option>
+                  <option value="Sarahan">Sarahan</option>
+                  <option value="Narag">Narag</option>
+                  <option value="Habban">Habban</option>
+                  <option value="Division">Division</option>
+                  <option value="Rajgarh">Rajgarh</option>
+                </optgroup>
+                <optgroup label="Ranges">
+                  {ranges.map(r => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </optgroup>
+                <optgroup label="Users">
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.email} ({u.role})</option>
+                  ))}
+                </optgroup>
+              </select>
+            </div>
+            
+            <div className="flex gap-2 flex-wrap">
+              <button 
+                disabled={!selectedLockTarget}
+                onClick={() => handleToggleFeatureLock('Allocation', selectedLockTarget)}
+                className={`px-3 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center gap-1.5 ${!selectedLockTarget ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : featureLocks.find(l => l.feature === 'Allocation' && l.target === selectedLockTarget)?.isLocked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+              >
+                {featureLocks.find(l => l.feature === 'Allocation' && l.target === selectedLockTarget)?.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                {featureLocks.find(l => l.feature === 'Allocation' && l.target === selectedLockTarget)?.isLocked ? 'Allocation Locked' : 'Lock Allocation'}
+              </button>
+              
+              <button 
+                disabled={!selectedLockTarget}
+                onClick={() => handleToggleFeatureLock('Expenditure', selectedLockTarget)}
+                className={`px-3 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center gap-1.5 ${!selectedLockTarget ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : featureLocks.find(l => l.feature === 'Expenditure' && l.target === selectedLockTarget)?.isLocked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+              >
+                {featureLocks.find(l => l.feature === 'Expenditure' && l.target === selectedLockTarget)?.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                {featureLocks.find(l => l.feature === 'Expenditure' && l.target === selectedLockTarget)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
+              </button>
+
+              <button 
+                disabled={!selectedLockTarget}
+                onClick={() => {
+                  const targetUser = users.find(u => u.id === selectedLockTarget);
+                  if (targetUser) {
+                    handleToggleUserStatus(selectedLockTarget, targetUser.isDisabled || false);
+                  } else {
+                    handleToggleFeatureLock('Access', selectedLockTarget);
+                  }
+                }}
+                className={`px-3 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center gap-1.5 ${!selectedLockTarget ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : (users.find(u => u.id === selectedLockTarget)?.isDisabled || featureLocks.find(l => l.feature === 'Access' && l.target === selectedLockTarget)?.isLocked) ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}
+              >
+                {(users.find(u => u.id === selectedLockTarget)?.isDisabled || featureLocks.find(l => l.feature === 'Access' && l.target === selectedLockTarget)?.isLocked) ? <Shield className="w-3.5 h-3.5" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                {(users.find(u => u.id === selectedLockTarget)?.isDisabled || featureLocks.find(l => l.feature === 'Access' && l.target === selectedLockTarget)?.isLocked) ? 'Disabled' : 'Enabled'}
+              </button>
             </div>
           </div>
 
-          {/* Range Based Locks */}
-          <div>
-            <h4 className="text-sm font-bold mb-4 flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-gray-400" /> Range-Based Restrictions
-            </h4>
-            <div className="space-y-3 max-h-[400px] overflow-y-auto pr-2">
-              {ranges.map(r => (
-                <div key={r.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200">
-                  <div>
-                    <span className="text-sm font-medium">{r.name}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => handleToggleFeatureLock('Allocation', r.id)}
-                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Allocation' && l.target === r.id)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      {featureLocks.find(l => l.feature === 'Allocation' && l.target === r.id)?.isLocked ? 'Allocation Locked' : 'Lock Allocation'}
-                    </button>
-                    <button 
-                      onClick={() => handleToggleFeatureLock('Expenditure', r.id)}
-                      className={`px-3 py-1 rounded text-[10px] font-bold transition-colors ${featureLocks.find(l => l.feature === 'Expenditure' && l.target === r.id)?.isLocked ? 'bg-red-600 text-white' : 'bg-white border border-gray-300 text-gray-600 hover:bg-gray-100'}`}
-                    >
-                      {featureLocks.find(l => l.feature === 'Expenditure' && l.target === r.id)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
-                    </button>
-                  </div>
-                </div>
-              ))}
+          {(featureLocks.filter(l => l.isLocked).length > 0 || users.filter(u => u.isDisabled).length > 0) && (
+            <div className="mt-4">
+              <h4 className="text-sm font-bold mb-2 text-gray-600">Active Restrictions</h4>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 text-gray-600 text-xs">
+                      <th className="p-2 border-b">Target</th>
+                      <th className="p-2 border-b">Feature</th>
+                      <th className="p-2 border-b">Status</th>
+                      <th className="p-2 border-b">Updated By</th>
+                      <th className="p-2 border-b">Updated At</th>
+                      <th className="p-2 border-b text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {featureLocks.filter(l => l.isLocked).map(l => (
+                      <tr key={l.id} className="border-b hover:bg-gray-50 text-xs">
+                        <td className="p-2 font-medium uppercase">
+                          {ranges.find(r => r.id === l.target)?.name || (l.target === 'approver' ? 'DA' : l.target)}
+                        </td>
+                        <td className="p-2">{l.feature === 'Access' ? 'Full Access' : l.feature}</td>
+                        <td className="p-2">
+                          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">
+                            {l.feature === 'Access' ? 'DISABLED' : 'LOCKED'}
+                          </span>
+                        </td>
+                        <td className="p-2 text-gray-500">{l.updatedBy}</td>
+                        <td className="p-2 text-gray-500">{new Date(l.updatedAt).toLocaleString()}</td>
+                        <td className="p-2 text-right">
+                          <button 
+                            onClick={() => handleToggleFeatureLock(l.feature as any, l.target)}
+                            className="text-emerald-600 hover:text-emerald-700 font-bold"
+                          >
+                            {l.feature === 'Access' ? 'Enable' : 'Unlock'}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {users.filter(u => u.isDisabled).map(u => (
+                      <tr key={u.id} className="border-b hover:bg-gray-50 text-xs">
+                        <td className="p-2 font-medium">
+                          {u.email} ({u.role})
+                        </td>
+                        <td className="p-2">User Access</td>
+                        <td className="p-2">
+                          <span className="bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">DISABLED</span>
+                        </td>
+                        <td className="p-2 text-gray-500">Admin</td>
+                        <td className="p-2 text-gray-500">{u.updatedAt ? new Date(u.updatedAt).toLocaleString() : 'N/A'}</td>
+                        <td className="p-2 text-right">
+                          <button 
+                            onClick={() => handleToggleUserStatus(u.id, true)}
+                            className="text-emerald-600 hover:text-emerald-700 font-bold"
+                          >
+                            Enable
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
@@ -7293,10 +7526,6 @@ export default function App() {
                   editingItem={editingItem} type="Allocation" userRangeId={userRangeId}
                   onSelectionChange={setAllocationFormFilters}
                 >
-                  <select name="rangeId" required defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.rangeId : ''} className="w-full p-1.5 border rounded text-sm">
-                    <option value="">Select Range</option>
-                    {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
-                  </select>
                   <input 
                     name="amount" 
                     type="number" 
@@ -7713,7 +7942,7 @@ export default function App() {
                     )}
                   </div>
                 ),
-                false,
+                currentSoeBalance === undefined,
                 isExpFilterExpanded,
                 setIsExpFilterExpanded,
                 <>
@@ -8788,17 +9017,31 @@ function CascadingDropdowns({
 
   return (
     <>
-      {type === 'Surrender' && (
+      {(type === 'Surrender') && (
         <div className="flex gap-2">
-          <select 
-            className="w-full p-1.5 border rounded text-sm" 
-            value={rangeId} 
-            onChange={(e) => { setRangeId(e.target.value); setSchemeId(''); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); }}
-            required
-          >
-            <option value="">Select Range</option>
-            {ranges.filter((r: any) => r.name !== 'Division' && r.name !== 'Rajgarh Forest Division').map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          {userRangeId ? (
+            <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
+              Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
+              <input type="hidden" name="rangeId" value={userRangeId} />
+            </div>
+          ) : (
+            <select 
+              className="w-full p-1.5 border rounded text-sm" 
+              name="rangeId"
+              value={rangeId} 
+              onChange={(e) => { setRangeId(e.target.value); setSchemeId(''); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+              required
+            >
+              <option value="">Select Range</option>
+              {ranges
+                .filter((r: any) => (r.name !== 'Division' && r.name !== 'Rajgarh Forest Division'))
+                .map((r: any) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                  </option>
+                ))}
+            </select>
+          )}
         </div>
       )}
 
@@ -8865,7 +9108,7 @@ function CascadingDropdowns({
       <input type="hidden" name="subActivityId" value={subActivityId} />
       <input type="hidden" name="soeId" value={soeId} />
       <input type="hidden" name="allocationId" value={allocationId} />
-      <input type="hidden" name="rangeId" value={rangeId} />
+      {!userRangeId && (type !== 'Surrender' && type !== 'Allocation' && type !== 'Expenditure') && <input type="hidden" name="rangeId" value={rangeId} />}
 
       {(type === 'Surrender') && (
         <div className="flex gap-2">
@@ -8953,6 +9196,31 @@ function CascadingDropdowns({
               ));
             })()}
           </select>
+
+          {/* Range selection moved here for Allocation */}
+          <div className="flex gap-2">
+            {userRangeId ? (
+              <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
+                Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
+                <input type="hidden" name="rangeId" value={userRangeId} />
+              </div>
+            ) : (
+              <select 
+                className="w-full p-1.5 border rounded text-sm" 
+                name="rangeId"
+                value={rangeId} 
+                onChange={(e) => { setRangeId(e.target.value); setSoeId(''); setAllocationId(''); }}
+                required
+              >
+                <option value="">Select Range</option>
+                {ranges.map((r: any) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
       )}
 
@@ -8963,7 +9231,15 @@ function CascadingDropdowns({
               <select 
                 className="w-full p-1.5 border rounded text-sm" 
                 value={allocationId} 
-                onChange={(e) => { setAllocationId(e.target.value); setSoeId(''); }}
+                onChange={(e) => { 
+                  const val = e.target.value;
+                  setAllocationId(val); 
+                  setSoeId(''); 
+                  if (val) {
+                    const alloc = allocations.find((a: any) => a.id === val);
+                    if (alloc) setRangeId(alloc.rangeId);
+                  }
+                }}
                 required
               >
                 <option value="">Select Allocation (Range)</option>
@@ -9030,6 +9306,31 @@ function CascadingDropdowns({
                   })()}
                 </select>
                 <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Manage SOE Heads">+</button>
+              </div>
+
+              {/* Range selection moved here for Expenditure */}
+              <div className="flex gap-2">
+                {userRangeId ? (
+                  <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
+                    Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
+                    <input type="hidden" name="rangeId" value={userRangeId} />
+                  </div>
+                ) : (
+                  <select 
+                    className="w-full p-1.5 border rounded text-sm" 
+                    name="rangeId"
+                    value={rangeId} 
+                    onChange={(e) => { setRangeId(e.target.value); setSoeId(''); setAllocationId(''); }}
+                    required
+                  >
+                    <option value="">Select Range</option>
+                    {ranges.map((r: any) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
               
               {soeId && (
