@@ -30,20 +30,20 @@ service cloud.firestore {
     function isAdmin() {
       return isAuthenticated() && 
         (request.auth.token.email == "sharmaanuj860@gmail.com" ||
-         (request.auth.token.email != null && request.auth.token.email.lower() == "admin@rajgarhforest.app") ||
+         (request.auth.token.email != null && request.auth.token.email.toLower() == "admin@rajgarhforest.app") ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
     
     function isDEO() {
       return isAuthenticated() && (
-        (request.auth.token.email != null && request.auth.token.email.lower() == "da123@rajgarhforest.app") ||
+        (request.auth.token.email != null && request.auth.token.email.toLower() == "da123@rajgarhforest.app") ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo')
       );
     }
 
     function isApprover() {
       return isAuthenticated() && (
-        (request.auth.token.email != null && request.auth.token.email.lower() == "da789@rajgarhforest.app") ||
+        (request.auth.token.email != null && request.auth.token.email.toLower() == "da789@rajgarhforest.app") ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver')
       );
     }
@@ -104,7 +104,7 @@ service cloud.firestore {
 
     match /users/{userId} {
       allow get: if isAuthenticated();
-      allow list: if isAdmin();
+      allow list: if isAuthenticated();
       allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
       allow update: if isAuthenticated() && (
         isAdmin() || 
@@ -175,8 +175,14 @@ service cloud.firestore {
     match /expenditures/{id} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data);
-      allow update: if isAuthenticated() && (canWriteExpenditure(resource.data) || canApproveExpenditure());
-      allow delete: if isAuthenticated() && canWriteExpenditure(resource.data);
+      allow update: if isAuthenticated() && (
+        isAdmin() || isDEO() || canApproveExpenditure() ||
+        (canWriteExpenditure(resource.data) && resource.data.createdBy == request.auth.uid)
+      );
+      allow delete: if isAuthenticated() && (
+        isAdmin() || isDEO() ||
+        (canWriteExpenditure(resource.data) && resource.data.createdBy == request.auth.uid)
+      );
     }
 
     match /appSettings/{id} {

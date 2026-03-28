@@ -374,6 +374,7 @@ const PayeeSelector = ({
 export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [allocationAmount, setAllocationAmount] = useState<string>('');
+  const [expenseAmount, setExpenseAmount] = useState<string>('');
   const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -1103,6 +1104,9 @@ export default function App() {
     }
     return null;
   }, [userRole, ranges]);
+
+  const isAdmin = () => userRole === 'admin';
+  const isDEO = () => userRole === 'deo';
 
   // --- Real-time Access Control Enforcement ---
   useEffect(() => {
@@ -3898,7 +3902,8 @@ export default function App() {
     filterContent?: React.ReactNode,
     onResetFilters?: () => void,
     isFullScreen?: boolean,
-    setIsFullScreen?: (val: boolean) => void
+    setIsFullScreen?: (val: boolean) => void,
+    getRowClassName?: (item: any) => string
   ) => {
     let filteredItems = items;
     if (searchTerm) {
@@ -3922,7 +3927,7 @@ export default function App() {
 
     return (
     <div className={`grid grid-cols-1 ${isFullScreen ? '' : 'lg:grid-cols-4'} gap-6 items-start relative`}>
-      {(userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && !isTableFullScreen && (
+      {(userRole === 'admin' || userRole === 'deo' || ((title === 'Expenditure' || title === 'Allocation' || title === 'Bill' || title === 'Payee') && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && !isTableFullScreen && (
         <div className={`bg-white p-4 rounded-2xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
@@ -4050,7 +4055,7 @@ export default function App() {
                 <tr>
                   <th className="p-3 border-b border-gray-100 whitespace-nowrap w-12 text-center">#</th>
                   {columns.map(c => <th key={c.key} className="p-3 border-b border-gray-100 whitespace-nowrap">{c.label}</th>)}
-                  {(customActions || userRole === 'admin' || userRole === 'deo' || (canEditDelete ? items.some(canEditDelete) : title === 'Expenditure')) && <th className="p-3 border-b border-gray-100 text-right whitespace-nowrap">Actions</th>}
+                  {(customActions || userRole === 'admin' || userRole === 'deo' || title === 'Expenditure' || (canEditDelete && items.some(canEditDelete))) && <th className="p-3 border-b border-gray-100 text-right whitespace-nowrap">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -4063,10 +4068,10 @@ export default function App() {
                   })
                   .slice((currentPage - 1) * itemsPerPage, itemsPerPage === -1 ? filteredItems.length : currentPage * itemsPerPage)
                   .map((item, index) => (
-                  <tr key={item.id} className="hover:bg-emerald-50/30 transition-colors group">
+                  <tr key={item.id} className={`hover:bg-emerald-50/30 transition-colors group ${getRowClassName ? getRowClassName(item) : ''}`}>
                     <td className="p-3 text-gray-400 font-medium text-center text-[11px]">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                     {columns.map(c => <td key={c.key} className="p-3 text-gray-600 text-[11px] leading-relaxed">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                    {(customActions || (canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || title === 'Expenditure'))) && (
+                    {(customActions || title === 'Expenditure' || (canEditDelete && canEditDelete(item)) || (userRole === 'admin' || userRole === 'deo')) && (
                       <td className="p-3 text-right">
                         <div className="flex justify-end gap-1 transition-opacity">
                           {customActions && customActions(item)}
@@ -4149,8 +4154,13 @@ export default function App() {
   useEffect(() => {
     if (editingItem?.type === 'Allocation') {
       setAllocationAmount(editingItem.item.amount.toString());
+    } else if (editingItem?.type === 'Expenditure') {
+      setExpenseAmount(editingItem.item.amount.toString());
+      setSelectedPayeesForExpense([]);
     } else if (!editingItem) {
       setAllocationAmount('');
+      setExpenseAmount('');
+      setSelectedPayeesForExpense([]);
     }
   }, [editingItem]);
 
@@ -4672,6 +4682,16 @@ export default function App() {
     });
   };
 
+  const isExpenseInvalid = useMemo(() => {
+    if (currentSoeBalance === undefined) return true;
+    let amount = parseFloat(expenseAmount || '0');
+    if (selectedPayeesForExpense.length > 0) {
+      amount = selectedPayeesForExpense.reduce((sum, p) => sum + parseFloat(p.amount || '0'), 0);
+    }
+    if (amount <= 0) return true;
+    return amount > currentSoeBalance;
+  }, [currentSoeBalance, expenseAmount, selectedPayeesForExpense]);
+
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
     if (isFeatureLocked('Expenditure')) {
@@ -4680,7 +4700,9 @@ export default function App() {
     }
     const allocationId = e.target.allocationId.value;
     const soeId = e.target.soeId.value;
-    const amount = parseFloat(e.target.amount?.value || '0');
+    const amount = selectedPayeesForExpense.length > 0 
+      ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+      : parseFloat(expenseAmount || '0');
     const date = e.target.date.value;
     const description = e.target.description.value;
     const targetFyId = selectedFY;
@@ -4770,23 +4792,26 @@ export default function App() {
           updatedAt: Date.now()
         });
         setEditingItem(null);
+        setExpenseAmount('');
         setCurrentSoeBalance(undefined);
         e.target.reset();
       } else {
         const payeeName = e.target.payeeName?.value;
+        const payeeId = e.target.payeeId?.value;
         await addDoc(collection(db, 'expenditures'), { 
           allocationId, soeId, amount, date, description, financialYear: targetFyId,
           rangeId: alloc.rangeId,
           createdBy: user.uid,
+          createdByRole: userRole,
           status: 'pending',
           isLocked: false,
           createdAt: Date.now(),
           updatedAt: Date.now(),
-          payeeName: payeeName || null
+          payeeName: payeeName || null,
+          payeeId: payeeId || null
         });
         setCurrentSoeBalance(undefined);
-        // Clear only the amount field to allow quick entry for same activity/SOE
-        if (e.target.amount) e.target.amount.value = '';
+        setExpenseAmount('');
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
@@ -7549,7 +7574,7 @@ export default function App() {
                 </CascadingDropdowns>
               </div>,
               (item) => setEditingItem({ type: 'Allocation', item }),
-              (item) => userRole === 'admin' || userRole === 'deo',
+              (item) => isAdmin() || isDEO(),
               null,
               null,
               isAllocationInvalid,
@@ -7660,7 +7685,7 @@ export default function App() {
                   {expenditureSubTab === 'bills' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
                 </button>
               )}
-              {(userRole === 'admin' || userRole === 'deo') && (
+              {(userRole === 'admin' || userRole === 'deo' || userRangeId) && (
                 <button 
                   onClick={() => setExpenditureSubTab('payees')}
                   className={`pb-2 px-4 text-sm font-medium transition-colors relative ${expenditureSubTab === 'payees' ? 'text-emerald-600' : 'text-gray-500 hover:text-gray-700'}`}
@@ -7873,7 +7898,15 @@ export default function App() {
                     </div>
                   )}
                   {selectedPayeesForExpense.length === 0 && (
-                    <input name="amount" type="number" required={editingItem?.type === 'Expenditure'} defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.amount : ''} placeholder="Amount (₹)" className="w-full p-2 border rounded" />
+                    <input 
+                      name="amount" 
+                      type="number" 
+                      required={editingItem?.type === 'Expenditure'} 
+                      value={expenseAmount}
+                      onChange={(e) => setExpenseAmount(e.target.value)}
+                      placeholder="Amount (₹)" 
+                      className={`w-full p-2 border rounded ${isExpenseInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                    />
                   )}
                   <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
                   <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
@@ -7891,9 +7924,13 @@ export default function App() {
                     return item.createdBy === user?.uid;
                   }
                   if (userRole === 'admin' || userRole === 'deo') return true;
+                  
+                  // Range users can only edit their own entries
                   if (userRangeId) {
                     const alloc = allocations.find(a => a.id === item.allocationId);
-                    return alloc?.rangeId === userRangeId;
+                    if (alloc?.rangeId === userRangeId) {
+                      return item.createdBy === user?.uid;
+                    }
                   }
                   return item.createdBy === user?.uid;
                 },
@@ -7942,7 +7979,7 @@ export default function App() {
                     )}
                   </div>
                 ),
-                currentSoeBalance === undefined,
+                isExpenseInvalid,
                 isExpFilterExpanded,
                 setIsExpFilterExpanded,
                 <>
@@ -8009,11 +8046,19 @@ export default function App() {
                 () => {
                   setExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
                   setSearchTerm('');
+                },
+                false,
+                null,
+                (item) => {
+                  const creator = users.find(u => u.id === item.createdBy);
+                  if (creator?.role === 'admin' || item.createdByRole === 'admin') return 'bg-green-50/50';
+                  if (creator?.role === 'deo' || item.createdByRole === 'deo') return 'bg-blue-50/50';
+                  return 'bg-white';
                 }
               )
             )}
 
-            {expenditureSubTab === 'bills' && (userRole === 'admin' || userRole === 'deo') && (() => {
+            {expenditureSubTab === 'bills' && (userRole === 'admin' || userRole === 'deo' || userRangeId) && (() => {
               const availableApprovedExpenses = expenses.filter(e => e.status === 'approved' && e.financialYear === selectedFY);
               const firstSelectedExp = expenses.find(e => selectedExpensesForBill.includes(e.id));
               const lockedSoeId = firstSelectedExp?.soeId;
@@ -8228,7 +8273,7 @@ export default function App() {
                   setEditingItem({ type: 'Bill', item });
                   setSelectedExpensesForBill(item.expenseIds);
                 },
-                (item) => (userRole === 'admin' || (userRole === 'deo' && item.status === 'draft')),
+                (item) => isAdmin() || (isDEO() && item.status === 'draft') || (userRangeId && item.rangeId === userRangeId && item.status === 'draft'),
                 undefined,
                 (item) => (
                   <div className="flex gap-1">
@@ -8246,7 +8291,7 @@ export default function App() {
                     >
                       <Download className="w-4 h-4" />
                     </button>
-                    {(userRole === 'admin' || userRole === 'deo') && (
+                    {(userRole === 'admin' || userRole === 'deo' || (userRangeId && item.rangeId === userRangeId)) && (
                       <button 
                         onClick={() => {
                           const newStatus = item.status === 'draft' ? 'finalized' : 'draft';
@@ -8322,7 +8367,7 @@ export default function App() {
                   </select>
                 </>,
                 (item) => setEditingItem({ type: 'Payee', item }),
-                () => (userRole === 'admin' || userRole === 'deo')
+                (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId)
               )
             )}
           </div>
@@ -8806,7 +8851,7 @@ function CascadingDropdowns({
       if (type === 'Expenditure') {
         const alloc = allocations.find((a: any) => a.id === item.allocationId);
         setAllocationId(item.allocationId);
-        currentSoeId = alloc?.soeId || '';
+        currentSoeId = item.soeId || alloc?.soeId || '';
         currentSubActivityId = alloc?.subActivityId || '';
         currentActivityId = alloc?.activityId || '';
         currentSectorId = alloc?.sectorId || '';
