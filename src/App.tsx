@@ -378,6 +378,8 @@ export default function App() {
   const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [billSearchTerm, setBillSearchTerm] = useState('');
+  const [payeeSearchTerm, setPayeeSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [dashboardSearch, setDashboardSearch] = useState('');
@@ -580,6 +582,10 @@ export default function App() {
       setSoeFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
       setExpDateRange({ start: '', end: '' });
       setSearchTerm('');
+      setBillSearchTerm('');
+      setPayeeSearchTerm('');
+      setSelectedExpensesForBill([]);
+      setBillExpFilters({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
       setDashboardSearch('');
       setRangeSearch('');
       setSoeSearchTerm('');
@@ -3903,11 +3909,16 @@ export default function App() {
     onResetFilters?: () => void,
     isFullScreen?: boolean,
     setIsFullScreen?: (val: boolean) => void,
-    getRowClassName?: (item: any) => string
+    getRowClassName?: (item: any) => string,
+    customSearchTerm?: string,
+    customSetSearchTerm?: (val: string) => void
   ) => {
     let filteredItems = items;
-    if (searchTerm) {
-      const lowerSearch = searchTerm.toLowerCase();
+    const currentSearchTerm = customSearchTerm !== undefined ? customSearchTerm : searchTerm;
+    const currentSetSearchTerm = customSetSearchTerm !== undefined ? customSetSearchTerm : setSearchTerm;
+
+    if (currentSearchTerm) {
+      const lowerSearch = currentSearchTerm.toLowerCase();
       filteredItems = items.filter(item => {
         return columns.some(c => {
           if (c.searchableText) {
@@ -4016,8 +4027,8 @@ export default function App() {
                 <input 
                   type="text" 
                   placeholder={`Search ${title}s...`} 
-                  value={searchTerm}
-                  onChange={(e) => { setSearchTerm(e.target.value); setCurrentPage(1); }}
+                  value={currentSearchTerm}
+                  onChange={(e) => { currentSetSearchTerm(e.target.value); setCurrentPage(1); }}
                   className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 w-full sm:w-64 transition-all"
                 />
               </div>
@@ -4719,25 +4730,46 @@ export default function App() {
     const selectedSoe = soes.find(s => s.id === soeId);
     const selectedName = selectedSoe?.name || 'Unnamed SOE';
 
-    // Find all funded SOEs with the same name in this allocation to handle split funding
-    const matchedFunded = alloc.fundedSOEs.filter((f: any) => {
-      const s = soes.find((soe: any) => soe.id === f.soeId);
-      return (s?.name || 'Unnamed SOE') === selectedName;
-    });
+    // Aggregate allocation for this hierarchy and SOE Name
+    const totalAllocatedForSoe = allocations.filter(a => 
+      a.rangeId === alloc.rangeId &&
+      a.schemeId === alloc.schemeId &&
+      (a.sectorId || null) === (alloc.sectorId || null) &&
+      (a.activityId || null) === (alloc.activityId || null) &&
+      (a.subActivityId || null) === (alloc.subActivityId || null)
+    ).reduce((sum, a) => {
+      const funded = a.fundedSOEs?.find((f: any) => {
+        const s = soes.find((soe: any) => soe.id === f.soeId);
+        return (s?.name || 'Unnamed SOE') === selectedName;
+      });
+      return sum + (funded?.amount || 0);
+    }, 0);
 
-    const totalFunded = matchedFunded.reduce((sum: number, f: any) => sum + f.amount, 0);
-    const matchedSoeIds = matchedFunded.map((f: any) => f.soeId);
+    // Aggregate expenditure for this hierarchy and SOE Name
+    const totalSpentForSoe = expenses.filter(e => {
+      const eAlloc = allocations.find(a => a.id === e.allocationId);
+      const eSoeName = soes.find(s => s.id === e.soeId)?.name;
+      return (
+        eAlloc &&
+        eAlloc.rangeId === alloc.rangeId &&
+        eAlloc.schemeId === alloc.schemeId &&
+        (eAlloc.sectorId || null) === (alloc.sectorId || null) &&
+        (eAlloc.activityId || null) === (alloc.activityId || null) &&
+        (eAlloc.subActivityId || null) === (alloc.subActivityId || null) &&
+        eSoeName === selectedName &&
+        e.status !== 'rejected' &&
+        (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true)
+      );
+    }).reduce((sum, e) => sum + e.amount, 0);
+
+    const currentBalance = totalAllocatedForSoe - totalSpentForSoe;
 
     // If we have selected payees, we create multiple expenditures
     if (selectedPayeesForExpense.length > 0 && editingItem?.type !== 'Expenditure') {
       const totalAmount = selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
       
-      const currentSpentOnSoe = expenses
-        .filter(ex => ex.allocationId === allocationId && matchedSoeIds.includes(ex.soeId) && ex.status !== 'rejected')
-        .reduce((sum, ex) => sum + ex.amount, 0);
-
-      if (totalAmount > (totalFunded - currentSpentOnSoe)) {
-        showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${(totalFunded - currentSpentOnSoe).toLocaleString()}`);
+      if (totalAmount > currentBalance) {
+        showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${currentBalance.toLocaleString()}`);
         return;
       }
 
@@ -4772,12 +4804,8 @@ export default function App() {
       return;
     }
 
-    const currentSpentOnSoe = expenses
-      .filter(ex => ex.allocationId === allocationId && matchedSoeIds.includes(ex.soeId) && ex.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? ex.id !== editingItem.item.id : true))
-      .reduce((sum, ex) => sum + ex.amount, 0);
-
-    if (amount > (totalFunded - currentSpentOnSoe)) {
-      showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${(totalFunded - currentSpentOnSoe).toLocaleString()}`);
+    if (amount > currentBalance) {
+      showAlert(`Insufficient funds in SOE ${selectedName}. Remaining: ₹${currentBalance.toLocaleString()}`);
       return;
     }
 
@@ -7913,7 +7941,7 @@ export default function App() {
                 </CascadingDropdowns>,
                 (item) => setEditingItem({ type: 'Expenditure', item }),
                 (item) => {
-                  if (item.isLocked && userRole !== 'admin') return false;
+                  if (item.isLocked && userRole !== 'admin' && userRole !== 'approver') return false;
                   if (userRole === 'approver' || userRole === 'DA') {
                     // Approvers/DAs can only edit if it's pending and they have range access
                     if (item.status !== 'pending') return false;
@@ -7961,7 +7989,7 @@ export default function App() {
                         <ShieldCheck className="w-4 h-4" />
                       </button>
                     )}
-                    {item.isLocked && (userRole === 'admin' || ((userRole === 'DA' || userRole === 'approver') && item.status === 'approved' && !bills.some(b => b.expenseIds.includes(item.id)))) && (
+                    {item.isLocked && (userRole === 'admin' || userRole === 'approver' || (userRole === 'DA' && item.status === 'approved' && !bills.some(b => b.expenseIds.includes(item.id)))) && (
                       <button 
                         onClick={() => {
                           const isBilled = bills.some(b => b.expenseIds.includes(item.id));
@@ -7969,12 +7997,21 @@ export default function App() {
                             showAlert("This expenditure is already part of a bill and cannot be reset.");
                             return;
                           }
-                          showConfirm("Reset this approved expenditure to pending?", () => handleUpdateExpenseStatus(item.id, 'pending', false));
+                          showConfirm(item.status === 'approved' ? "Reset this approved expenditure to pending?" : "Unlock this expenditure?", () => handleUpdateExpenseStatus(item.id, item.status === 'approved' ? 'pending' : item.status, false));
                         }}
                         className="text-orange-600 hover:text-orange-800 p-1 border border-orange-100 rounded bg-orange-50"
-                        title="Reset to Pending"
+                        title={item.status === 'approved' ? "Reset to Pending" : "Unlock"}
                       >
                         <RefreshCcw className="w-4 h-4" />
+                      </button>
+                    )}
+                    {!item.isLocked && (userRole === 'admin' || userRole === 'approver') && item.status === 'approved' && (
+                      <button 
+                        onClick={() => handleUpdateExpenseStatus(item.id, 'approved', true)}
+                        className="text-gray-600 hover:text-gray-800 p-1 border border-gray-100 rounded bg-gray-50"
+                        title="Lock Expenditure"
+                      >
+                        <Lock className="w-4 h-4" />
                       </button>
                     )}
                   </div>
@@ -8059,7 +8096,12 @@ export default function App() {
             )}
 
             {expenditureSubTab === 'bills' && (userRole === 'admin' || userRole === 'deo' || userRangeId) && (() => {
-              const availableApprovedExpenses = expenses.filter(e => e.status === 'approved' && e.financialYear === selectedFY);
+              const billedExpenseIds = new Set(bills.flatMap(b => b.expenseIds));
+              const availableApprovedExpenses = expenses.filter(e => 
+                e.status === 'approved' && 
+                e.financialYear === selectedFY && 
+                !billedExpenseIds.has(e.id)
+              );
               const firstSelectedExp = expenses.find(e => selectedExpensesForBill.includes(e.id));
               const lockedSoeId = firstSelectedExp?.soeId;
 
@@ -8136,7 +8178,7 @@ export default function App() {
                       <div className="flex gap-1">
                         <select 
                           value={billExpFilters.rangeId} 
-                          onChange={(e) => setBillExpFilters({...billExpFilters, rangeId: e.target.value})}
+                          onChange={(e) => setBillExpFilters({...billExpFilters, rangeId: e.target.value, schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: ''})}
                           className="text-[10px] p-1 border rounded bg-white"
                         >
                           <option value="">All Ranges</option>
@@ -8148,7 +8190,13 @@ export default function App() {
                           className="text-[10px] p-1 border rounded bg-white"
                         >
                           <option value="">All SOEs</option>
-                          {availableSoesForBill.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                          {availableSoesForBill.filter(s => {
+                            if (!billExpFilters.rangeId) return true;
+                            return availableApprovedExpenses.some(e => {
+                              const al = allocations.find(a => a.id === e.allocationId);
+                              return al?.rangeId === billExpFilters.rangeId && e.soeId === s.id;
+                            });
+                          }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                         </select>
                       </div>
                     </div>
@@ -8160,7 +8208,10 @@ export default function App() {
                         className="text-[10px] p-1 border rounded bg-white"
                       >
                         <option value="">All Schemes</option>
-                        {schemes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {schemes.filter(s => {
+                          if (!billExpFilters.rangeId) return true;
+                          return allocations.some(a => a.rangeId === billExpFilters.rangeId && a.schemeId === s.id);
+                        }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                       <select 
                         value={billExpFilters.sectorId} 
@@ -8168,7 +8219,13 @@ export default function App() {
                         className="text-[10px] p-1 border rounded bg-white"
                       >
                         <option value="">All Sectors</option>
-                        {sectors.filter(s => !billExpFilters.schemeId || s.schemeId === billExpFilters.schemeId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {sectors.filter(s => {
+                          if (billExpFilters.schemeId && s.schemeId !== billExpFilters.schemeId) return false;
+                          if (billExpFilters.rangeId) {
+                            return allocations.some(a => a.rangeId === billExpFilters.rangeId && a.sectorId === s.id);
+                          }
+                          return true;
+                        }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </div>
                     <div className="grid grid-cols-2 gap-1 mb-2">
@@ -8178,7 +8235,13 @@ export default function App() {
                         className="text-[10px] p-1 border rounded bg-white"
                       >
                         <option value="">All Activities</option>
-                        {activities.filter(a => !billExpFilters.sectorId || a.sectorId === billExpFilters.sectorId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {activities.filter(a => {
+                          if (billExpFilters.sectorId && a.sectorId !== billExpFilters.sectorId) return false;
+                          if (billExpFilters.rangeId) {
+                            return allocations.some(a => a.rangeId === billExpFilters.rangeId && a.activityId === a.id);
+                          }
+                          return true;
+                        }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                       <select 
                         value={billExpFilters.subActivityId} 
@@ -8186,7 +8249,13 @@ export default function App() {
                         className="text-[10px] p-1 border rounded bg-white"
                       >
                         <option value="">All Sub-Activities</option>
-                        {subActivities.filter(sa => !billExpFilters.activityId || sa.activityId === billExpFilters.activityId).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                        {subActivities.filter(sa => {
+                          if (billExpFilters.activityId && sa.activityId !== billExpFilters.activityId) return false;
+                          if (billExpFilters.rangeId) {
+                            return allocations.some(a => a.rangeId === billExpFilters.rangeId && a.subActivityId === sa.id);
+                          }
+                          return true;
+                        }).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                       </select>
                     </div>
 
@@ -8336,11 +8405,14 @@ export default function App() {
                 </>,
                 () => setBillFilters({ billNo: '', startDate: '', endDate: '' }),
                 isBillFormFullScreen,
-                setIsBillFormFullScreen
+                setIsBillFormFullScreen,
+                undefined,
+                billSearchTerm,
+                setBillSearchTerm
               )
             })()}
 
-            {expenditureSubTab === 'payees' && (userRole === 'admin' || userRole === 'deo') && (
+            {expenditureSubTab === 'payees' && (userRole === 'admin' || userRole === 'deo' || userRangeId) && (
               renderSimpleManager(
                 'Payee',
                 payees,
@@ -8361,13 +8433,29 @@ export default function App() {
                   <input name="name" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.name : ''} placeholder="Payee Name" className="w-full p-2 border rounded" />
                   <input name="address" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.address : ''} placeholder="Address" className="w-full p-2 border rounded" />
                   <input name="accountNumber" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.accountNumber : ''} placeholder="Account Number" className="w-full p-2 border rounded" />
-                  <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
-                    <option value="">Select Range (Optional)</option>
-                    {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                  </select>
+                  {(isAdmin() || isDEO()) ? (
+                    <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
+                      <option value="">Select Range (Optional)</option>
+                      {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                    </select>
+                  ) : (
+                    <input type="hidden" name="rangeId" value={userRangeId || ''} />
+                  )}
                 </>,
                 (item) => setEditingItem({ type: 'Payee', item }),
-                (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId)
+                (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId),
+                undefined,
+                undefined,
+                false,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                undefined,
+                payeeSearchTerm,
+                setPayeeSearchTerm
               )
             )}
           </div>
@@ -8800,42 +8888,49 @@ function CascadingDropdowns({
   // Calculate and notify parent of balance changes (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && onBalanceChange) {
-      if (allocationId && soeId) {
-        const alloc = allocations.find((a: any) => a.id === allocationId);
-        if (!alloc || !alloc.fundedSOEs) {
-          onBalanceChange(undefined);
-          return;
-        }
-
+      if (schemeId && rangeId && soeId) {
         const selectedSoe = soes.find((s: any) => s.id === soeId);
         const selectedName = selectedSoe?.name || 'Unnamed SOE';
 
-        // Find all funded SOEs with the same name in this allocation
-        const matchedFunded = alloc.fundedSOEs.filter((f: any) => {
-          const s = soes.find((soe: any) => soe.id === f.soeId);
-          return (s?.name || 'Unnamed SOE') === selectedName;
-        });
+        // Aggregate allocation for this hierarchy and SOE Name
+        const totalAllocatedForSoe = allocations.filter((a: any) => 
+          a.rangeId === rangeId &&
+          a.schemeId === schemeId &&
+          (a.sectorId || null) === (sectorId || null) &&
+          (a.activityId || null) === (activityId || null) &&
+          (a.subActivityId || null) === (subActivityId || null)
+        ).reduce((sum: number, a: any) => {
+          const funded = a.fundedSOEs?.find((f: any) => {
+            const s = soes.find((soe: any) => soe.id === f.soeId);
+            return (s?.name || 'Unnamed SOE') === selectedName;
+          });
+          return sum + (funded?.amount || 0);
+        }, 0);
 
-        const totalFunded = matchedFunded.reduce((sum: number, f: any) => sum + f.amount, 0);
-        
-        // Find all expenses for these SOE IDs in this allocation
-        const matchedSoeIds = matchedFunded.map((f: any) => f.soeId);
-        const spent = expenses
-          .filter((e: any) => 
-            e.allocationId === allocationId && 
-            matchedSoeIds.includes(e.soeId) && 
-            e.status !== 'rejected' && 
+        // Aggregate expenditure for this hierarchy and SOE Name
+        const totalSpentForSoe = expenses.filter((e: any) => {
+          const eAlloc = allocations.find((a: any) => a.id === e.allocationId);
+          const eSoeName = soes.find((s: any) => s.id === e.soeId)?.name;
+          return (
+            eAlloc &&
+            eAlloc.rangeId === rangeId &&
+            eAlloc.schemeId === schemeId &&
+            (eAlloc.sectorId || null) === (sectorId || null) &&
+            (eAlloc.activityId || null) === (activityId || null) &&
+            (eAlloc.subActivityId || null) === (subActivityId || null) &&
+            eSoeName === selectedName &&
+            e.status !== 'rejected' &&
             (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true)
-          )
-          .reduce((sum: number, e: any) => sum + e.amount, 0);
+          );
+        }).reduce((sum: number, e: any) => sum + e.amount, 0);
 
-        const balance = totalFunded - spent;
+        const balance = totalAllocatedForSoe - totalSpentForSoe;
         onBalanceChange(balance);
       } else {
         onBalanceChange(undefined);
       }
     }
-  }, [allocationId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes]);
+  }, [schemeId, sectorId, activityId, subActivityId, rangeId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -9045,7 +9140,7 @@ function CascadingDropdowns({
 
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
-    if (type === 'Expenditure' && filteredAllocations.length === 1 && !allocationId && !editingItem) {
+    if (type === 'Expenditure' && filteredAllocations.length >= 1 && !allocationId && !editingItem) {
       setAllocationId(filteredAllocations[0].id);
     }
   }, [filteredAllocations, allocationId, type, editingItem]);
