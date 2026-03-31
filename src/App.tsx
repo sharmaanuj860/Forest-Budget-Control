@@ -71,6 +71,10 @@ type Expense = {
   status: 'pending' | 'approved' | 'rejected'; 
   isLocked: boolean; 
   approvalId?: number;
+  createdBy?: string;
+  createdByRole?: string;
+  updatedBy?: string;
+  updatedByRole?: string;
   updatedAt?: number;
   createdAt?: number;
   approvalReason?: string;
@@ -3911,7 +3915,9 @@ export default function App() {
     setIsFullScreen?: (val: boolean) => void,
     getRowClassName?: (item: any) => string,
     customSearchTerm?: string,
-    customSetSearchTerm?: (val: string) => void
+    customSetSearchTerm?: (val: string) => void,
+    canEdit?: (item: any) => boolean,
+    canDelete?: (item: any) => boolean
   ) => {
     let filteredItems = items;
     const currentSearchTerm = customSearchTerm !== undefined ? customSearchTerm : searchTerm;
@@ -4066,7 +4072,7 @@ export default function App() {
                 <tr>
                   <th className="p-3 border-b border-gray-100 whitespace-nowrap w-12 text-center">#</th>
                   {columns.map(c => <th key={c.key} className="p-3 border-b border-gray-100 whitespace-nowrap">{c.label}</th>)}
-                  {(customActions || userRole === 'admin' || userRole === 'deo' || title === 'Expenditure' || (canEditDelete && items.some(canEditDelete))) && <th className="p-3 border-b border-gray-100 text-right whitespace-nowrap">Actions</th>}
+                  {(customActions || userRole === 'admin' || userRole === 'deo' || title === 'Expenditure' || (canEditDelete && items.some(canEditDelete)) || (canEdit && items.some(canEdit)) || (canDelete && items.some(canDelete))) && <th className="p-3 border-b border-gray-100 text-right whitespace-nowrap">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
@@ -4082,49 +4088,49 @@ export default function App() {
                   <tr key={item.id} className={`hover:bg-emerald-50/30 transition-colors group ${getRowClassName ? getRowClassName(item) : ''}`}>
                     <td className="p-3 text-gray-400 font-medium text-center text-[11px]">{(currentPage - 1) * itemsPerPage + index + 1}</td>
                     {columns.map(c => <td key={c.key} className="p-3 text-gray-600 text-[11px] leading-relaxed">{c.render ? c.render(item[c.key], item) : item[c.key]}</td>)}
-                    {(customActions || title === 'Expenditure' || (canEditDelete && canEditDelete(item)) || (userRole === 'admin' || userRole === 'deo')) && (
+                    {(customActions || title === 'Expenditure' || (canEditDelete && canEditDelete(item)) || (canEdit && canEdit(item)) || (canDelete && canDelete(item)) || (userRole === 'admin' || userRole === 'deo')) && (
                       <td className="p-3 text-right">
                         <div className="flex justify-end gap-1 transition-opacity">
                           {customActions && customActions(item)}
-                          {(canEditDelete ? canEditDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver'))) && (
-                            <>
-                              <button 
-                                onClick={() => {
-                                  if (title === 'Allocation' && isFeatureLocked('Allocation')) {
-                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
-                                    return;
-                                  }
-                                  if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
-                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
-                                    return;
-                                  }
-                                  onEdit?.(item);
-                                  setIsFormExpanded(true);
-                                  window.scrollTo({ top: 0, behavior: 'smooth' });
-                                }} 
-                                className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-100'}`}
-                                title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Edit"}
-                              >
-                                <Pencil className="w-3.5 h-3.5"/>
-                              </button>
-                              <button 
-                                onClick={() => {
-                                  if (title === 'Allocation' && isFeatureLocked('Allocation')) {
-                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
-                                    return;
-                                  }
-                                  if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
-                                    showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
-                                    return;
-                                  }
-                                  onDelete(item.id);
-                                }} 
-                                className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-red-500 hover:bg-red-100'}`}
-                                title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Delete"}
-                              >
-                                <Trash2 className="w-3.5 h-3.5"/>
-                              </button>
-                            </>
+                          {(canEditDelete ? canEditDelete(item) : (canEdit ? canEdit(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')))) && (
+                            <button 
+                              onClick={() => {
+                                if (title === 'Allocation' && isFeatureLocked('Allocation')) {
+                                  showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                  return;
+                                }
+                                if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
+                                  showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                  return;
+                                }
+                                onEdit?.(item);
+                                setIsFormExpanded(true);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }} 
+                              className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-blue-500 hover:bg-blue-100'}`}
+                              title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Edit"}
+                            >
+                              <Pencil className="w-3.5 h-3.5"/>
+                            </button>
+                          )}
+                          {(canEditDelete ? canEditDelete(item) : (canDelete ? canDelete(item) : (userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')))) && (
+                            <button 
+                              onClick={() => {
+                                if (title === 'Allocation' && isFeatureLocked('Allocation')) {
+                                  showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                  return;
+                                }
+                                if (title === 'Expenditure' && isFeatureLocked('Expenditure')) {
+                                  showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
+                                  return;
+                                }
+                                onDelete(item.id);
+                              }} 
+                              className={`rounded-lg p-1.5 transition-colors ${((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? 'text-gray-300 cursor-not-allowed' : 'text-red-500 hover:bg-red-100'}`}
+                              title={((title === 'Allocation' && isFeatureLocked('Allocation')) || (title === 'Expenditure' && isFeatureLocked('Expenditure'))) ? "Locked by Admin" : "Delete"}
+                            >
+                              <Trash2 className="w-3.5 h-3.5"/>
+                            </button>
                           )}
                         </div>
                       </td>
@@ -4781,6 +4787,7 @@ export default function App() {
             allocationId, soeId, amount: parseFloat(p.amount) || 0, date, description, financialYear: targetFyId,
             rangeId: alloc.rangeId,
             createdBy: user.uid,
+            createdByRole: userRole,
             status: 'pending',
             isLocked: false,
             createdAt: Date.now(),
@@ -4817,6 +4824,8 @@ export default function App() {
           allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId,
           payeeId: payeeId || null,
           payeeName: payeeName || null,
+          updatedBy: user.uid,
+          updatedByRole: userRole,
           updatedAt: Date.now()
         });
         setEditingItem(null);
@@ -7807,6 +7816,25 @@ export default function App() {
                     }
                   },
                   {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
+                  {key: 'updatedBy', label: 'Modified By', 
+                    searchableText: (val, item) => {
+                      const u = users.find(u => u.id === val || u.email === val);
+                      const creator = users.find(u => u.id === item.createdBy || u.email === item.createdBy);
+                      return `${u?.email || val || ''} ${creator?.email || item.createdBy || ''}`;
+                    },
+                    render: (val, item) => {
+                      const u = users.find(u => u.id === val || u.email === val);
+                      const creator = users.find(u => u.id === item.createdBy || u.email === item.createdBy);
+                      return (
+                        <div className="text-[9px] leading-tight">
+                          <div className="text-gray-400">Created: {creator?.email?.split('@')[0] || 'System'}</div>
+                          {val && val !== item.createdBy && (
+                            <div className="text-blue-500 font-medium">Edited: {u?.email?.split('@')[0] || 'System'}</div>
+                          )}
+                        </div>
+                      );
+                    }
+                  },
                   {key: 'balance', label: 'Balance', 
                     searchableText: (_, item) => {
                       const alloc = allocations.find(a => a.id === item.allocationId);
@@ -7940,28 +7968,7 @@ export default function App() {
                   <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
                 </CascadingDropdowns>,
                 (item) => setEditingItem({ type: 'Expenditure', item }),
-                (item) => {
-                  if (item.isLocked && userRole !== 'admin' && userRole !== 'approver') return false;
-                  if (userRole === 'approver' || userRole === 'DA') {
-                    // Approvers/DAs can only edit if it's pending and they have range access
-                    if (item.status !== 'pending') return false;
-                    if (userRangeId) {
-                      const alloc = allocations.find(a => a.id === item.allocationId);
-                      return alloc?.rangeId === userRangeId;
-                    }
-                    return item.createdBy === user?.uid;
-                  }
-                  if (userRole === 'admin' || userRole === 'deo') return true;
-                  
-                  // Range users can only edit their own entries
-                  if (userRangeId) {
-                    const alloc = allocations.find(a => a.id === item.allocationId);
-                    if (alloc?.rangeId === userRangeId) {
-                      return item.createdBy === user?.uid;
-                    }
-                  }
-                  return item.createdBy === user?.uid;
-                },
+                undefined,
                 (userRole === 'admin' || userRole === 'DA' || userRole === 'approver') && (
                   <div className="flex justify-end mb-2">
                     <button
@@ -8091,6 +8098,34 @@ export default function App() {
                   if (creator?.role === 'admin' || item.createdByRole === 'admin') return 'bg-green-50/50';
                   if (creator?.role === 'deo' || item.createdByRole === 'deo') return 'bg-blue-50/50';
                   return 'bg-white';
+                },
+                undefined,
+                undefined,
+                (item) => {
+                  if (userRole === 'admin') return true;
+                  if (item.isLocked) return false;
+                  
+                  if (userRole === 'deo') return true; // DEO can edit any unlocked entry (including admin's)
+                  
+                  // Regular users can only edit their own pending entries
+                  return item.createdBy === user?.uid && item.status === 'pending';
+                },
+                (item) => {
+                  if (userRole === 'admin') return true;
+                  if (item.isLocked) return false;
+                  if (item.status !== 'pending') return false; // Non-admins can only delete pending entries
+                  
+                  // DEO cannot delete admin entries
+                  if (item.createdByRole === 'admin') return false;
+                  
+                  if (userRole === 'deo') {
+                    // For old entries without role field, only allow if it's their own
+                    if (!item.createdByRole && item.createdBy !== user?.uid) return false;
+                    return true;
+                  }
+                  
+                  // Regular users can only delete their own pending entries
+                  return item.createdBy === user?.uid;
                 }
               )
             )}

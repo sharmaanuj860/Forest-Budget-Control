@@ -176,12 +176,15 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data);
       allow update: if isAuthenticated() && (
-        isAdmin() || isDEO() || canApproveExpenditure() ||
-        (canWriteExpenditure(resource.data) && resource.data.createdBy == request.auth.uid)
+        isAdmin() || 
+        (isDEO() && !resource.data.isLocked) ||
+        (resource.data.createdBy == request.auth.uid && resource.data.status == 'pending' && !resource.data.isLocked) ||
+        canApproveExpenditure()
       );
       allow delete: if isAuthenticated() && (
-        isAdmin() || isDEO() ||
-        (canWriteExpenditure(resource.data) && resource.data.createdBy == request.auth.uid)
+        isAdmin() ||
+        (isDEO() && resource.data.status == 'pending' && (resource.data.createdByRole == 'deo' || resource.data.createdByRole == 'user' || resource.data.createdBy == request.auth.uid) && !resource.data.isLocked) ||
+        (resource.data.createdBy == request.auth.uid && resource.data.status == 'pending' && !resource.data.isLocked)
       );
     }
 

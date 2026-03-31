@@ -135,7 +135,11 @@
         "soeId": { "type": "string", "description": "ID of the SOE head being booked against" },
         "amount": { "type": "number", "description": "The expenditure amount" },
         "date": { "type": "string", "description": "The date of expenditure (ISO format)" },
-        "description": { "type": "string", "description": "Description of the expenditure" }
+        "description": { "type": "string", "description": "Description of the expenditure" },
+        "createdBy": { "type": "string", "description": "UID of the user who created the expenditure" },
+        "createdByRole": { "type": "string", "description": "Role of the user who created the expenditure" },
+        "updatedBy": { "type": "string", "description": "UID of the user who last updated the expenditure" },
+        "updatedByRole": { "type": "string", "description": "Role of the user who last updated the expenditure" }
       },
       "required": ["allocationId", "soeId", "amount", "date", "description"]
     },
