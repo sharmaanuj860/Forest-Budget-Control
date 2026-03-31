@@ -601,6 +601,7 @@ export default function App() {
     }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [surrenderFormSelection, setSurrenderFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
+  const [expenseFormSelection, setExpenseFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [showDetailedReport, setShowDetailedReport] = useState(true);
   const [allocationFormFilters, setAllocationFormFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', fundingSoeName: '', rangeId: '' });
@@ -622,10 +623,11 @@ export default function App() {
 
   useEffect(() => {
     if (!editingItem) {
-      setCurrentSoeBalance(undefined);
+      setExpenseAmount('');
       setSelectedPayeesForExpense([]);
+      setCurrentSoeBalance(undefined);
     }
-  }, [editingItem]);
+  }, [editingItem, expenseFormSelection.schemeId, expenseFormSelection.sectorId, expenseFormSelection.activityId, expenseFormSelection.subActivityId, expenseFormSelection.rangeId]);
   const [viewingSoeExp, setViewingSoeExp] = useState<{ soeId: string; soeName: string; hierarchy: string } | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -7916,9 +7918,10 @@ export default function App() {
                 handleAddExpense, 
                 (id) => handleDelete('expenditures', id), 
                 <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={baseExpenses}
                   editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
                   onBalanceChange={setCurrentSoeBalance}
+                  onSelectionChange={setExpenseFormSelection}
                 >
                   {editingItem?.type === 'Expenditure' ? (
                     <div className="space-y-2">
@@ -9176,7 +9179,11 @@ function CascadingDropdowns({
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && filteredAllocations.length >= 1 && !allocationId && !editingItem) {
-      setAllocationId(filteredAllocations[0].id);
+      const firstAlloc = filteredAllocations[0];
+      setAllocationId(firstAlloc.id);
+      if (firstAlloc.rangeId) {
+        setRangeId(firstAlloc.rangeId);
+      }
     }
   }, [filteredAllocations, allocationId, type, editingItem]);
 
