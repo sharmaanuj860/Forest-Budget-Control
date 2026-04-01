@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
 import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
@@ -379,6 +379,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('Dashboard');
   const [allocationAmount, setAllocationAmount] = useState<string>('');
   const [expenseAmount, setExpenseAmount] = useState<string>('');
+  const [expenseDate, setExpenseDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [expenseDescription, setExpenseDescription] = useState<string>('');
   const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -625,9 +627,9 @@ export default function App() {
     if (!editingItem) {
       setExpenseAmount('');
       setSelectedPayeesForExpense([]);
-      setCurrentSoeBalance(undefined);
+      // Removed setCurrentSoeBalance(undefined) to prevent race conditions with CascadingDropdowns
     }
-  }, [editingItem, expenseFormSelection.schemeId, expenseFormSelection.sectorId, expenseFormSelection.activityId, expenseFormSelection.subActivityId, expenseFormSelection.rangeId]);
+  }, [editingItem, expenseFormSelection.schemeId, expenseFormSelection.sectorId, expenseFormSelection.activityId, expenseFormSelection.subActivityId]);
   const [viewingSoeExp, setViewingSoeExp] = useState<{ soeId: string; soeName: string; hierarchy: string } | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
 
@@ -1584,7 +1586,11 @@ export default function App() {
       saveAs(blob, `ledger_report_${selectedFY}.xlsx`);
     };
 
-  const getSoeAllocated = (soeId: string) => baseAllocations.reduce((sum, a) => sum + (a.fundedSOEs?.find(f => f.soeId === soeId)?.amount || 0), 0);
+  const getSoeAllocated = (soeId: string) => {
+    const allocated = baseAllocations.reduce((sum, a) => sum + (a.fundedSOEs?.find(f => f.soeId === soeId)?.amount || 0), 0);
+    const surrendered = surrenders.filter(s => s.soeId === soeId && s.fyId === selectedFY).reduce((sum, s) => sum + s.amount, 0);
+    return allocated - surrendered;
+  };
   const getAllocSpent = (allocId: string) => currentExpenses.filter(e => e.allocationId === allocId).reduce((sum, e) => sum + e.amount, 0);
 
   const totalAllocated = baseAllocations.reduce((sum, a) => sum + a.amount, 0);
@@ -3003,8 +3009,8 @@ export default function App() {
       (
         <div className="space-y-3">
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Surrender" userRangeId={userRangeId}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
+            editingItem={editingItem} type="Surrender" userRangeId={userRangeId} userRole={userRole}
             onSelectionChange={setSurrenderFormSelection}
           >
             {surrenderBudgetStatus && (
@@ -3633,8 +3639,8 @@ export default function App() {
             {isFormExpanded && (
               <form onSubmit={handleAddSoeName} className="space-y-4">
                 <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                  editingItem={editingItem} type="SOE Name" userRangeId={userRangeId}
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
+                  editingItem={editingItem} type="SOE Name" userRangeId={userRangeId} userRole={userRole}
                 >
                   <select 
                     name="name" 
@@ -4405,39 +4411,72 @@ export default function App() {
       if (!isNaN(amount) && amount < spent) return { isInvalid: true, remaining: 0, availableBudget: 0, currentAllocated: 0, error: `Amount cannot be less than expenditure (₹${spent.toLocaleString()})` };
     }
 
-    // Get all SOEs in this Sector (or Scheme if no sector)
-    const sectorSoes = soes.filter((s: any) => 
-      s.schemeId === schemeId && 
-      (s.sectorId || null) === (sectorId || null)
-    );
+    // 1. Identify relevant SOEs (the "Pool")
+    // If fundingSoeName is selected, we only care about SOEs with that name.
+    // If sectorId is selected, we care about SOEs in that sector AND shared SOEs (no sector).
+    // If no sectorId is selected, we care about ALL SOEs in the scheme.
+    const poolSoes = soes.filter((s: any) => {
+      if (s.schemeId !== schemeId) return false;
+      if (fundingSoeName && s.name !== fundingSoeName) return false;
+      if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
+      return true;
+    });
 
-    let availableBudget = 0;
-    let currentAllocated = 0;
+    // 2. Calculate Available Budget in this Pool
+    const availableBudget = poolSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
 
-    if (fundingSoeName) {
-      const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
-      availableBudget = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      currentAllocated = allocations.reduce((sum, a) => {
-        const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
-        const currentAllocId = isEditing ? editingItem.item.id : null;
-        if (a.id === currentAllocId) return sum;
-        return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
-      }, 0);
-    } else {
-      availableBudget = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      currentAllocated = allocations.reduce((sum, a) => {
-        if (a.schemeId !== schemeId || (a.sectorId || null) !== (sectorId || null)) return sum;
-        const currentAllocId = isEditing ? editingItem.item.id : null;
-        if (a.id === currentAllocId) return sum;
+    // 3. Calculate Already Allocated from this Pool
+    const sectorsWithSoes = new Set(soes.filter(s => s.schemeId === schemeId && s.sectorId).map(s => s.sectorId));
+
+    const totalAllocated = allocations.reduce((sum, a) => {
+      const currentAllocId = isEditing ? editingItem.item.id : null;
+      if (a.id === currentAllocId) return sum;
+
+      // If we are looking at a specific SOE name, we only count usage of SOEs with that name
+      if (fundingSoeName) {
+        const matchedSoes = poolSoes.filter(s => s.name === fundingSoeName);
+        const fundedFromPool = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
+        return sum + fundedFromPool.reduce((s: number, f: any) => s + f.amount, 0);
+      }
+
+      // If we are looking at a Sector (or Scheme), we count:
+      // a) All allocations that belong to this sector/scheme (regardless of funding source)
+      // b) Any allocations in OTHER sectors that draw from our poolSoes (the shared ones)
+      // c) Any pending allocations in OTHER sectors that have no SOEs of their own (they must use shared pool)
+      
+      const isSameHierarchy = a.schemeId === schemeId && (!sectorId || a.sectorId === sectorId || !a.sectorId);
+      
+      if (isSameHierarchy) {
         return sum + a.amount;
-      }, 0);
-    }
+      } else if (a.schemeId === schemeId && a.sectorId && !sectorsWithSoes.has(a.sectorId)) {
+        // This allocation is in another sector, but that sector has no SOEs of its own,
+        // so it must draw from the shared pool which is part of our poolSoes.
+        return sum + a.amount;
+      } else {
+        // Check if it draws from our poolSoes (which in this case are shared SOEs, 
+        // since poolSoes only includes shared + this sector's SOEs)
+        const fundedFromOurPool = a.fundedSOEs?.filter((f: any) => poolSoes.some(s => s.id === f.soeId)) || [];
+        return sum + fundedFromOurPool.reduce((s: number, f: any) => s + f.amount, 0);
+      }
+    }, 0);
+
+    const totalSurrendered = surrenders.reduce((sum, s) => {
+      // Count all surrenders that draw from our poolSoes within the same scheme.
+      // This includes surrenders from other sectors if they were using shared SOEs from our pool.
+      const soe = soes.find(soe => soe.id === s.soeId);
+      if (soe && soe.schemeId === schemeId && poolSoes.some(ps => ps.id === s.soeId)) {
+        return sum + s.amount;
+      }
+      return sum;
+    }, 0);
+
+    const currentAllocated = totalAllocated - totalSurrendered;
 
     const remaining = availableBudget - currentAllocated;
     const isInvalid = !isNaN(amount) && amount > 0 && amount > remaining;
 
     return { isInvalid, remaining, availableBudget, currentAllocated };
-  }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, editingItem]);
+  }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, surrenders, editingItem]);
 
   const isAllocationInvalid = allocationBudgetStatus.isInvalid || !allocationFormFilters.rangeId;
 
@@ -4702,14 +4741,41 @@ export default function App() {
   };
 
   const isExpenseInvalid = useMemo(() => {
-    if (currentSoeBalance === undefined) return true;
+    // Basic validation for required selections
+    if (!expenseFormSelection.schemeId || !expenseFormSelection.rangeId || !expenseFormSelection.soeId || !expenseFormSelection.allocationId) {
+      return true;
+    }
+    
+    if (currentSoeBalance === undefined) {
+      return true;
+    }
+
+    if (!expenseDate) {
+      return true;
+    }
+    
     let amount = parseFloat(expenseAmount || '0');
     if (selectedPayeesForExpense.length > 0) {
       amount = selectedPayeesForExpense.reduce((sum, p) => sum + parseFloat(p.amount || '0'), 0);
     }
+    
     if (amount <= 0) return true;
     return amount > currentSoeBalance;
-  }, [currentSoeBalance, expenseAmount, selectedPayeesForExpense]);
+  }, [currentSoeBalance, expenseAmount, selectedPayeesForExpense, expenseFormSelection, expenseDate, expenseDescription]);
+
+  useEffect(() => {
+    if (editingItem?.type === 'Expenditure') {
+      setExpenseAmount(String(editingItem.item.amount));
+      setExpenseDate(editingItem.item.date);
+      setExpenseDescription(editingItem.item.description || '');
+      setSelectedPayeesForExpense(editingItem.item.payeeId ? [{ payeeId: editingItem.item.payeeId, amount: String(editingItem.item.amount) }] : []);
+    } else {
+      setExpenseAmount('');
+      setExpenseDate(new Date().toISOString().split('T')[0]);
+      setExpenseDescription('');
+      setSelectedPayeesForExpense([]);
+    }
+  }, [editingItem]);
 
   const handleAddExpense = async (e: any) => {
     e.preventDefault();
@@ -4722,8 +4788,8 @@ export default function App() {
     const amount = selectedPayeesForExpense.length > 0 
       ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
       : parseFloat(expenseAmount || '0');
-    const date = e.target.date.value;
-    const description = e.target.description.value;
+    const date = expenseDate;
+    const description = expenseDescription;
     const targetFyId = selectedFY;
 
     const today = new Date().toISOString().split('T')[0];
@@ -4800,7 +4866,8 @@ export default function App() {
         await batch.commit();
         setSelectedPayeesForExpense([]);
         setCurrentSoeBalance(undefined);
-        e.target.reset();
+        setExpenseAmount('');
+        setExpenseDescription('');
         showAlert(`${selectedPayeesForExpense.length} expenditures added successfully.`);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'expenditures');
@@ -4832,8 +4899,8 @@ export default function App() {
         });
         setEditingItem(null);
         setExpenseAmount('');
+        setExpenseDescription('');
         setCurrentSoeBalance(undefined);
-        e.target.reset();
       } else {
         const payeeName = e.target.payeeName?.value;
         const payeeId = e.target.payeeId?.value;
@@ -4851,6 +4918,7 @@ export default function App() {
         });
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
+        setExpenseDescription('');
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
@@ -7450,8 +7518,8 @@ export default function App() {
           handleAddSubActivity, 
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
-            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Sub-Activity" userRangeId={userRangeId}
+            schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
+            editingItem={editingItem} type="Sub-Activity" userRangeId={userRangeId} userRole={userRole}
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-1.5 border rounded text-sm" />
           </CascadingDropdowns>,
@@ -7586,8 +7654,8 @@ export default function App() {
                 </div>
 
                 <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={currentExpenses}
-                  editingItem={editingItem} type="Allocation" userRangeId={userRangeId}
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
+                  editingItem={editingItem} type="Allocation" userRangeId={userRangeId} userRole={userRole}
                   onSelectionChange={setAllocationFormFilters}
                 >
                   <input 
@@ -7918,57 +7986,91 @@ export default function App() {
                 handleAddExpense, 
                 (id) => handleDelete('expenditures', id), 
                 <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} ranges={ranges} expenses={baseExpenses}
-                  editingItem={editingItem} type="Expenditure" userRangeId={userRangeId}
+                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={baseExpenses}
+                  editingItem={editingItem} type="Expenditure" userRangeId={userRangeId} userRole={userRole}
                   onBalanceChange={setCurrentSoeBalance}
                   onSelectionChange={setExpenseFormSelection}
                 >
-                  {editingItem?.type === 'Expenditure' ? (
-                    <div className="space-y-2">
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee</label>
-                        <select name="payeeId" defaultValue={editingItem.item.payeeId || ''} className="w-full p-2 border rounded text-sm">
-                          <option value="">Select Payee (Optional)</option>
-                          {payees.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
-                        </select>
-                      </div>
-                      <div className="space-y-1">
-                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Manual Payee Name</label>
-                        <input name="payeeName" type="text" defaultValue={editingItem.item.payeeName || ''} placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      <PayeeSelector 
-                        payees={payees}
-                        selectedPayees={selectedPayeesForExpense}
-                        onSelect={(payeeId) => setSelectedPayeesForExpense([...selectedPayeesForExpense, { payeeId, amount: '' }])}
-                        onRemove={(payeeId) => setSelectedPayeesForExpense(selectedPayeesForExpense.filter(p => p.payeeId !== payeeId))}
-                        onAmountChange={(payeeId, amount) => setSelectedPayeesForExpense(selectedPayeesForExpense.map(p => p.payeeId === payeeId ? { ...p, amount } : p))}
-                        ranges={ranges}
-                        availableBalance={currentSoeBalance}
-                      />
-                      {selectedPayeesForExpense.length === 0 && (
+                  <div className="space-y-2 mt-2 border-t pt-2">
+                    {editingItem?.type === 'Expenditure' ? (
+                      <div className="space-y-2">
+                        <div className="space-y-1">
+                          <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee</label>
+                          <select name="payeeId" defaultValue={editingItem.item.payeeId || ''} className="w-full p-2 border rounded text-sm">
+                            <option value="">Select Payee (Optional)</option>
+                            {payees.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
+                          </select>
+                        </div>
                         <div className="space-y-1">
                           <label className="block text-[10px] font-bold text-gray-500 uppercase">Manual Payee Name</label>
-                          <input name="payeeName" type="text" placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
+                          <input name="payeeName" type="text" defaultValue={editingItem.item.payeeName || ''} placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
                         </div>
-                      )}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <PayeeSelector 
+                          payees={payees}
+                          selectedPayees={selectedPayeesForExpense}
+                          onSelect={(payeeId) => setSelectedPayeesForExpense([...selectedPayeesForExpense, { payeeId, amount: '' }])}
+                          onRemove={(payeeId) => setSelectedPayeesForExpense(selectedPayeesForExpense.filter(p => p.payeeId !== payeeId))}
+                          onAmountChange={(payeeId, amount) => setSelectedPayeesForExpense(selectedPayeesForExpense.map(p => p.payeeId === payeeId ? { ...p, amount } : p))}
+                          ranges={ranges}
+                          availableBalance={currentSoeBalance}
+                        />
+                        {selectedPayeesForExpense.length === 0 && (
+                          <div className="space-y-1">
+                            <label className="block text-[10px] font-bold text-gray-500 uppercase">Manual Payee Name</label>
+                            <input name="payeeName" type="text" placeholder="Enter name if no payee selected" className="w-full p-2 border rounded text-sm" />
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Date</label>
+                        <input 
+                          name="date" 
+                          type="date" 
+                          max={new Date().toISOString().split('T')[0]} 
+                          required 
+                          value={expenseDate}
+                          onChange={(e) => setExpenseDate(e.target.value)}
+                          className="w-full p-2 border rounded text-sm" 
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-gray-500 uppercase">Amount (₹)</label>
+                        {selectedPayeesForExpense.length === 0 ? (
+                          <input 
+                            name="amount" 
+                            type="number" 
+                            required={editingItem?.type === 'Expenditure'} 
+                            value={expenseAmount}
+                            onChange={(e) => setExpenseAmount(e.target.value)}
+                            placeholder="0.00" 
+                            className={`w-full p-2 border rounded text-sm ${isExpenseInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                          />
+                        ) : (
+                          <div className="p-2 bg-gray-50 border rounded text-sm text-gray-500 font-bold">
+                            ₹{selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0).toLocaleString()}
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  )}
-                  {selectedPayeesForExpense.length === 0 && (
-                    <input 
-                      name="amount" 
-                      type="number" 
-                      required={editingItem?.type === 'Expenditure'} 
-                      value={expenseAmount}
-                      onChange={(e) => setExpenseAmount(e.target.value)}
-                      placeholder="Amount (₹)" 
-                      className={`w-full p-2 border rounded ${isExpenseInvalid ? 'border-red-500 bg-red-50' : ''}`} 
-                    />
-                  )}
-                  <input name="date" type="date" max={new Date().toISOString().split('T')[0]} required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.date : new Date().toISOString().split('T')[0]} className="w-full p-2 border rounded" />
-                  <textarea name="description" required defaultValue={editingItem?.type === 'Expenditure' ? editingItem.item.description : ''} placeholder="Description / Remarks" className="w-full p-2 border rounded" rows={2} />
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase">Description / Remarks</label>
+                      <textarea 
+                        name="description" 
+                        required 
+                        value={expenseDescription}
+                        onChange={(e) => setExpenseDescription(e.target.value)}
+                        placeholder="Purpose of expenditure..." 
+                        className="w-full p-2 border rounded text-sm" 
+                        rows={2} 
+                      />
+                    </div>
+                  </div>
                 </CascadingDropdowns>,
                 (item) => setEditingItem({ type: 'Expenditure', item }),
                 undefined,
@@ -8904,8 +9006,8 @@ export default function App() {
 }
 
 function CascadingDropdowns({ 
-  schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, ranges, expenses,
-  editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId 
+  schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, surrenders, ranges, expenses,
+  editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId, userRole 
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -8915,13 +9017,14 @@ function CascadingDropdowns({
   const [allocationId, setAllocationId] = useState('');
   const [fundingSoeName, setFundingSoeName] = useState('');
   const [rangeId, setRangeId] = useState(userRangeId || '');
+  const lastInitializedId = useRef<string | null>(null);
 
   // Notify parent of selection changes
   useEffect(() => {
     if (onSelectionChange) {
-      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId });
+      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, allocationId });
     }
-  }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, onSelectionChange]);
+  }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, allocationId, onSelectionChange]);
 
   // Calculate and notify parent of balance changes (Expenditure only)
   useEffect(() => {
@@ -8973,6 +9076,9 @@ function CascadingDropdowns({
   // Initialize state based on editingItem
   useEffect(() => {
     if (editingItem?.item && editingItem.type === type) {
+      if (lastInitializedId.current === editingItem.item.id) return;
+      lastInitializedId.current = editingItem.item.id;
+
       const item = editingItem.item;
       let currentSoeId = '';
       let currentSubActivityId = '';
@@ -9028,52 +9134,45 @@ function CascadingDropdowns({
         currentRangeId = item.rangeId || userRangeId || '';
       }
 
-      if (currentSoeId) {
-        setSoeId(currentSoeId);
+      setSoeId(currentSoeId);
+      setSubActivityId(currentSubActivityId);
+      setActivityId(currentActivityId);
+      setSectorId(currentSectorId);
+      setSchemeId(currentSchemeId);
+      setRangeId(currentRangeId);
+    } else if (!editingItem) {
+      lastInitializedId.current = null;
+      
+      // For Expenditure type, ensure everything is empty on fresh open
+      if (type === 'Expenditure') {
+        setSchemeId('');
+        setSectorId('');
+        setActivityId('');
+        setSubActivityId('');
+        setSoeId('');
+        setAllocationId('');
+        setFundingSoeName('');
+        setRangeId('');
+      } else {
+        // For other types, we might want to keep some context or reset leaf nodes
+        if (type !== 'Allocation') {
+          setSoeId('');
+          setAllocationId('');
+          setFundingSoeName('');
+        }
+        
+        // If it's a fresh start (no scheme selected), reset hierarchy
+        if (!schemeId) {
+          setSectorId('');
+          setActivityId('');
+          setSubActivityId('');
+          setRangeId(userRangeId || '');
+        }
       }
-
-      if (currentSubActivityId) {
-        setSubActivityId(currentSubActivityId);
-        const sa = subActivities.find((s: any) => s.id === currentSubActivityId);
-        currentActivityId = sa?.activityId || '';
-      }
-
-      if (currentActivityId) {
-        setActivityId(currentActivityId);
-        const act = activities.find((a: any) => a.id === currentActivityId);
-        currentSectorId = act?.sectorId || '';
-        currentSchemeId = act?.schemeId || '';
-      }
-
-      if (currentSectorId) {
-        setSectorId(currentSectorId);
-        const sec = sectors.find((s: any) => s.id === currentSectorId);
-        currentSchemeId = sec?.schemeId || '';
-      }
-
-      if (currentSchemeId) {
-        setSchemeId(currentSchemeId);
-      }
-
-      if (currentRangeId) {
-        setRangeId(currentRangeId);
-      }
-    } else {
-      // Reset if not editing
-      setSchemeId('');
-      setSectorId('');
-      setActivityId('');
-      setSubActivityId('');
-      setSoeId('');
-      setAllocationId('');
-      setFundingSoeName('');
-      setRangeId(userRangeId || '');
     }
   }, [editingItem, type]); 
 
-  const filteredSchemes = useMemo(() => (type === 'Expenditure' || type === 'Surrender')
-    ? schemes.filter((s: any) => allocations.some((a: any) => a.schemeId === s.id && (!rangeId || a.rangeId === rangeId)))
-    : schemes, [schemes, allocations, rangeId, type]);
+  const filteredSchemes = schemes;
 
   // Deduplicate by name to remove repeated items
   const getUniqueByName = (items: any[]) => {
@@ -9150,88 +9249,67 @@ function CascadingDropdowns({
 
   const filteredAllocations = useMemo(() => allocations.filter((a: any) => {
     if (rangeId && a.rangeId !== rangeId) return false;
+    if (!rangeId && userRangeId && userRole !== 'admin' && a.rangeId !== userRangeId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     if (activityId && a.activityId !== activityId) return false;
     if (subActivityId && a.subActivityId !== subActivityId) return false;
-    return true;
-  }), [allocations, rangeId, schemeId, sectorId, activityId, subActivityId]);
-
-  // Auto-selection logic
-  useEffect(() => {
-    if (filteredSectors.length === 1 && !sectorId && schemeId && !editingItem) {
-      setSectorId(filteredSectors[0].id);
+    
+    // Add SOE filtering for Expenditure
+    if (type === 'Expenditure' && soeId) {
+      const selectedSoe = soes.find((s: any) => s.id === soeId);
+      const selectedName = selectedSoe?.name;
+      if (!a.fundedSOEs?.some((f: any) => {
+        const s = soes.find((soe: any) => soe.id === f.soeId);
+        return (s?.name || 'Unnamed SOE') === selectedName;
+      })) return false;
     }
+    
+    return true;
+  }), [allocations, rangeId, schemeId, sectorId, activityId, subActivityId, soeId, type, soes]);
+
+  // Auto-selection logic removed to keep form empty as requested
+  useEffect(() => {
+    // Removed auto-selection for sectorId
   }, [filteredSectors, sectorId, schemeId, editingItem]);
 
   useEffect(() => {
-    if (filteredActivities.length === 1 && !activityId && sectorId && !editingItem) {
-      setActivityId(filteredActivities[0].id);
-    }
+    // Removed auto-selection for activityId
   }, [filteredActivities, activityId, sectorId, editingItem]);
 
   useEffect(() => {
-    if (filteredSubActivities.length === 1 && !subActivityId && activityId && !editingItem) {
-      setSubActivityId(filteredSubActivities[0].id);
-    }
+    // Removed auto-selection for subActivityId
   }, [filteredSubActivities, subActivityId, activityId, editingItem]);
 
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && filteredAllocations.length >= 1 && !allocationId && !editingItem) {
-      const firstAlloc = filteredAllocations[0];
-      setAllocationId(firstAlloc.id);
-      if (firstAlloc.rangeId) {
-        setRangeId(firstAlloc.rangeId);
-      }
+      // Auto-selection removed to keep form empty as requested
     }
   }, [filteredAllocations, allocationId, type, editingItem]);
 
   // Auto-selection for soeId (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && allocationId) {
-      const alloc = allocations.find((a: any) => a.id === allocationId);
-      if (alloc && alloc.fundedSOEs && alloc.fundedSOEs.length === 1 && !soeId && !editingItem) {
-        setSoeId(alloc.fundedSOEs[0].soeId);
-      }
+      // Auto-selection removed to keep form empty as requested
     }
   }, [allocationId, soeId, type, allocations, editingItem]);
 
   return (
     <>
-      {(type === 'Surrender') && (
-        <div className="flex gap-2">
-          {userRangeId ? (
-            <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
-              Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
-              <input type="hidden" name="rangeId" value={userRangeId} />
-            </div>
-          ) : (
-            <select 
-              className="w-full p-1.5 border rounded text-sm" 
-              name="rangeId"
-              value={rangeId} 
-              onChange={(e) => { setRangeId(e.target.value); setSchemeId(''); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-              required
-            >
-              <option value="">Select Range</option>
-              {ranges
-                .filter((r: any) => (r.name !== 'Division' && r.name !== 'Rajgarh Forest Division'))
-                .map((r: any) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
-                  </option>
-                ))}
-            </select>
-          )}
-        </div>
-      )}
-
       <div className="flex gap-2">
         <select 
           className="w-full p-1.5 border rounded text-sm" 
           value={schemeId} 
-          onChange={(e) => { setSchemeId(e.target.value); setSectorId(''); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
+          onChange={(e) => { 
+            setSchemeId(e.target.value); 
+            setSectorId(''); 
+            setActivityId(''); 
+            setSubActivityId(''); 
+            setSoeId(''); 
+            setAllocationId(''); 
+            if (!userRangeId) setRangeId(''); 
+          }}
           required={type !== 'Activity'}
         >
           <option value="">Select Scheme</option>
@@ -9293,17 +9371,54 @@ function CascadingDropdowns({
       {!userRangeId && (type !== 'Surrender' && type !== 'Allocation' && type !== 'Expenditure') && <input type="hidden" name="rangeId" value={rangeId} />}
 
       {(type === 'Surrender') && (
-        <div className="flex gap-2">
-          <select 
-            className="w-full p-1.5 border rounded text-sm" 
-            value={soeId} 
-            onChange={(e) => setSoeId(e.target.value)}
-            required
-          >
-            <option value="">Select SOE Head</option>
-            {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        </div>
+        <>
+          <div className="flex gap-2">
+            <select 
+              className="w-full p-1.5 border rounded text-sm" 
+              value={soeId} 
+              onChange={(e) => setSoeId(e.target.value)}
+              required
+            >
+              <option value="">Select SOE Head</option>
+              {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-2">
+            {userRangeId ? (
+              <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
+                Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
+                <input type="hidden" name="rangeId" value={userRangeId} />
+              </div>
+            ) : (
+              <select 
+                className="w-full p-1.5 border rounded text-sm" 
+                name="rangeId"
+                value={rangeId} 
+                onChange={(e) => { 
+                  const val = e.target.value;
+                  if (editingItem?.type === 'Surrender' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
+                    const confirmChange = window.confirm("Are you sure you want to change the range for this surrender? This will shift the entry to the selected range.");
+                    if (!confirmChange) return;
+                  }
+                  setRangeId(val);
+                  // Force immediate notification for range changes to avoid validation lag
+                  if (onSelectionChange) {
+                    onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                  }
+                }}
+                required
+              >
+                <option value="">Select Range</option>
+                {ranges
+                  .map((r: any) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                    </option>
+                  ))}
+              </select>
+            )}
+          </div>
+        </>
       )}
 
       {type === 'Allocation' && (
@@ -9313,7 +9428,7 @@ function CascadingDropdowns({
               // Get all SOEs in this Sector (or Scheme if no sector)
               const sectorSoes = soes.filter((s: any) => 
                 s.schemeId === schemeId && 
-                (s.sectorId || null) === (sectorId || null)
+                (!s.sectorId || s.sectorId === sectorId)
               );
               
               const balances = ALLOWED_SOES.map(name => {
@@ -9325,7 +9440,8 @@ function CascadingDropdowns({
                   const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
                   return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
                 }, 0);
-                return { name, remaining: received - allocated };
+                const surrendered = (surrenders || []).filter(s => matchedSoes.some(ms => ms.id === s.soeId)).reduce((sum, s) => sum + s.amount, 0);
+                return { name, remaining: received - (allocated - surrendered) };
               }).filter(b => b.remaining > 0);
 
               if (balances.length === 0) return "No budget available in this Sector/Scheme.";
@@ -9379,7 +9495,6 @@ function CascadingDropdowns({
             })()}
           </select>
 
-          {/* Range selection moved here for Allocation */}
           <div className="flex gap-2">
             {userRangeId ? (
               <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
@@ -9391,15 +9506,27 @@ function CascadingDropdowns({
                 className="w-full p-1.5 border rounded text-sm" 
                 name="rangeId"
                 value={rangeId} 
-                onChange={(e) => { setRangeId(e.target.value); setSoeId(''); setAllocationId(''); }}
+                onChange={(e) => { 
+                  const val = e.target.value;
+                  if (editingItem?.type === 'Allocation' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
+                    const confirmChange = window.confirm("Are you sure you want to change the range for this allocation? This will shift the entire budget to the selected range.");
+                    if (!confirmChange) return;
+                  }
+                  setRangeId(val); 
+                  // Force immediate notification for range changes to avoid validation lag
+                  if (onSelectionChange) {
+                    onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                  }
+                }}
                 required
               >
                 <option value="">Select Range</option>
-                {ranges.map((r: any) => (
-                  <option key={r.id} value={r.id}>
-                    {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
-                  </option>
-                ))}
+                {ranges
+                  .map((r: any) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                    </option>
+                  ))}
               </select>
             )}
           </div>
@@ -9408,128 +9535,111 @@ function CascadingDropdowns({
 
       {type === 'Expenditure' && (
         <div className="space-y-2">
-          {(!userRangeId || filteredAllocations.length > 1) ? (
-            <div className="flex gap-2">
-              <select 
-                className="w-full p-1.5 border rounded text-sm" 
-                value={allocationId} 
-                onChange={(e) => { 
-                  const val = e.target.value;
-                  setAllocationId(val); 
-                  setSoeId(''); 
-                  if (val) {
-                    const alloc = allocations.find((a: any) => a.id === val);
-                    if (alloc) setRangeId(alloc.rangeId);
-                  }
-                }}
-                required
-              >
-                <option value="">Select Allocation (Range)</option>
-                {filteredAllocations.map((a: any) => {
-                  const r = ranges.find((r: any) => r.id === a.rangeId);
-                  return <option key={a.id} value={a.id}>{r?.name} (Limit: ₹{a.amount.toLocaleString()}, Status: {a.status})</option>
-                })}
-              </select>
-              <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
-            </div>
-          ) : (
-            <>
-              <input type="hidden" name="allocationId" value={allocationId} />
-              {allocationId && (
-                <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
-                  <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
-                  <span>Limit: ₹{allocations.find((a: any) => a.id === allocationId)?.amount.toLocaleString()}</span>
-                </div>
-              )}
-            </>
-          )}
+          <div className="flex gap-2">
+            <select 
+              className="w-full p-1.5 border rounded text-sm" 
+              value={soeId} 
+              onChange={(e) => { setSoeId(e.target.value); setAllocationId(''); }}
+              required
+            >
+              <option value="">Select Funded SOE</option>
+              {(() => {
+                // Get unique SOE names available in any allocation matching the hierarchy
+                const uniqueSoeNames = new Set();
+                const availableSoes: any[] = [];
+                
+                filteredAllocations.forEach(a => {
+                  a.fundedSOEs?.forEach((f: any) => {
+                    const s = soes.find((soe: any) => soe.id === f.soeId);
+                    if (s && !uniqueSoeNames.has(s.name)) {
+                      uniqueSoeNames.add(s.name);
+                      availableSoes.push(s);
+                    }
+                  });
+                });
 
-          {allocationId && (
-            <div className="flex flex-col gap-1">
+                if (availableSoes.length > 0) {
+                  return availableSoes.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ));
+                }
+                
+                return filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>);
+              })()}
+            </select>
+            <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Manage SOE Heads">+</button>
+          </div>
+
+          {soeId && (
+            (!userRangeId || filteredAllocations.length > 1) ? (
               <div className="flex gap-2">
                 <select 
                   className="w-full p-1.5 border rounded text-sm" 
-                  value={soeId} 
-                  onChange={(e) => setSoeId(e.target.value)}
-                  required
-                >
-                  <option value="">Select Funded SOE</option>
-                  {(() => {
-                    if (type === 'Expenditure' && allocationId) {
-                      const alloc = allocations.find((a: any) => a.id === allocationId);
-                      if (alloc && alloc.fundedSOEs) {
-                        // Group by SOE name to handle split funding (e.g. same name, different IDs)
-                        const groups: Record<string, { name: string, totalAmount: number, totalSpent: number, primarySoeId: string }> = {};
-                        
-                        alloc.fundedSOEs.forEach((f: any) => {
-                          const s = soes.find((soe: any) => soe.id === f.soeId);
-                          const name = s?.name || 'Unnamed SOE';
-                          const spent = expenses
-                            .filter((e: any) => e.allocationId === allocationId && e.soeId === f.soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                            .reduce((sum: number, e: any) => sum + e.amount, 0);
-                          
-                          if (!groups[name]) {
-                            groups[name] = { name, totalAmount: 0, totalSpent: 0, primarySoeId: f.soeId };
-                          }
-                          groups[name].totalAmount += f.amount;
-                          groups[name].totalSpent += spent;
-                        });
-
-                        return Object.values(groups)
-                          .filter(g => g.totalAmount - g.totalSpent > 0)
-                          .map(g => (
-                            <option key={g.name} value={g.primarySoeId}>
-                              {g.name} (Available: ₹{(g.totalAmount - g.totalSpent).toLocaleString()})
-                            </option>
-                          ));
+                  value={allocationId} 
+                  onChange={(e) => { 
+                    const val = e.target.value;
+                    if (editingItem?.type === 'Expenditure' && val && userRole === 'admin') {
+                      const newAlloc = allocations.find((a: any) => a.id === val);
+                      const originalRangeId = editingItem.item.rangeId;
+                      if (newAlloc && newAlloc.rangeId !== originalRangeId) {
+                        const confirmChange = window.confirm("Are you sure you want to change the range for this expenditure? This will shift the entry to the selected range.");
+                        if (!confirmChange) return;
                       }
                     }
-                    return filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name || 'Unnamed SOE'}</option>);
-                  })()}
-                </select>
-                <button type="button" onClick={() => document.getElementById('tab-SOE Heads')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Manage SOE Heads">+</button>
-              </div>
-
-              {/* Range selection moved here for Expenditure */}
-              <div className="flex gap-2">
-                {userRangeId ? (
-                  <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
-                    Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
-                    <input type="hidden" name="rangeId" value={userRangeId} />
-                  </div>
-                ) : (
-                  <select 
-                    className="w-full p-1.5 border rounded text-sm" 
-                    name="rangeId"
-                    value={rangeId} 
-                    onChange={(e) => { setRangeId(e.target.value); setSoeId(''); setAllocationId(''); }}
-                    required
-                  >
-                    <option value="">Select Range</option>
-                    {ranges.map((r: any) => (
-                      <option key={r.id} value={r.id}>
-                        {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              
-              {soeId && (
-                <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
-                  {(() => {
-                    const alloc = allocations.find((a: any) => a.id === allocationId);
-                    const fundedSoe = alloc?.fundedSOEs?.find((f: any) => f.soeId === soeId);
-                    if (fundedSoe) {
-                      const spent = expenses
-                        .filter((e: any) => e.allocationId === allocationId && e.soeId === soeId && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
-                        .reduce((sum: number, e: any) => sum + e.amount, 0);
-                      return `SOE Funding: ₹${fundedSoe.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(fundedSoe.amount - spent).toLocaleString()}`;
+                    setAllocationId(val); 
+                    if (val) {
+                      const alloc = allocations.find((a: any) => a.id === val);
+                      if (alloc) setRangeId(alloc.rangeId);
+                    } else {
+                      if (!userRangeId) setRangeId('');
                     }
-                    return 'Select an SOE to see balance';
-                  })()}
-                </div>
-              )}
+                  }}
+                  required
+                >
+                  <option value="">Select Allocation (Range)</option>
+                  {filteredAllocations.map((a: any) => {
+                    const r = ranges.find((r: any) => r.id === a.rangeId);
+                    const selectedSoe = soes.find(s => s.id === soeId);
+                    const selectedName = selectedSoe?.name;
+                    const funded = a.fundedSOEs?.find((f: any) => soes.find(s => s.id === f.soeId)?.name === selectedName);
+                    const spent = expenses
+                      .filter((e: any) => e.allocationId === a.id && soes.find(s => s.id === e.soeId)?.name === selectedName && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                      .reduce((sum: number, e: any) => sum + e.amount, 0);
+                    const available = (funded?.amount || 0) - spent;
+
+                    return <option key={a.id} value={a.id}>{r?.name} (Available: ₹{available.toLocaleString()})</option>
+                  })}
+                </select>
+                <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
+              </div>
+            ) : (
+              <>
+                <input type="hidden" name="allocationId" value={allocationId} />
+                {allocationId && (
+                  <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
+                    <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
+                    <span>Limit: ₹{allocations.find((a: any) => a.id === allocationId)?.amount.toLocaleString()}</span>
+                  </div>
+                )}
+              </>
+            )
+          )}
+
+          {soeId && allocationId && (
+            <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-1.5 rounded border border-blue-100">
+              {(() => {
+                const alloc = allocations.find((a: any) => a.id === allocationId);
+                const selectedSoe = soes.find(s => s.id === soeId);
+                const selectedName = selectedSoe?.name;
+                const fundedSoe = alloc?.fundedSOEs?.find((f: any) => soes.find(s => s.id === f.soeId)?.name === selectedName);
+                if (fundedSoe) {
+                  const spent = expenses
+                    .filter((e: any) => e.allocationId === allocationId && soes.find(s => s.id === e.soeId)?.name === selectedName && e.status !== 'rejected' && (editingItem?.type === 'Expenditure' ? e.id !== editingItem.item.id : true))
+                    .reduce((sum: number, e: any) => sum + e.amount, 0);
+                  return `SOE Funding: ₹${fundedSoe.amount.toLocaleString()} | Spent: ₹${spent.toLocaleString()} | Remaining: ₹${(fundedSoe.amount - spent).toLocaleString()}`;
+                }
+                return 'Select an SOE to see balance';
+              })()}
             </div>
           )}
         </div>
