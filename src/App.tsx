@@ -1416,7 +1416,7 @@ export default function App() {
       doc.setFontSize(10);
       doc.text(`Financial Year: ${fys.find(f => f.id === selectedFY)?.name || selectedFY}`, 14, 22);
       
-      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Unspent Balance (Rs.)"];
       const body: any[] = [];
       
       filteredLedgerData.allocations.forEach(alloc => {
@@ -1500,7 +1500,7 @@ export default function App() {
       sheet.mergeCells(1, 1, 1, 8);
       titleRow.alignment = { horizontal: 'center' };
 
-      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Balance (Rs.)"];
+      const headers = ["Date", "Range", "Hierarchy & SOE", "Description", "Approval ID", "Credit (Rs.)", "Debit (Rs.)", "Unspent Balance (Rs.)"];
       const headerRow = sheet.addRow(headers);
       headerRow.eachCell((cell) => {
         cell.font = { bold: true };
@@ -1659,9 +1659,9 @@ export default function App() {
     const relevantAllocations = baseAllocations.filter(a => 
       a.rangeId === rangeId &&
       a.schemeId === schemeId &&
-      (!sectorId || a.sectorId === sectorId) &&
-      (!activityId || a.activityId === activityId) &&
-      (!subActivityId || a.subActivityId === subActivityId)
+      (!sectorId || !a.sectorId || a.sectorId === sectorId) &&
+      (!activityId || !a.activityId || a.activityId === activityId) &&
+      (!subActivityId || !a.subActivityId || a.subActivityId === subActivityId)
     );
 
     let totalAllocated = 0;
@@ -1680,32 +1680,49 @@ export default function App() {
       }
     });
 
+    const totalSurrendered = surrenders.filter(s => 
+      s.rangeId === rangeId &&
+      s.schemeId === schemeId &&
+      s.soeId === soeId &&
+      (!sectorId || !s.sectorId || s.sectorId === sectorId) &&
+      (!activityId || !s.activityId || s.activityId === activityId) &&
+      (!subActivityId || !s.subActivityId || s.subActivityId === subActivityId)
+    ).reduce((sum, s) => sum + s.amount, 0);
+
     return {
       allocated: totalAllocated,
       spent: totalSpent,
-      balance: totalAllocated - totalSpent
+      surrendered: totalSurrendered,
+      balance: totalAllocated - totalSpent - totalSurrendered
     };
-  }, [surrenderFormSelection, baseAllocations, baseExpenses]);
+  }, [surrenderFormSelection, baseAllocations, baseExpenses, surrenders]);
 
   const masterControlData = useMemo(() => {
     const map: Record<string, any> = {};
     
     baseAllocations.forEach(alloc => {
-      // Apply filters
-      if (reportFilters.scheme && alloc.schemeId !== reportFilters.scheme) return;
-      if (reportFilters.sector && alloc.sectorId !== reportFilters.sector) return;
-      if (reportFilters.activity && alloc.activityId !== reportFilters.activity) return;
-      if (reportFilters.subActivity && alloc.subActivityId !== reportFilters.subActivity) return;
-      if (reportFilters.range && alloc.rangeId !== reportFilters.range) return;
-
       const range = ranges.find(r => r.id === alloc.rangeId);
+      const rangeName = range?.name === 'Rajgarh Forest Division' ? 'Division' : (range?.name || 'N/A');
       const sch = schemes.find(s => s.id === alloc.schemeId);
+      const schName = sch?.name || 'N/A';
       const sec = sectors.find(s => s.id === alloc.sectorId);
+      const secName = sec?.name || 'N/A';
       const act = activities.find(a => a.id === alloc.activityId);
+      const actName = act?.name || 'N/A';
       const sa = subActivities.find(s => s.id === alloc.subActivityId);
+      const saName = sa?.name || 'N/A';
+
+      // Apply filters
+      if (reportFilters.range && rangeName !== reportFilters.range) return;
+      if (reportFilters.scheme && schName !== reportFilters.scheme) return;
+      if (reportFilters.sector && secName !== reportFilters.sector) return;
+      if (reportFilters.activity && actName !== reportFilters.activity) return;
+      if (reportFilters.subActivity && saName !== reportFilters.subActivity) return;
       
       alloc.fundedSOEs?.forEach(funded => {
-        if (reportFilters.soe && funded.soeId !== reportFilters.soe) return;
+        const soe = soes.find(s => s.id === funded.soeId);
+        const soeName = soe?.name || 'N/A';
+        if (reportFilters.soe && soeName !== reportFilters.soe) return;
 
         const key = `${alloc.rangeId}-${alloc.schemeId}-${alloc.sectorId}-${alloc.activityId}-${alloc.subActivityId}-${funded.soeId}`;
         const spent = baseExpenses.filter(e => 
@@ -1719,14 +1736,13 @@ export default function App() {
           map[key].expenditure += spent;
           map[key].balance = map[key].allocated - map[key].expenditure;
         } else {
-          const soe = soes.find(s => s.id === funded.soeId);
           map[key] = {
-            rangeName: range?.name || 'N/A',
-            schemeName: sch?.name || 'N/A',
-            sectorName: sec?.name || 'N/A',
-            activityName: act?.name || 'N/A',
-            subActivityName: sa?.name || 'N/A',
-            soeName: soe?.name || 'N/A',
+            rangeName,
+            schemeName: schName,
+            sectorName: secName,
+            activityName: actName,
+            subActivityName: saName,
+            soeName,
             allocated: funded.amount,
             expenditure: spent,
             balance: funded.amount - spent
@@ -1877,26 +1893,38 @@ export default function App() {
     const soeDashboardSummary = soeAbstractData.filter(item => {
       const lowerSearch = (dashboardSearch || searchTerm).toLowerCase();
       if (lowerSearch) {
-        return item.soeName.toLowerCase().includes(lowerSearch) || item.hierarchy.toLowerCase().includes(lowerSearch);
+        return item.soeName.toLowerCase().includes(lowerSearch) || 
+               item.hierarchy.toLowerCase().includes(lowerSearch) ||
+               item.schemeName.toLowerCase().includes(lowerSearch) ||
+               item.sectorName.toLowerCase().includes(lowerSearch);
       }
       return true;
     });
 
+    const dashboardStats = {
+      totalBudget: soeDashboardSummary.reduce((sum, item) => sum + item.approvedBudget, 0),
+      totalReceivedInTry: soeDashboardSummary.reduce((sum, item) => sum + item.receivedInTry, 0),
+      totalAllocated: soeDashboardSummary.reduce((sum, item) => sum + item.allocated, 0),
+      totalTryBalance: soeDashboardSummary.reduce((sum, item) => sum + item.toBeAllocated, 0),
+      totalSpent: soeDashboardSummary.reduce((sum, item) => sum + item.spent, 0),
+      remainingBalance: soeDashboardSummary.reduce((sum, item) => sum + item.remainingToSpend, 0)
+    };
+
     return (
       <div className="space-y-6">
         <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-4' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-2 sm:gap-3`}>
-          <StatCard title={userRangeId ? "Total Allocation" : "Total SOE Budget"} amount={totalBudget} icon={<Wallet />} color="text-blue-600" />
-          {!userRangeId && <StatCard title="Total Received (Try)" amount={totalReceivedInTry} icon={<Landmark />} color="text-indigo-500" />}
-          <StatCard title="Total Allocated" amount={totalAllocated} icon={<Map />} color="text-indigo-600" />
-          {!userRangeId && <StatCard title="To Be Allocated" amount={Math.max(0, totalBudget - totalAllocated)} icon={<IndianRupee />} color="text-orange-500" />}
+          <StatCard title={userRangeId ? "Total Allocation" : "Total Approved Budget"} amount={dashboardStats.totalBudget} icon={<Wallet />} color="text-blue-600" />
+          {!userRangeId && <StatCard title="Total Received (Try)" amount={dashboardStats.totalReceivedInTry} icon={<Landmark />} color="text-indigo-500" />}
+          <StatCard title="Total Allocated" amount={dashboardStats.totalAllocated} icon={<Map />} color="text-indigo-600" />
+          {!userRangeId && <StatCard title="To Be Allocated (Received)" amount={dashboardStats.totalTryBalance} icon={<IndianRupee />} color="text-orange-500" />}
           <StatCard 
             title="Total Expenditure" 
-            amount={totalSpent} 
+            amount={dashboardStats.totalSpent} 
             icon={<TrendingDown />} 
             color="text-red-600" 
-            subtitle={totalBudget > 0 ? `${((totalSpent / totalBudget) * 100).toFixed(1)}% of Budget` : undefined}
+            subtitle={dashboardStats.totalBudget > 0 ? `${((dashboardStats.totalSpent / dashboardStats.totalBudget) * 100).toFixed(1)}% of Budget` : undefined}
           />
-          <StatCard title="Remaining Balance" amount={remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
+          <StatCard title="Remaining Balance (Unspent)" amount={dashboardStats.remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -2904,18 +2932,48 @@ export default function App() {
       return;
     }
 
-    const rangeAlloc = allocations.find(a => 
+    const nSchemeId = schemeId || null;
+    const nSectorId = sectorId || null;
+    const nActivityId = activityId || null;
+    const nSubActivityId = subActivityId || null;
+
+    const rangeAllocs = allocations.filter(a => 
       a.rangeId === rangeId && 
-      a.schemeId === schemeId && 
-      a.sectorId === sectorId && 
-      a.activityId === activityId && 
-      a.subActivityId === subActivityId &&
+      a.schemeId === nSchemeId && 
+      (!nSectorId || !a.sectorId || a.sectorId === nSectorId) &&
+      (!nActivityId || !a.activityId || a.activityId === nActivityId) &&
+      (!nSubActivityId || !a.subActivityId || a.subActivityId === nSubActivityId) &&
       a.fundedSOEs.some(s => s.soeId === soeId)
     );
 
-    if (!rangeAlloc) {
+    if (rangeAllocs.length === 0) {
       showAlert("No allocation found for this selection in the source unit.");
       return;
+    }
+
+    // Find the best allocation to surrender from (one that has enough balance)
+    let rangeAlloc = rangeAllocs.find(a => {
+      const soeFund = a.fundedSOEs.find(s => s.soeId === soeId);
+      if (!soeFund) return false;
+      const spentForSoe = expenses
+        .filter(e => e.allocationId === a.id && e.soeId === soeId && e.status !== 'rejected')
+        .reduce((sum, e) => sum + e.amount, 0);
+      return (soeFund.amount - amount) >= spentForSoe;
+    });
+
+    if (!rangeAlloc) {
+      // If none has enough individually, pick the one with the most balance
+      rangeAlloc = rangeAllocs.sort((a, b) => {
+        const getBal = (alloc: any) => {
+          const soeFund = alloc.fundedSOEs.find((s: any) => s.soeId === soeId);
+          if (!soeFund) return 0;
+          const spent = expenses
+            .filter((e: any) => e.allocationId === alloc.id && e.soeId === soeId && e.status !== 'rejected')
+            .reduce((sum: number, e: any) => sum + e.amount, 0);
+          return soeFund.amount - spent;
+        };
+        return getBal(b) - getBal(a);
+      })[0];
     }
 
     const soeFund = rangeAlloc.fundedSOEs.find(s => s.soeId === soeId);
@@ -2940,21 +2998,20 @@ export default function App() {
 
       // 1. Add Surrender record
       await addDoc(collection(db, 'surrenders'), {
-        rangeId, schemeId, sectorId, activityId, subActivityId, soeId,
+        rangeId, 
+        schemeId: nSchemeId, 
+        sectorId: nSectorId, 
+        activityId: nActivityId, 
+        subActivityId: nSubActivityId, 
+        soeId,
         amount, date, remarks, fyId, financialYear: selectedFY,
         createdAt: Date.now(), updatedAt: Date.now()
       });
 
-      // 2. Decrease Source Unit Allocation
-      const updatedFundedSOEs = rangeAlloc.fundedSOEs.map(s => 
-        s.soeId === soeId ? { ...s, amount: s.amount - amount } : s
-      );
-      await updateDoc(doc(db, 'allocations', rangeAlloc.id), {
-        fundedSOEs: updatedFundedSOEs,
-        amount: rangeAlloc.amount - amount,
-        updatedAt: Date.now()
-      });
-
+      // 2. Decrease Source Unit Allocation (Optional: Log only, don't mutate original allocation to maintain audit trail)
+      // We no longer mutate the allocation record directly to avoid double-counting issues.
+      // The budget logic now correctly subtracts surrenders from the gross allocation.
+      
       showAlert("Amount surrendered successfully. It is now available for reallocation from the Sector-wide budget.");
       setEditingItem(null);
     } catch (error) {
@@ -4412,12 +4469,12 @@ export default function App() {
     }
 
     // 1. Identify relevant SOEs (the "Pool")
-    // If fundingSoeName is selected, we only care about SOEs with that name.
-    // If sectorId is selected, we care about SOEs in that sector AND shared SOEs (no sector).
-    // If no sectorId is selected, we care about ALL SOEs in the scheme.
+    // Use path-inclusive logic: if we are at a deep level, we can fund from SOEs at this level or any parent level.
     const poolSoes = soes.filter((s: any) => {
       if (s.schemeId !== schemeId) return false;
       if (fundingSoeName && s.name !== fundingSoeName) return false;
+      if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+      if (activityId && s.activityId && s.activityId !== activityId) return false;
       if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
       return true;
     });
@@ -4426,56 +4483,28 @@ export default function App() {
     const availableBudget = poolSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
 
     // 3. Calculate Already Allocated from this Pool
-    const sectorsWithSoes = new Set(soes.filter(s => s.schemeId === schemeId && s.sectorId).map(s => s.sectorId));
-
     const totalAllocated = allocations.reduce((sum, a) => {
       const currentAllocId = isEditing ? editingItem.item.id : null;
       if (a.id === currentAllocId) return sum;
 
-      // If we are looking at a specific SOE name, we only count usage of SOEs with that name
-      if (fundingSoeName) {
-        const matchedSoes = poolSoes.filter(s => s.name === fundingSoeName);
-        const fundedFromPool = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
-        return sum + fundedFromPool.reduce((s: number, f: any) => s + f.amount, 0);
-      }
-
-      // If we are looking at a Sector (or Scheme), we count:
-      // a) All allocations that belong to this sector/scheme (regardless of funding source)
-      // b) Any allocations in OTHER sectors that draw from our poolSoes (the shared ones)
-      // c) Any pending allocations in OTHER sectors that have no SOEs of their own (they must use shared pool)
-      
-      const isSameHierarchy = a.schemeId === schemeId && (!sectorId || a.sectorId === sectorId || !a.sectorId);
-      
-      if (isSameHierarchy) {
-        return sum + a.amount;
-      } else if (a.schemeId === schemeId && a.sectorId && !sectorsWithSoes.has(a.sectorId)) {
-        // This allocation is in another sector, but that sector has no SOEs of its own,
-        // so it must draw from the shared pool which is part of our poolSoes.
-        return sum + a.amount;
-      } else {
-        // Check if it draws from our poolSoes (which in this case are shared SOEs, 
-        // since poolSoes only includes shared + this sector's SOEs)
-        const fundedFromOurPool = a.fundedSOEs?.filter((f: any) => poolSoes.some(s => s.id === f.soeId)) || [];
-        return sum + fundedFromOurPool.reduce((s: number, f: any) => s + f.amount, 0);
-      }
+      const fundedFromOurPool = a.fundedSOEs?.filter((f: any) => poolSoes.some(s => s.id === f.soeId)) || [];
+      return sum + fundedFromOurPool.reduce((s: number, f: any) => s + f.amount, 0);
     }, 0);
 
+    // 4. Subtract surrenders to get the NET allocated amount
+    // This is necessary because surrenders return funds to the pool.
     const totalSurrendered = surrenders.reduce((sum, s) => {
-      // Count all surrenders that draw from our poolSoes within the same scheme.
-      // This includes surrenders from other sectors if they were using shared SOEs from our pool.
-      const soe = soes.find(soe => soe.id === s.soeId);
-      if (soe && soe.schemeId === schemeId && poolSoes.some(ps => ps.id === s.soeId)) {
+      if (poolSoes.some(ps => ps.id === s.soeId)) {
         return sum + s.amount;
       }
       return sum;
     }, 0);
 
-    const currentAllocated = totalAllocated - totalSurrendered;
-
-    const remaining = availableBudget - currentAllocated;
+    const currentNetAllocated = totalAllocated - totalSurrendered;
+    const remaining = availableBudget - currentNetAllocated;
     const isInvalid = !isNaN(amount) && amount > 0 && amount > remaining;
 
-    return { isInvalid, remaining, availableBudget, currentAllocated };
+    return { isInvalid, remaining, availableBudget, currentAllocated: currentNetAllocated };
   }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, surrenders, editingItem]);
 
   const isAllocationInvalid = allocationBudgetStatus.isInvalid || !allocationFormFilters.rangeId;
@@ -4513,44 +4542,54 @@ export default function App() {
       }
     }
     
-    // Validation: Check against Sector-wide Received Budget
-    // Use full 'soes' and 'allocations' for global validation
-    const sectorSoes = soes.filter(s => 
-      s.schemeId === schemeId && 
-      (s.sectorId || null) === sectorId
-    );
+    // Validation: Check against Available Budget
+    // Use path-inclusive logic to find relevant SOEs (allows pulling from higher levels)
+    const branchSoes = soes.filter((s: any) => {
+      if (s.schemeId !== schemeId) return false;
+      if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+      if (activityId && s.activityId && s.activityId !== activityId) return false;
+      if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
+      return true;
+    });
     
-    // If a specific SOE name is selected, validate against that SOE's balance in the sector
+    // If a specific SOE name is selected, validate against that SOE's balance in the branch
     if (fundingSoeName) {
-      const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
+      const matchedSoes = branchSoes.filter(s => s.name === fundingSoeName);
       const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
       const allocated = allocations.reduce((sum, a) => {
-        const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
         const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
         if (a.id === currentAllocId) return sum;
+        const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
         return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
       }, 0);
-      const remaining = received - allocated;
+      const surrendered = surrenders.reduce((sum, s) => {
+        if (matchedSoes.some(ms => ms.id === s.soeId)) return sum + s.amount;
+        return sum;
+      }, 0);
+      const remaining = received - (allocated - surrendered);
 
       if (amount > remaining) {
         showAlert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining balance of SOE ${fundingSoeName} (₹${remaining.toLocaleString()}).`);
         return;
       }
     } else {
-      // General sector-wide validation
-      const totalReceivedInSector = sectorSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-      const totalAllocatedInSector = allocations
-        .filter(a => 
-          a.schemeId === schemeId && 
-          (a.sectorId || null) === sectorId &&
-          (editingItem?.type === 'Allocation' ? a.id !== editingItem.item.id : true)
-        )
-        .reduce((sum, a) => sum + a.amount, 0);
+      // General branch-wide validation
+      const totalReceived = branchSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
+      const totalAllocated = allocations.reduce((sum, a) => {
+        const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
+        if (a.id === currentAllocId) return sum;
+        const fundedFromBranch = a.fundedSOEs?.filter((f: any) => branchSoes.some(s => s.id === f.soeId)) || [];
+        return sum + fundedFromBranch.reduce((s: number, f: any) => s + f.amount, 0);
+      }, 0);
+      const totalSurrendered = surrenders.reduce((sum, s) => {
+        if (branchSoes.some(bs => bs.id === s.soeId)) return sum + s.amount;
+        return sum;
+      }, 0);
 
-      const remainingInSector = totalReceivedInSector - totalAllocatedInSector;
+      const remaining = totalReceived - (totalAllocated - totalSurrendered);
 
-      if (amount > remainingInSector) {
-        showAlert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Sector-wide Available Budget of ₹${remainingInSector.toLocaleString()}.`);
+      if (amount > remaining) {
+        showAlert(`Cannot allocate. Amount ₹${amount.toLocaleString()} exceeds the remaining Available Budget of ₹${remaining.toLocaleString()}.`);
         return;
       }
     }
@@ -4560,7 +4599,7 @@ export default function App() {
       let status = 'Pending SOE Funds';
 
       if (fundingSoeName) {
-        const matchedSoes = sectorSoes.filter(s => s.name === fundingSoeName);
+        const matchedSoes = branchSoes.filter(s => s.name === fundingSoeName);
         let remainingToFund = amount;
         
         for (const soe of matchedSoes) {
@@ -4572,7 +4611,8 @@ export default function App() {
             if (a.id === currentAllocId) return sum;
             return sum + (fundedFromThis?.amount || 0);
           }, 0);
-          const available = received - allocated;
+          const surrendered = (surrenders || []).filter(s => s.soeId === soe.id).reduce((sum, s) => sum + s.amount, 0);
+          const available = received - (allocated - surrendered);
           
           if (available > 0) {
             const fundAmount = Math.min(available, remainingToFund);
@@ -7579,16 +7619,33 @@ export default function App() {
                 },
                 {
                   key: 'balance', 
-                  label: 'Total Balance', 
+                  label: 'Net Balance', 
                   render: (_, item) => {
                     const expenditure = baseExpenses
                       .filter(e => e.allocationId === item.id && e.status !== 'rejected')
                       .reduce((sum, e) => sum + e.amount, 0);
-                    const balance = item.amount - expenditure;
+                    
+                    // Calculate surrenders for this specific allocation
+                    const surrendered = surrenders
+                      .filter(s => 
+                        s.rangeId === item.rangeId && 
+                        s.schemeId === item.schemeId &&
+                        (s.sectorId || '') === (item.sectorId || '') &&
+                        (s.activityId || '') === (item.activityId || '') &&
+                        (s.subActivityId || '') === (item.subActivityId || '')
+                      )
+                      .reduce((sum, s) => sum + s.amount, 0);
+
+                    const netSanctioned = item.amount - surrendered;
+                    const balance = netSanctioned - expenditure;
+                    
                     return (
                       <div className="flex flex-col">
                         <span className={`font-bold ${balance < 0 ? 'text-red-700' : 'text-blue-700'}`}>₹{balance.toLocaleString()}</span>
-                        <span className="text-[8px] text-gray-400 uppercase leading-none">Row Balance</span>
+                        <div className="flex flex-col text-[8px] text-gray-400 uppercase leading-tight">
+                          <span>Net: ₹{netSanctioned.toLocaleString()}</span>
+                          {surrendered > 0 && <span className="text-orange-500">Surr: ₹{surrendered.toLocaleString()}</span>}
+                        </div>
                       </div>
                     );
                   }
@@ -7629,57 +7686,32 @@ export default function App() {
               ], 
               handleAddAllocation, 
               (id) => handleDelete('allocations', id), 
-              <div className="space-y-4">
-                <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg flex flex-wrap gap-4 items-center justify-between">
-                  <div>
-                    <h4 className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">Sector Budget Status</h4>
-                    <div className="flex gap-4">
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.availableBudget.toLocaleString()}</span>
-                        <span className="text-[9px] text-blue-500 uppercase">Total Available</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.currentAllocated.toLocaleString()}</span>
-                        <span className="text-[9px] text-blue-500 uppercase">Already Allocated</span>
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="text-xs font-bold text-blue-900">₹{allocationBudgetStatus.remaining.toLocaleString()}</span>
-                        <span className="text-[9px] text-blue-500 uppercase">Remaining to Allocate</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-[10px] text-blue-400 italic max-w-[200px] leading-tight">
-                    * Surrendered budgets are automatically returned to the sector-wide pool and become available for reallocation.
-                  </div>
-                </div>
-
-                <CascadingDropdowns 
-                  schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
-                  editingItem={editingItem} type="Allocation" userRangeId={userRangeId} userRole={userRole}
-                  onSelectionChange={setAllocationFormFilters}
-                >
-                  <input 
-                    name="amount" 
-                    type="number" 
-                    required 
-                    value={allocationAmount}
-                    onChange={(e) => setAllocationAmount(e.target.value)}
-                    placeholder="Amount (₹)" 
-                    className={`w-full p-1.5 border rounded text-sm ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
-                  />
-                  <div className="flex justify-between items-center px-1">
-                    <span className="text-[10px] text-gray-500 font-medium">
-                      Remaining Budget: ₹{allocationBudgetStatus.remaining.toLocaleString()}
+              <CascadingDropdowns 
+                schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
+                editingItem={editingItem} type="Allocation" userRangeId={userRangeId} userRole={userRole}
+                onSelectionChange={setAllocationFormFilters}
+              >
+                <input 
+                  name="amount" 
+                  type="number" 
+                  required 
+                  value={allocationAmount}
+                  onChange={(e) => setAllocationAmount(e.target.value)}
+                  placeholder="Amount (₹)" 
+                  className={`w-full p-1.5 border rounded text-sm ${isAllocationInvalid ? 'border-red-500 bg-red-50' : ''}`} 
+                />
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[10px] text-gray-500 font-medium">
+                    Remaining Budget: ₹{allocationBudgetStatus.remaining.toLocaleString()}
+                  </span>
+                  {isAllocationInvalid && (
+                    <span className="text-[10px] text-red-600 font-bold animate-pulse">
+                      {allocationBudgetStatus.error || 'Amount exceeds available budget!'}
                     </span>
-                    {isAllocationInvalid && (
-                      <span className="text-[10px] text-red-600 font-bold animate-pulse">
-                        {allocationBudgetStatus.error || 'Amount exceeds available budget!'}
-                      </span>
-                    )}
-                  </div>
-                  <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-1.5 border rounded text-sm" rows={2} />
-                </CascadingDropdowns>
-              </div>,
+                  )}
+                </div>
+                <textarea name="remarks" defaultValue={editingItem?.type === 'Allocation' ? editingItem.item.remarks : ''} placeholder="Remarks / Description (Optional)" className="w-full p-1.5 border rounded text-sm" rows={2} />
+              </CascadingDropdowns>,
               (item) => setEditingItem({ type: 'Allocation', item }),
               (item) => isAdmin() || isDEO(),
               null,
@@ -9140,7 +9172,7 @@ function CascadingDropdowns({
       setSectorId(currentSectorId);
       setSchemeId(currentSchemeId);
       setRangeId(currentRangeId);
-    } else if (!editingItem) {
+    } else if (!editingItem && lastInitializedId.current !== null) {
       lastInitializedId.current = null;
       
       // For Expenditure type, ensure everything is empty on fresh open
@@ -9229,21 +9261,25 @@ function CascadingDropdowns({
 
   const filteredSoes = useMemo(() => soes.filter((s: any) => {
     if (!schemeId) return false;
+    // For Surrender, we want to see SOEs that have been allocated to the selected range
+    if (type === 'Surrender') {
+      const hasAlloc = allocations.some((al: any) => 
+        al.rangeId === rangeId && 
+        al.schemeId === schemeId &&
+        (sectorId ? al.sectorId === sectorId : true) &&
+        (activityId ? al.activityId === activityId : true) &&
+        (subActivityId ? al.subActivityId === subActivityId : true) &&
+        al.fundedSOEs?.some((f: any) => f.soeId === s.id)
+      );
+      if (!hasAlloc) return false;
+    }
+
+    // Path matching for hierarchy
     if (s.schemeId && s.schemeId !== schemeId) return false;
     if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
     if (activityId && s.activityId && s.activityId !== activityId) return false;
     if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
-    if (type === 'Surrender') {
-      return allocations.some((al: any) => 
-        al.rangeId === rangeId && 
-        al.schemeId === schemeId &&
-        (!sectorId || al.sectorId === sectorId) &&
-        (!activityId || al.activityId === activityId) &&
-        (!subActivityId || al.subActivityId === subActivityId) &&
-        al.fundedSOEs?.some(f => f.soeId === s.id)
-      );
-    }
-    // Relaxed Expenditure check to show all SOEs matching the hierarchy
+    
     return true;
   }), [soes, schemeId, sectorId, activityId, subActivityId, type, allocations, rangeId]);
 
@@ -9283,15 +9319,19 @@ function CascadingDropdowns({
 
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
-    if (type === 'Expenditure' && filteredAllocations.length >= 1 && !allocationId && !editingItem) {
-      // Auto-selection removed to keep form empty as requested
+    if (type === 'Expenditure' && filteredAllocations.length === 1 && !allocationId && !editingItem) {
+      setAllocationId(filteredAllocations[0].id);
+      setRangeId(filteredAllocations[0].rangeId);
     }
   }, [filteredAllocations, allocationId, type, editingItem]);
 
   // Auto-selection for soeId (Expenditure only)
   useEffect(() => {
-    if (type === 'Expenditure' && allocationId) {
-      // Auto-selection removed to keep form empty as requested
+    if (type === 'Expenditure' && allocationId && !soeId && !editingItem) {
+      const alloc = allocations.find((a: any) => a.id === allocationId);
+      if (alloc && alloc.fundedSOEs && alloc.fundedSOEs.length === 1) {
+        setSoeId(alloc.fundedSOEs[0].soeId);
+      }
     }
   }, [allocationId, soeId, type, allocations, editingItem]);
 
@@ -9423,48 +9463,6 @@ function CascadingDropdowns({
 
       {type === 'Allocation' && (
         <div className="flex flex-col gap-2">
-          <div className="text-xs text-blue-600 px-1 font-medium bg-blue-50 p-2 rounded border border-blue-100">
-            {(() => {
-              // Get all SOEs in this Sector (or Scheme if no sector)
-              const sectorSoes = soes.filter((s: any) => 
-                s.schemeId === schemeId && 
-                (!s.sectorId || s.sectorId === sectorId)
-              );
-              
-              const balances = ALLOWED_SOES.map(name => {
-                const matchedSoes = sectorSoes.filter(s => s.name === name);
-                const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
-                const allocated = allocations.reduce((sum, a) => {
-                  const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
-                  if (a.id === currentAllocId) return sum;
-                  const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
-                  return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
-                }, 0);
-                const surrendered = (surrenders || []).filter(s => matchedSoes.some(ms => ms.id === s.soeId)).reduce((sum, s) => sum + s.amount, 0);
-                return { name, remaining: received - (allocated - surrendered) };
-              }).filter(b => b.remaining > 0);
-
-              if (balances.length === 0) return "No budget available in this Sector/Scheme.";
-
-              return (
-                <div className="space-y-1">
-                  <div className="font-bold border-b border-blue-200 pb-0.5 mb-1">Sector-wide Available SOE Budgets:</div>
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                    {balances.map(b => (
-                      <div key={b.name} className="flex justify-between">
-                        <span>{b.name}:</span>
-                        <span className="font-bold">₹{b.remaining.toLocaleString()}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-1 pt-1 border-t border-blue-200 text-[10px] italic">
-                    Total Sector Pool: ₹{balances.reduce((s, b) => s + b.remaining, 0).toLocaleString()}
-                  </div>
-                </div>
-              );
-            })()}
-          </div>
-          
           <select 
             name="fundingSoeName" 
             className="w-full p-1.5 border rounded bg-blue-50 border-blue-200 text-blue-800 font-medium text-sm"
@@ -9474,12 +9472,16 @@ function CascadingDropdowns({
           >
             <option value="">Select SOE to Fund From</option>
             {(() => {
-              const sectorSoes = soes.filter((s: any) => 
-                s.schemeId === schemeId && 
-                (s.sectorId || null) === (sectorId || null)
-              );
+              const branchSoes = soes.filter((s: any) => {
+                if (s.schemeId !== schemeId) return false;
+                if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
+                if (activityId && s.activityId && s.activityId !== activityId) return false;
+                if (sectorId && s.sectorId && s.sectorId !== sectorId) return false;
+                return true;
+              });
+              
               return ALLOWED_SOES.map(name => {
-                const matchedSoes = sectorSoes.filter(s => s.name === name);
+                const matchedSoes = branchSoes.filter(s => s.name === name);
                 const received = matchedSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
                 const allocated = allocations.reduce((sum, a) => {
                   const currentAllocId = editingItem?.type === 'Allocation' ? editingItem.item.id : null;
@@ -9487,7 +9489,8 @@ function CascadingDropdowns({
                   const fundedFromThese = a.fundedSOEs?.filter((f: any) => matchedSoes.some(s => s.id === f.soeId)) || [];
                   return sum + fundedFromThese.reduce((s: number, f: any) => s + f.amount, 0);
                 }, 0);
-                const remaining = received - allocated;
+                const surrendered = (surrenders || []).filter(s => matchedSoes.some(ms => ms.id === s.soeId)).reduce((sum, s) => sum + s.amount, 0);
+                const remaining = received - (allocated - surrendered);
                 return { name, remaining };
               }).filter(b => b.remaining > 0).map(b => (
                 <option key={b.name} value={b.name}>{b.name} (Available: ₹{b.remaining.toLocaleString()})</option>
