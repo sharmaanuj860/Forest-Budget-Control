@@ -4,8 +4,9 @@ import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, M
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
-  auth, db, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence, browserLocalPersistence,
-  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction, writeBatch
+  auth, db, storage, signInWithPopup, googleProvider, signOut, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail, setPersistence, browserSessionPersistence, browserLocalPersistence,
+  collection, doc, setDoc, getDoc, getDocs, onSnapshot, query, where, or, orderBy, addDoc, updateDoc, deleteDoc, getDocFromServer, firebaseConfig, runTransaction, writeBatch,
+  ref, uploadBytes, uploadBytesResumable, getDownloadURL, deleteObject
 } from './firebase';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -104,6 +105,19 @@ type Payee = {
   createdAt: number;
   updatedAt: number;
   createdBy: string;
+};
+
+type BudgetFile = {
+  id: string;
+  name: string;
+  url: string;
+  schemeId: string;
+  sectorId?: string;
+  rangeId?: string;
+  type: 'approved' | 'distributed';
+  uploadedBy: string;
+  uploadedAt: number;
+  fyId: string;
 };
 
 type AppUser = { 
@@ -506,6 +520,8 @@ export default function App() {
         name: 'Manage Budget', 
         icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
         children: [
+          { name: 'Approved Budget', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Distributed Budget', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Surrender', icon: <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" /> }
@@ -529,6 +545,8 @@ export default function App() {
         name: 'Manage Budget', 
         icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
         children: [
+          { name: 'Approved Budget', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Distributed Budget', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> }
         ]
@@ -550,6 +568,8 @@ export default function App() {
         name: 'Manage Budget', 
         icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
         children: [
+          { name: 'Approved Budget', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Distributed Budget', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Surrender', icon: <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" /> }
@@ -599,10 +619,17 @@ export default function App() {
       setTrackerSearch('');
       setReconSearchTerm('');
       setReconSchemeId('');
+      setBudgetFileSelection({ schemeId: '', sectorId: '', rangeId: '' });
       setShowLedgerFilters(false);
     }, [activeTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [surrenderFormSelection, setSurrenderFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
+  const [approvedBudgetFiles, setApprovedBudgetFiles] = useState<BudgetFile[]>([]);
+  const [distributedBudgetFiles, setDistributedBudgetFiles] = useState<BudgetFile[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadingFileName, setUploadingFileName] = useState('');
+  const [budgetFileSelection, setBudgetFileSelection] = useState({ schemeId: '', sectorId: '', rangeId: '' });
   const [expenseFormSelection, setExpenseFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
   const [showDetailedReport, setShowDetailedReport] = useState(true);
@@ -924,6 +951,7 @@ export default function App() {
 
     const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
     const fyQueryValues = activeFy ? Array.from(new Set([activeFy.id, activeFy.name])) : [selectedFY];
+    if (fyQueryValues.length === 0 || (fyQueryValues.length === 1 && !fyQueryValues[0])) return;
 
     const soesQuery = query(
       collection(db, 'soeHeads'), 
@@ -972,8 +1000,26 @@ export default function App() {
       setSurrenders(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'surrenders'));
 
+    const approvedFilesQuery = query(
+      collection(db, 'approvedBudgetFiles'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubApprovedFiles = onSnapshot(approvedFilesQuery, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as BudgetFile));
+      setApprovedBudgetFiles(data.sort((a, b) => b.uploadedAt - a.uploadedAt));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'approvedBudgetFiles'));
+
+    const distributedFilesQuery = query(
+      collection(db, 'distributedBudgetFiles'), 
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubDistributedFiles = onSnapshot(distributedFilesQuery, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as BudgetFile));
+      setDistributedBudgetFiles(data.sort((a, b) => b.uploadedAt - a.uploadedAt));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'distributedBudgetFiles'));
+
     return () => {
-      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills(); unsubSurrenders();
+      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills(); unsubSurrenders(); unsubApprovedFiles(); unsubDistributedFiles();
     };
   }, [user, userRole, selectedFY, fys]);
 
@@ -3017,6 +3063,240 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'surrenders');
     }
+  };
+
+  const handleBudgetFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'approved' | 'distributed') => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedFY) return;
+    
+    const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
+    if (!activeFy) return;
+
+    if (!budgetFileSelection.schemeId) {
+      showAlert("Please select a scheme first.");
+      return;
+    }
+
+    // Sector and Range are now optional as per user request
+    setIsUploading(true);
+    setUploadProgress(0);
+    setUploadingFileName(file.name);
+
+    try {
+      const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
+      const storageRef = ref(storage, storagePath);
+      
+      const uploadTask = uploadBytesResumable(storageRef, file);
+
+      uploadTask.on('state_changed', 
+        (snapshot) => {
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          setUploadProgress(progress);
+        }, 
+        (error) => {
+          console.error("Upload error:", error);
+          showAlert("Failed to upload file.");
+          setIsUploading(false);
+        }, 
+        async () => {
+          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+
+          const fileData: any = {
+            name: file.name,
+            url: downloadURL,
+            schemeId: budgetFileSelection.schemeId,
+            sectorId: budgetFileSelection.sectorId || '',
+            type,
+            uploadedBy: user?.uid,
+            uploadedAt: Date.now(),
+            fyId: activeFy.id,
+            financialYear: activeFy.name
+          };
+
+          if (type === 'approved') {
+            await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
+          } else {
+            fileData.rangeId = budgetFileSelection.rangeId || '';
+            await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
+          }
+          
+          showAlert("File uploaded successfully!");
+          setIsUploading(false);
+          setUploadProgress(0);
+          setUploadingFileName('');
+        }
+      );
+    } catch (error) {
+      console.error("Upload error:", error);
+      showAlert("Failed to upload file.");
+      setIsUploading(false);
+    } finally {
+      e.target.value = ''; // Reset file input
+    }
+  };
+
+  const handleBudgetFileDelete = async (file: BudgetFile) => {
+    if (!window.confirm("Are you sure you want to delete this file?")) return;
+
+    try {
+      // Delete from storage
+      const storageRef = ref(storage, file.url);
+      await deleteObject(storageRef);
+
+      // Delete from firestore
+      const collectionName = file.type === 'approved' ? 'approvedBudgetFiles' : 'distributedBudgetFiles';
+      await deleteDoc(doc(db, collectionName, file.id));
+      
+      showAlert("File deleted successfully!");
+    } catch (error) {
+      console.error("Delete error:", error);
+      showAlert("Failed to delete file.");
+    }
+  };
+
+  const renderBudgetFilesTab = (type: 'approved' | 'distributed') => {
+    const files = type === 'approved' ? approvedBudgetFiles : distributedBudgetFiles;
+    const filteredFiles = files.filter(f => {
+      if (f.schemeId !== budgetFileSelection.schemeId) return false;
+      if (budgetFileSelection.sectorId && f.sectorId !== budgetFileSelection.sectorId) return false;
+      if (type === 'distributed' && budgetFileSelection.rangeId && f.rangeId !== budgetFileSelection.rangeId) return false;
+      return true;
+    });
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+          <div className="flex flex-col md:flex-row gap-4 items-end">
+            <div className="flex-1">
+              <CascadingDropdowns
+                onSelectionChange={setBudgetFileSelection}
+                schemes={schemes}
+                sectors={sectors}
+                activities={activities}
+                subActivities={subActivities}
+                ranges={ranges}
+                allocations={allocations}
+                expenses={expenses}
+                soes={soes}
+                showRange={type === 'distributed'}
+                showSector={true}
+                showActivity={false}
+                showSubActivity={false}
+                showSoe={false}
+                userRole={userRole}
+                userRangeId={userRangeId}
+              />
+            </div>
+            {userRole === 'admin' && (
+              <div className="flex flex-col gap-2">
+                {isUploading && (
+                  <div className="flex flex-col gap-1 min-w-[200px]">
+                    <div className="flex justify-between text-[10px] font-bold text-gray-500 uppercase">
+                      <span className="truncate max-w-[150px]">{uploadingFileName}</span>
+                      <span>{Math.round(uploadProgress)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                      <div 
+                        className="bg-emerald-500 h-full transition-all duration-300 ease-out"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+                <div className="relative">
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => handleBudgetFileUpload(e, type)}
+                    className="hidden"
+                    id={`file-upload-${type}`}
+                    disabled={isUploading}
+                  />
+                  <label
+                    htmlFor={`file-upload-${type}`}
+                    className={`flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer shadow-sm ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  >
+                    {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    <span>{isUploading ? 'Uploading...' : 'Upload PDF'}</span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-600" />
+              {type === 'approved' ? 'Approved Budget Files' : 'Distributed Budget Files'}
+            </h3>
+            <span className="text-xs font-medium text-gray-500 bg-gray-200 px-2 py-1 rounded-full">
+              {filteredFiles.length} Files
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-gray-50/50">
+                  <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">File Name</th>
+                  <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">Uploaded At</th>
+                  <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {filteredFiles.length > 0 ? (
+                  filteredFiles.map(file => (
+                    <tr key={file.id} className="hover:bg-gray-50 transition-colors group">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-red-50 text-red-600 rounded-lg">
+                            <FileText className="w-4 h-4" />
+                          </div>
+                          <span className="text-sm font-medium text-gray-700 truncate max-w-xs">{file.name}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">
+                        {new Date(file.uploadedAt).toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex justify-end gap-2">
+                          <a
+                            href={file.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            title="View/Download"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </a>
+                          {userRole === 'admin' && (
+                            <button
+                              onClick={() => handleBudgetFileDelete(file)}
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={3} className="px-4 py-8 text-center text-gray-400 italic text-sm">
+                      No files found for the selected criteria.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderSurrenderTab = () => {
@@ -8634,6 +8914,8 @@ export default function App() {
         )}
 
         {activeTab === 'Surrender' && renderSurrenderTab()}
+        {activeTab === 'Approved Budget' && renderBudgetFilesTab('approved')}
+        {activeTab === 'Distributed Budget' && renderBudgetFilesTab('distributed')}
 
         {activeTab === 'Reconciliation' && renderReconciliation()}
 
@@ -9038,8 +9320,9 @@ export default function App() {
 }
 
 function CascadingDropdowns({ 
-  schemes, sectors, activities, subActivities, soes, soeBudgets, allocations, surrenders, ranges, expenses,
-  editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId, userRole 
+  schemes = [], sectors = [], activities = [], subActivities = [], soes = [], soeBudgets = [], allocations = [], surrenders = [], ranges = [], expenses = [],
+  editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId, userRole,
+  showSector, showActivity, showSubActivity, showSoe, showRange
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -9050,11 +9333,20 @@ function CascadingDropdowns({
   const [fundingSoeName, setFundingSoeName] = useState('');
   const [rangeId, setRangeId] = useState(userRangeId || '');
   const lastInitializedId = useRef<string | null>(null);
+  const lastSelection = useRef<any>(null);
+  const lastBalance = useRef<number | undefined>(undefined);
 
   // Notify parent of selection changes
   useEffect(() => {
     if (onSelectionChange) {
-      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, allocationId });
+      const currentSelection = { schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, allocationId };
+      const selectionChanged = !lastSelection.current || 
+        Object.keys(currentSelection).some(key => (currentSelection as any)[key] !== (lastSelection.current as any)[key]);
+      
+      if (selectionChanged) {
+        lastSelection.current = currentSelection;
+        onSelectionChange(currentSelection);
+      }
     }
   }, [schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId, allocationId, onSelectionChange]);
 
@@ -9098,9 +9390,15 @@ function CascadingDropdowns({
         }).reduce((sum: number, e: any) => sum + e.amount, 0);
 
         const balance = totalAllocatedForSoe - totalSpentForSoe;
-        onBalanceChange(balance);
+        if (balance !== lastBalance.current) {
+          lastBalance.current = balance;
+          onBalanceChange(balance);
+        }
       } else {
-        onBalanceChange(undefined);
+        if (lastBalance.current !== undefined) {
+          lastBalance.current = undefined;
+          onBalanceChange(undefined);
+        }
       }
     }
   }, [schemeId, sectorId, activityId, subActivityId, rangeId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes]);
@@ -9217,10 +9515,10 @@ function CascadingDropdowns({
     });
   };
 
-  const filteredSectors = useMemo(() => sectors.filter((s: any) => {
+  const filteredSectors = useMemo(() => (sectors || []).filter((s: any) => {
     if (!schemeId) return false;
     if (s.schemeId !== schemeId) return false;
-    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((a: any) => 
+    if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((a: any) => 
       a.sectorId === s.id && 
       (!rangeId || a.rangeId === rangeId) &&
       (!schemeId || a.schemeId === schemeId)
@@ -9228,16 +9526,16 @@ function CascadingDropdowns({
     return true;
   }), [sectors, schemeId, type, allocations, rangeId]);
 
-  const filteredActivities = useMemo(() => activities.filter((a: any) => {
+  const filteredActivities = useMemo(() => (activities || []).filter((a: any) => {
     if (!schemeId) return false;
     if (a.schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     // If activity has no schemeId but has sectorId, check sector's scheme
     if (!a.schemeId && a.sectorId) {
-      const sec = sectors.find((s: any) => s.id === a.sectorId);
+      const sec = (sectors || []).find((s: any) => s.id === a.sectorId);
       if (sec && sec.schemeId !== schemeId) return false;
     }
-    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((al: any) => 
+    if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.activityId === a.id && 
       (!rangeId || al.rangeId === rangeId) &&
       (!schemeId || al.schemeId === schemeId) &&
@@ -9246,10 +9544,10 @@ function CascadingDropdowns({
     return true;
   }), [activities, schemeId, sectorId, type, allocations, rangeId, sectors]);
 
-  const filteredSubActivities = useMemo(() => subActivities.filter((sa: any) => {
+  const filteredSubActivities = useMemo(() => (subActivities || []).filter((sa: any) => {
     if (!activityId) return false;
     if (sa.activityId !== activityId) return false;
-    if ((type === 'Expenditure' || type === 'Surrender') && !allocations.some((al: any) => 
+    if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.subActivityId === sa.id && 
       (!rangeId || al.rangeId === rangeId) &&
       (!schemeId || al.schemeId === schemeId) &&
@@ -9259,11 +9557,11 @@ function CascadingDropdowns({
     return true;
   }), [subActivities, activityId, type, allocations, rangeId, schemeId, sectorId]);
 
-  const filteredSoes = useMemo(() => soes.filter((s: any) => {
+  const filteredSoes = useMemo(() => (soes || []).filter((s: any) => {
     if (!schemeId) return false;
     // For Surrender, we want to see SOEs that have been allocated to the selected range
     if (type === 'Surrender') {
-      const hasAlloc = allocations.some((al: any) => 
+      const hasAlloc = (allocations || []).some((al: any) => 
         al.rangeId === rangeId && 
         al.schemeId === schemeId &&
         (sectorId ? al.sectorId === sectorId : true) &&
@@ -9283,7 +9581,7 @@ function CascadingDropdowns({
     return true;
   }), [soes, schemeId, sectorId, activityId, subActivityId, type, allocations, rangeId]);
 
-  const filteredAllocations = useMemo(() => allocations.filter((a: any) => {
+  const filteredAllocations = useMemo(() => (allocations || []).filter((a: any) => {
     if (rangeId && a.rangeId !== rangeId) return false;
     if (!rangeId && userRangeId && userRole !== 'admin' && a.rangeId !== userRangeId) return false;
     if (schemeId && a.schemeId !== schemeId) return false;
@@ -9293,10 +9591,10 @@ function CascadingDropdowns({
     
     // Add SOE filtering for Expenditure
     if (type === 'Expenditure' && soeId) {
-      const selectedSoe = soes.find((s: any) => s.id === soeId);
+      const selectedSoe = (soes || []).find((s: any) => s.id === soeId);
       const selectedName = selectedSoe?.name;
       if (!a.fundedSOEs?.some((f: any) => {
-        const s = soes.find((soe: any) => soe.id === f.soeId);
+        const s = (soes || []).find((soe: any) => soe.id === f.soeId);
         return (s?.name || 'Unnamed SOE') === selectedName;
       })) return false;
     }
@@ -9358,7 +9656,7 @@ function CascadingDropdowns({
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
       </div>
 
-      {(type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
+      {(showSector !== false && (showSector === true || type === 'Activity' || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender')) && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
@@ -9372,22 +9670,22 @@ function CascadingDropdowns({
         </div>
       )}
 
-      {(type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
+      {(showActivity !== false && (showActivity === true || type === 'Sub-Activity' || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender')) && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
             value={activityId} 
             onChange={(e) => { setActivityId(e.target.value); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
-            required={type !== 'SOE Name' && type !== 'Allocation' && type !== 'Surrender'}
+            required={type !== 'SOE Name' && type !== 'Allocation' && type !== 'Surrender' && type !== undefined}
           >
-            <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation' || type === 'Surrender') ? '(Optional)' : ''}</option>
+            <option value="">Select Activity {(type === 'SOE Name' || type === 'Allocation' || type === 'Surrender' || type === undefined) ? '(Optional)' : ''}</option>
             {filteredActivities.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Activities')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Activity">+</button>
         </div>
       )}
 
-      {(type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender') && (
+      {(showSubActivity !== false && (showSubActivity === true || type === 'SOE Name' || type === 'Allocation' || type === 'Expenditure' || type === 'Surrender')) && (
         <div className="flex gap-2">
           <select 
             className="w-full p-1.5 border rounded text-sm" 
@@ -9410,55 +9708,56 @@ function CascadingDropdowns({
       <input type="hidden" name="allocationId" value={allocationId} />
       {!userRangeId && (type !== 'Surrender' && type !== 'Allocation' && type !== 'Expenditure') && <input type="hidden" name="rangeId" value={rangeId} />}
 
-      {(type === 'Surrender') && (
-        <>
-          <div className="flex gap-2">
+      {(showSoe !== false && (showSoe === true || type === 'Surrender')) && (
+        <div className="flex gap-2">
+          <select 
+            className="w-full p-1.5 border rounded text-sm" 
+            value={soeId} 
+            onChange={(e) => setSoeId(e.target.value)}
+            required={type === 'Surrender'}
+          >
+            <option value="">Select SOE Head</option>
+            {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      )}
+
+      {(showRange !== false && (showRange === true || type === 'Surrender')) && (
+        <div className="flex gap-2">
+          {userRangeId ? (
+            <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
+              Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
+              <input type="hidden" name="rangeId" value={userRangeId} />
+            </div>
+          ) : (
             <select 
               className="w-full p-1.5 border rounded text-sm" 
-              value={soeId} 
-              onChange={(e) => setSoeId(e.target.value)}
-              required
+              name="rangeId"
+              value={rangeId} 
+              onChange={(e) => { 
+                const val = e.target.value;
+                if (editingItem?.type === 'Surrender' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
+                  const confirmChange = window.confirm("Are you sure you want to change the range for this surrender? This will shift the entry to the selected range.");
+                  if (!confirmChange) return;
+                }
+                setRangeId(val);
+                // Force immediate notification for range changes to avoid validation lag
+                if (onSelectionChange) {
+                  onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                }
+              }}
+              required={type === 'Surrender'}
             >
-              <option value="">Select SOE Head</option>
-              {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              <option value="">Select Range</option>
+              {ranges
+                .map((r: any) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
+                  </option>
+                ))}
             </select>
-          </div>
-          <div className="flex gap-2">
-            {userRangeId ? (
-              <div className="w-full p-1.5 bg-gray-50 border rounded text-sm font-medium text-gray-700">
-                Range: {ranges.find((r: any) => r.id === userRangeId)?.name || 'Your Range'}
-                <input type="hidden" name="rangeId" value={userRangeId} />
-              </div>
-            ) : (
-              <select 
-                className="w-full p-1.5 border rounded text-sm" 
-                name="rangeId"
-                value={rangeId} 
-                onChange={(e) => { 
-                  const val = e.target.value;
-                  if (editingItem?.type === 'Surrender' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
-                    const confirmChange = window.confirm("Are you sure you want to change the range for this surrender? This will shift the entry to the selected range.");
-                    if (!confirmChange) return;
-                  }
-                  setRangeId(val);
-                  // Force immediate notification for range changes to avoid validation lag
-                  if (onSelectionChange) {
-                    onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
-                  }
-                }}
-                required
-              >
-                <option value="">Select Range</option>
-                {ranges
-                  .map((r: any) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}
-                    </option>
-                  ))}
-              </select>
-            )}
-          </div>
-        </>
+          )}
+        </div>
       )}
 
       {type === 'Allocation' && (

@@ -29,21 +29,21 @@ service cloud.firestore {
     
     function isAdmin() {
       return isAuthenticated() && 
-        ((request.auth.token.email == "sharmaanuj860@gmail.com" && request.auth.token.email_verified == true) ||
-         (request.auth.token.email != null && request.auth.token.email.toLower() == "admin@rajgarhforest.app" && request.auth.token.email_verified == true) ||
+        (request.auth.token.email == "sharmaanuj860@gmail.com" ||
+         request.auth.token.email == "admin@rajgarhforest.app" ||
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
     
     function isDEO() {
       return isAuthenticated() && (
-        (request.auth.token.email != null && request.auth.token.email.toLower() == "da123@rajgarhforest.app" && request.auth.token.email_verified == true) ||
+        request.auth.token.email == "da123@rajgarhforest.app" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'deo')
       );
     }
 
     function isApprover() {
       return isAuthenticated() && (
-        (request.auth.token.email != null && request.auth.token.email.toLower() == "da789@rajgarhforest.app" && request.auth.token.email_verified == true) ||
+        request.auth.token.email == "da789@rajgarhforest.app" ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver')
       );
     }
@@ -103,13 +103,28 @@ service cloud.firestore {
     // ===============================================================
 
     match /users/{userId} {
-      allow get: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Allow a user to read their own document
+      // We explicitly avoid calling isAdmin() here to prevent recursion
+      allow get: if isAuthenticated() && request.auth.uid == userId;
+      
+      // Allow admins to read other user documents
+      allow get: if isAuthenticated() && request.auth.uid != userId && isAdmin();
+      
+      // Allow admins to list all users
       allow list: if isAdmin();
+      
+      // Allow a user to create their own document, or an admin to create any user
       allow create: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      
+      // Allow update: 
+      // 1. Admins can update anything
+      // 2. Users can only update their own activeSessions (for session management)
       allow update: if isAuthenticated() && (
         isAdmin() || 
         (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeSessions']))
       );
+      
+      // Only admins can delete users
       allow delete: if isAdmin();
     }
 
@@ -215,6 +230,16 @@ service cloud.firestore {
     match /featureLocks/{id} {
       allow read: if isAuthenticated();
       allow write: if isAdmin() && isValidFeatureLock(request.resource.data);
+    }
+
+    match /approvedBudgetFiles/{id} {
+      allow get, list: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /distributedBudgetFiles/{id} {
+      allow get, list: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
     }
   }
 }

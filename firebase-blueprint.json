@@ -218,6 +218,36 @@
         "updatedAt": { "type": "number", "description": "Timestamp of last update" }
       },
       "required": ["name", "address", "accountNumber", "createdBy", "createdAt", "updatedAt"]
+    },
+    "ApprovedBudgetFile": {
+      "title": "Approved Budget File",
+      "description": "Represents a PDF file for approved budget",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "File name" },
+        "url": { "type": "string", "description": "Storage URL" },
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "sectorId": { "type": "string", "description": "ID of the sector" },
+        "uploadedBy": { "type": "string", "description": "UID of the uploader" },
+        "uploadedAt": { "type": "number", "description": "Timestamp of upload" },
+        "fyId": { "type": "string", "description": "ID of the financial year" }
+      },
+      "required": ["name", "url", "schemeId", "sectorId", "uploadedBy", "uploadedAt", "fyId"]
+    },
+    "DistributedBudgetFile": {
+      "title": "Distributed Budget File",
+      "description": "Represents a PDF file for distributed budget",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "File name" },
+        "url": { "type": "string", "description": "Storage URL" },
+        "schemeId": { "type": "string", "description": "ID of the scheme" },
+        "rangeId": { "type": "string", "description": "ID of the range" },
+        "uploadedBy": { "type": "string", "description": "UID of the uploader" },
+        "uploadedAt": { "type": "number", "description": "Timestamp of upload" },
+        "fyId": { "type": "string", "description": "ID of the financial year" }
+      },
+      "required": ["name", "url", "schemeId", "rangeId", "uploadedBy", "uploadedAt", "fyId"]
     }
   },
   "firestore": {
@@ -236,6 +266,8 @@
     "/bills": { "schema": "Bill", "description": "Collection of treasury bills" },
     "/surrenders": { "schema": "Surrender", "description": "Collection of budget surrenders" },
     "/payees": { "schema": "Payee", "description": "Collection of payee details" },
-    "/featureLocks": { "schema": "FeatureLock", "description": "Collection of feature locks" }
+    "/featureLocks": { "schema": "FeatureLock", "description": "Collection of feature locks" },
+    "/approvedBudgetFiles": { "schema": "ApprovedBudgetFile", "description": "Collection of approved budget PDF files" },
+    "/distributedBudgetFiles": { "schema": "DistributedBudgetFile", "description": "Collection of distributed budget PDF files" }
   }
 }
