@@ -490,7 +490,7 @@ export default function App() {
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
   const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees'>('list');
   const [selectedExpensesForBill, setSelectedExpensesForBill] = useState<string[]>([]);
-  const [billFilters, setBillFilters] = useState({ billNo: '', startDate: '', endDate: '' });
+  const [billFilters, setBillFilters] = useState({ billNo: '', rangeId: '', soeId: '', amount: '' });
   const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [isBillFormFullScreen, setIsBillFormFullScreen] = useState(false);
   const [isTableFullScreen, setIsTableFullScreen] = useState(false);
@@ -3256,7 +3256,7 @@ export default function App() {
     const files = type === 'approved' ? approvedBudgetFiles : distributedBudgetFiles;
 
     const filteredFiles = files.filter(f => {
-      if (f.schemeId !== budgetFileSelection.schemeId) return false;
+      if (budgetFileSelection.schemeId && f.schemeId !== budgetFileSelection.schemeId) return false;
       if (budgetFileSelection.sectorId && f.sectorId !== budgetFileSelection.sectorId) return false;
       if (type === 'distributed' && budgetFileSelection.rangeId && f.rangeId !== budgetFileSelection.rangeId) return false;
       
@@ -3291,6 +3291,7 @@ export default function App() {
                 userRole={userRole}
                 userRangeId={userRangeId}
                 showConfirm={showConfirm}
+                type="BudgetView"
               />
             </div>
             <div className="flex flex-col gap-2 w-full md:w-auto">
@@ -4385,22 +4386,8 @@ export default function App() {
             currentPage={currentPage} 
             itemsPerPage={itemsPerPage} 
             onPageChange={setCurrentPage} 
+            onItemsPerPageChange={(val) => { setItemsPerPage(val === 'All' ? -1 : val); setCurrentPage(1); }}
           />
-          {filteredItems.length > 25 && (
-            <div className="mt-2 flex items-center gap-2">
-              <span className="text-xs text-gray-500">Entries per page:</span>
-              <select 
-                value={itemsPerPage} 
-                onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                className="p-1 border rounded text-xs bg-white"
-              >
-                <option value={10}>10</option>
-                <option value={25}>25</option>
-                <option value={50}>50</option>
-                <option value={-1}>All</option>
-              </select>
-            </div>
-          )}
         </div>
       </div>
     );
@@ -4673,22 +4660,8 @@ export default function App() {
           currentPage={currentPage} 
           itemsPerPage={itemsPerPage} 
           onPageChange={setCurrentPage} 
+          onItemsPerPageChange={(val) => { setItemsPerPage(val === 'All' ? -1 : val); setCurrentPage(1); }}
         />
-        {filteredItems.length > 25 && (
-          <div className="mt-2 flex items-center gap-2">
-            <span className="text-xs text-gray-500">Entries per page:</span>
-            <select 
-              value={itemsPerPage} 
-              onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-              className="p-1 border rounded text-xs bg-white"
-            >
-              <option value={10}>10</option>
-              <option value={25}>25</option>
-              <option value={50}>50</option>
-              <option value={-1}>All</option>
-            </select>
-          </div>
-        )}
       </div>
     </div>
     </div>
@@ -5588,19 +5561,6 @@ export default function App() {
                 >
                   <Search className="w-4 h-4" />
                 </button>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-500">Show:</span>
-                <select 
-                  value={notifItemsPerPage} 
-                  onChange={(e) => { setNotifItemsPerPage(e.target.value === 'All' ? 'All' : Number(e.target.value)); setNotifPage(1); }}
-                  className="p-1.5 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                >
-                  <option value={10}>10</option>
-                  <option value={25}>25</option>
-                  <option value={50}>50</option>
-                  <option value="All">All</option>
-                </select>
               </div>
               {isAdmin() && (
                 <div className="flex items-center gap-4 w-full sm:w-auto">
@@ -9069,12 +9029,43 @@ export default function App() {
               const availableSoeIds = Array.from(new Set(filteredForSoeList.map(e => e.soeId)));
               const availableSoesForBill = soes.filter(s => availableSoeIds.includes(s.id));
 
+              const filteredBills = bills.filter(b => {
+                const matchesBillNo = !billFilters.billNo || b.billNo.toLowerCase().includes(billFilters.billNo.toLowerCase());
+                
+                const firstExp = expenses.find(e => b.expenseIds.includes(e.id));
+                const al = allocations.find(a => a.id === firstExp?.allocationId);
+                const matchesRange = !billFilters.rangeId || al?.rangeId === billFilters.rangeId;
+                const matchesSoe = !billFilters.soeId || firstExp?.soeId === billFilters.soeId;
+                const matchesAmount = !billFilters.amount || b.totalAmount.toString().includes(billFilters.amount);
+
+                const matchesSearch = !billSearchTerm || (
+                  b.billNo.toLowerCase().includes(billSearchTerm.toLowerCase()) ||
+                  (b.remarks || '').toLowerCase().includes(billSearchTerm.toLowerCase())
+                );
+
+                return matchesBillNo && matchesRange && matchesSoe && matchesAmount && matchesSearch;
+              });
+
+              const isBillNoDuplicate = (billNo: string, currentId?: string) => {
+                return bills.some(b => b.billNo.toLowerCase() === billNo.toLowerCase() && b.id !== currentId);
+              };
+
               return renderSimpleManager(
                 'Bill',
-                bills,
+                filteredBills,
                 [
-                  {key: 'billNo', label: 'Bill No', render: (val) => <span className="font-bold text-emerald-700">{val}</span>},
+                  {key: 'billNo', label: 'Bill No', render: (val, item) => (
+                    <span className={`font-bold ${isBillNoDuplicate(val, item.id) ? 'text-red-600 bg-red-50 px-1 rounded' : 'text-emerald-700'}`}>
+                      {val}
+                    </span>
+                  )},
                   {key: 'billDate', label: 'Bill Date', render: (val) => val ? val.split('-').reverse().join('/') : ''},
+                  {key: 'rangeId', label: 'Range', render: (_, item: Bill) => {
+                    const firstExp = expenses.find(e => item.expenseIds.includes(e.id));
+                    const al = allocations.find(a => a.id === firstExp?.allocationId);
+                    const r = ranges.find(r => r.id === al?.rangeId);
+                    return <span className="text-[10px] font-bold text-gray-600">{r?.name || 'N/A'}</span>
+                  }},
                   {key: 'soeId', label: 'SOE', render: (_, item: Bill) => {
                     const firstExp = expenses.find(e => item.expenseIds.includes(e.id));
                     const s = soes.find(s => s.id === firstExp?.soeId);
@@ -9119,7 +9110,25 @@ export default function App() {
                 (id) => handleDelete('bills', id),
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2">
-                    <input name="billNo" required defaultValue={editingItem?.type === 'Bill' ? editingItem.item.billNo : ''} placeholder="Bill Number (e.g. TRY-123)" className="p-2 border rounded text-sm" />
+                    <div className="relative">
+                      <input 
+                        name="billNo" 
+                        required 
+                        defaultValue={editingItem?.type === 'Bill' ? editingItem.item.billNo : ''} 
+                        placeholder="Bill Number (e.g. TRY-123)" 
+                        className={`w-full p-2 border rounded text-sm ${editingItem?.type === 'Bill' && isBillNoDuplicate(editingItem.item.billNo, editingItem.item.id) ? 'border-red-500 bg-red-50' : ''}`}
+                        onChange={(e) => {
+                          if (isBillNoDuplicate(e.target.value, editingItem?.item?.id)) {
+                            e.target.classList.add('border-red-500', 'bg-red-50');
+                          } else {
+                            e.target.classList.remove('border-red-500', 'bg-red-50');
+                          }
+                        }}
+                      />
+                      {editingItem?.type === 'Bill' && isBillNoDuplicate(editingItem.item.billNo, editingItem.item.id) && (
+                        <div className="text-[8px] text-red-600 font-bold mt-0.5">Duplicate Bill Number!</div>
+                      )}
+                    </div>
                     <input name="billDate" type="date" required defaultValue={editingItem?.type === 'Bill' ? editingItem.item.billDate : new Date().toISOString().split('T')[0]} className="p-2 border rounded text-sm" />
                   </div>
                   <textarea name="remarks" defaultValue={editingItem?.type === 'Bill' ? editingItem.item.remarks : ''} placeholder="Remarks (optional)" className="w-full p-2 border rounded text-sm" rows={2} />
@@ -9330,32 +9339,50 @@ export default function App() {
                 isExpFilterExpanded,
                 setIsExpFilterExpanded,
                 <>
-                  <input 
-                    type="text" 
-                    placeholder="Bill Number..." 
-                    value={billFilters.billNo}
-                    onChange={(e) => setBillFilters({ ...billFilters, billNo: e.target.value })}
-                    className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                  />
-                  <div className="md:col-span-2">
-                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bill Date Range</label>
-                    <div className="flex gap-2">
-                      <input 
-                        type="date" 
-                        value={billFilters.startDate} 
-                        onChange={(e) => setBillFilters({ ...billFilters, startDate: e.target.value })}
-                        className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                      />
-                      <input 
-                        type="date" 
-                        value={billFilters.endDate} 
-                        onChange={(e) => setBillFilters({ ...billFilters, endDate: e.target.value })}
-                        className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
-                      />
-                    </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
+                    <select 
+                      value={billFilters.rangeId}
+                      onChange={(e) => setBillFilters({ ...billFilters, rangeId: e.target.value })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All Ranges</option>
+                      {ranges.map(r => <option key={r.id} value={r.id}>{r.name === 'Rajgarh Forest Division' ? 'Division' : r.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Bill Number</label>
+                    <input 
+                      type="text"
+                      value={billFilters.billNo}
+                      onChange={(e) => setBillFilters({ ...billFilters, billNo: e.target.value })}
+                      placeholder="Search Bill No..."
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE Head</label>
+                    <select 
+                      value={billFilters.soeId}
+                      onChange={(e) => setBillFilters({ ...billFilters, soeId: e.target.value })}
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    >
+                      <option value="">All SOEs</option>
+                      {soes.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Amount</label>
+                    <input 
+                      type="text"
+                      value={billFilters.amount}
+                      onChange={(e) => setBillFilters({ ...billFilters, amount: e.target.value })}
+                      placeholder="Search Amount..."
+                      className="w-full p-1.5 border border-gray-300 rounded text-xs bg-white"
+                    />
                   </div>
                 </>,
-                () => setBillFilters({ billNo: '', startDate: '', endDate: '' }),
+                () => setBillFilters({ billNo: '', rangeId: '', soeId: '', amount: '' }),
                 isBillFormFullScreen,
                 setIsBillFormFullScreen,
                 undefined,
@@ -10016,8 +10043,8 @@ function CascadingDropdowns({
   };
 
   const filteredSectors = useMemo(() => (sectors || []).filter((s: any) => {
-    if (!schemeId) return false;
-    if (s.schemeId !== schemeId) return false;
+    if (!schemeId && type !== 'BudgetView') return false;
+    if (schemeId && s.schemeId !== schemeId) return false;
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((a: any) => 
       a.sectorId === s.id && 
       (!rangeId || a.rangeId === rangeId) &&
@@ -10027,13 +10054,13 @@ function CascadingDropdowns({
   }), [sectors, schemeId, type, allocations, rangeId]);
 
   const filteredActivities = useMemo(() => (activities || []).filter((a: any) => {
-    if (!schemeId) return false;
-    if (a.schemeId && a.schemeId !== schemeId) return false;
+    if (!schemeId && type !== 'BudgetView') return false;
+    if (schemeId && a.schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     // If activity has no schemeId but has sectorId, check sector's scheme
     if (!a.schemeId && a.sectorId) {
       const sec = (sectors || []).find((s: any) => s.id === a.sectorId);
-      if (sec && sec.schemeId !== schemeId) return false;
+      if (sec && schemeId && sec.schemeId !== schemeId) return false;
     }
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.activityId === a.id && 
@@ -10045,8 +10072,8 @@ function CascadingDropdowns({
   }), [activities, schemeId, sectorId, type, allocations, rangeId, sectors]);
 
   const filteredSubActivities = useMemo(() => (subActivities || []).filter((sa: any) => {
-    if (!activityId) return false;
-    if (sa.activityId !== activityId) return false;
+    if (!activityId && type !== 'BudgetView') return false;
+    if (activityId && sa.activityId !== activityId) return false;
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.subActivityId === sa.id && 
       (!rangeId || al.rangeId === rangeId) &&
@@ -10148,9 +10175,9 @@ function CascadingDropdowns({
             setAllocationId(''); 
             if (!userRangeId) setRangeId(''); 
           }}
-          required={type !== 'Activity'}
+          required={type !== 'Activity' && type !== 'BudgetView'}
         >
-          <option value="">Select Scheme</option>
+          <option value="">{type === 'BudgetView' ? 'View All Schemes' : 'Select Scheme'}</option>
           {filteredSchemes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </select>
         <button type="button" onClick={() => document.getElementById('tab-Schemes')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Scheme">+</button>
@@ -10163,7 +10190,7 @@ function CascadingDropdowns({
             value={sectorId} 
             onChange={(e) => { setSectorId(e.target.value); setActivityId(''); setSubActivityId(''); setSoeId(''); setAllocationId(''); }}
           >
-            <option value="">Select Sector (Optional)</option>
+            <option value="">{type === 'BudgetView' ? 'View All Sectors' : 'Select Sector (Optional)'}</option>
             {filteredSectors.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Sectors')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Sector">+</button>
@@ -10192,7 +10219,7 @@ function CascadingDropdowns({
             value={subActivityId} 
             onChange={(e) => { setSubActivityId(e.target.value); setSoeId(''); setAllocationId(''); }}
           >
-            <option value="">Select Sub-Activity (Optional)</option>
+            <option value="">{type === 'BudgetView' ? 'View All Sub-Activities' : 'Select Sub-Activity (Optional)'}</option>
             {filteredSubActivities.map((sa: any) => <option key={sa.id} value={sa.id}>{sa.name}</option>)}
           </select>
           <button type="button" onClick={() => document.getElementById('tab-Sub-Activities')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Sub-Activity">+</button>
@@ -10216,7 +10243,7 @@ function CascadingDropdowns({
             onChange={(e) => setSoeId(e.target.value)}
             required={type === 'Surrender'}
           >
-            <option value="">Select SOE Head</option>
+            <option value="">{type === 'BudgetView' ? 'View All SOE Heads' : 'Select SOE Head'}</option>
             {filteredSoes.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
@@ -10251,7 +10278,7 @@ function CascadingDropdowns({
               }}
               required={type === 'Surrender'}
             >
-              <option value="">Select Range</option>
+              <option value="">{type === 'BudgetView' ? 'View All Ranges' : 'Select Range'}</option>
               {ranges
                 .map((r: any) => (
                   <option key={r.id} value={r.id}>
@@ -10516,7 +10543,7 @@ function Pagination({
   const numericItemsPerPage = isAll ? actualTotalEntries : Number(itemsPerPage);
   const totalPages = isAll ? 1 : Math.ceil(actualTotalEntries / numericItemsPerPage);
   
-  if (totalPages <= 1 && actualTotalEntries <= numericItemsPerPage && !isAll) return null;
+  if (totalPages <= 1 && actualTotalEntries <= numericItemsPerPage && !isAll && !onItemsPerPageChange) return null;
 
   const startEntry = isAll ? 1 : (currentPage - 1) * numericItemsPerPage + 1;
   const endEntry = isAll ? actualTotalEntries : Math.min(currentPage * numericItemsPerPage, actualTotalEntries);
@@ -10537,9 +10564,30 @@ function Pagination({
 
   return (
     <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 pt-4 border-t">
-      <p className="text-sm text-gray-600">
-        Showing <span className="font-medium">{startEntry}</span> to <span className="font-medium">{endEntry}</span> of <span className="font-medium">{totalEntries}</span> entries
-      </p>
+      <div className="flex items-center gap-4">
+        <p className="text-sm text-gray-600">
+          Showing <span className="font-medium">{startEntry}</span> to <span className="font-medium">{endEntry}</span> of <span className="font-medium">{actualTotalEntries}</span> entries
+        </p>
+        {onItemsPerPageChange && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-500">Show:</span>
+            <select
+              value={isAll ? 'All' : itemsPerPage}
+              onChange={(e) => {
+                const val = e.target.value;
+                onItemsPerPageChange(val === 'All' ? 'All' : Number(val));
+              }}
+              className="text-xs border rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            >
+              <option value={10}>10</option>
+              <option value={25}>25</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value="All">All</option>
+            </select>
+          </div>
+        )}
+      </div>
       {!isAll && totalPages > 1 && (
         <div className="flex items-center gap-1">
           <button 
