@@ -3079,57 +3079,52 @@ export default function App() {
 
     // Sector and Range are now optional as per user request
     setIsUploading(true);
-    setUploadProgress(0);
+    setUploadProgress(10); // Start with some progress
     setUploadingFileName(file.name);
 
     try {
       const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
       const storageRef = ref(storage, storagePath);
       
-      const uploadTask = uploadBytesResumable(storageRef, file);
+      console.log("Starting upload to:", storagePath);
+      
+      // Using uploadBytes instead of uploadBytesResumable for better compatibility
+      // in restricted iframe environments where resumable preflights might be blocked.
+      const snapshot = await uploadBytes(storageRef, file);
+      setUploadProgress(70); // Upload complete, now getting URL
+      
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      setUploadProgress(90); // URL retrieved, now saving to Firestore
 
-      uploadTask.on('state_changed', 
-        (snapshot) => {
-          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-          setUploadProgress(progress);
-        }, 
-        (error) => {
-          console.error("Upload error:", error);
-          showAlert("Failed to upload file.");
-          setIsUploading(false);
-        }, 
-        async () => {
-          const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+      const fileData: any = {
+        name: file.name,
+        url: downloadURL,
+        schemeId: budgetFileSelection.schemeId,
+        sectorId: budgetFileSelection.sectorId || '',
+        type,
+        uploadedBy: user?.uid,
+        uploadedAt: Date.now(),
+        fyId: activeFy.id,
+        financialYear: activeFy.name
+      };
 
-          const fileData: any = {
-            name: file.name,
-            url: downloadURL,
-            schemeId: budgetFileSelection.schemeId,
-            sectorId: budgetFileSelection.sectorId || '',
-            type,
-            uploadedBy: user?.uid,
-            uploadedAt: Date.now(),
-            fyId: activeFy.id,
-            financialYear: activeFy.name
-          };
-
-          if (type === 'approved') {
-            await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
-          } else {
-            fileData.rangeId = budgetFileSelection.rangeId || '';
-            await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
-          }
-          
-          showAlert("File uploaded successfully!");
-          setIsUploading(false);
-          setUploadProgress(0);
-          setUploadingFileName('');
-        }
-      );
-    } catch (error) {
-      console.error("Upload error:", error);
-      showAlert("Failed to upload file.");
+      if (type === 'approved') {
+        await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
+      } else {
+        fileData.rangeId = budgetFileSelection.rangeId || '';
+        await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
+      }
+      
+      setUploadProgress(100);
+      showAlert("File uploaded successfully!");
       setIsUploading(false);
+      setUploadProgress(0);
+      setUploadingFileName('');
+    } catch (error) {
+      console.error("Upload error details:", error);
+      showAlert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setIsUploading(false);
+      setUploadProgress(0);
     } finally {
       e.target.value = ''; // Reset file input
     }
