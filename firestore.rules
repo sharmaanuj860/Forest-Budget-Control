@@ -241,5 +241,10 @@ service cloud.firestore {
       allow get, list: if isAuthenticated();
       allow create, update, delete: if isAdmin();
     }
+
+    match /notifications/{id} {
+      allow get, list: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
   }
 }

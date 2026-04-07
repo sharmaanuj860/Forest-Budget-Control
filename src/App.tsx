@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2 } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -80,6 +80,18 @@ type Expense = {
   createdAt?: number;
   approvalReason?: string;
   payeeId?: string;
+  deductionType?: 'None' | 'TDS' | 'TDS_GST';
+  deductedAmount?: number;
+};
+
+type Notification = {
+  id: string;
+  name: string;
+  url: string;
+  type: string;
+  createdAt: number;
+  uploadedBy: string;
+  description?: string;
 };
 
 type Bill = {
@@ -398,6 +410,9 @@ export default function App() {
   const [trackerSearch, setTrackerSearch] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [deductionType, setDeductionType] = useState<'None' | 'TDS' | 'TDS_GST'>('None');
+  const [uploadTasks, setUploadTasks] = useState<{[key: string]: any}>({});
   const [billSearchTerm, setBillSearchTerm] = useState('');
   const [payeeSearchTerm, setPayeeSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -483,6 +498,14 @@ export default function App() {
   const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
+  const [notifSearchTerm, setNotifSearchTerm] = useState('');
+  const [notifPage, setNotifPage] = useState(1);
+  const [notifItemsPerPage, setNotifItemsPerPage] = useState<number | 'All'>(25);
+
+  const [budgetSearchTerm, setBudgetSearchTerm] = useState('');
+  const [budgetPage, setBudgetPage] = useState(1);
+  const [budgetItemsPerPage, setBudgetItemsPerPage] = useState<number | 'All'>(25);
+
   const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
   const [ledgerFilters, setLedgerFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
   const [showLedgerFilters, setShowLedgerFilters] = useState(false);
@@ -503,6 +526,7 @@ export default function App() {
   const menuItems = useMemo<({ name: string; icon: React.ReactNode; children?: { name: string; icon: React.ReactNode }[] })[]>(() => {
     const adminItems = [
       { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Notifications', icon: <Bell className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { name: 'Financial Years', icon: <Calendar className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { name: 'Ranges', icon: <Map className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { 
@@ -541,6 +565,7 @@ export default function App() {
 
     const daItems = [
       { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Notifications', icon: <Bell className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { 
         name: 'Manage Budget', 
         icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
@@ -564,6 +589,7 @@ export default function App() {
 
     const otherItems = [
       { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Notifications', icon: <Bell className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { 
         name: 'Manage Budget', 
         icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
@@ -617,6 +643,7 @@ export default function App() {
       setSoeSearchTerm('');
       setSoeAbstractSearch('');
       setTrackerSearch('');
+      setDeductionType('None');
       setReconSearchTerm('');
       setReconSchemeId('');
       setBudgetFileSelection({ schemeId: '', sectorId: '', rangeId: '' });
@@ -627,6 +654,8 @@ export default function App() {
     useEffect(() => {
       setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
       setReportSearchTerm('');
+      setSoeAbstractSearch('');
+      setLedgerSearchTerm('');
       setReportPage(1);
       setShowReportFilters(false);
     }, [reportSubTab]);
@@ -958,9 +987,15 @@ export default function App() {
       setPayees(data.sort((a: any, b: any) => (b.updatedAt || 0) - (a.updatedAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'payees'));
 
+    const unsubNotifications = onSnapshot(collection(db, 'notifications'), (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as Notification));
+      setNotifications(data.sort((a: any, b: any) => (b.createdAt || 0) - (a.createdAt || 0)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'notifications'));
+
     return () => {
       unsubFys(); unsubRanges(); unsubSchemes(); unsubSectors(); unsubActivities();
       unsubSubActivities(); unsubUsers(); unsubCurrentUser(); unsubPayees(); unsubLocks();
+      unsubNotifications();
     };
   }, [user, userRole]);
 
@@ -3195,32 +3230,43 @@ export default function App() {
   };
 
   const handleBudgetFileDelete = async (file: BudgetFile) => {
-    if (!window.confirm("Are you sure you want to delete this file?")) return;
+    showConfirm("Are you sure you want to delete this file?", async () => {
+      try {
+        // Delete from storage
+        try {
+          const storageRef = ref(storage, file.url);
+          await deleteObject(storageRef);
+        } catch (storageError) {
+          console.warn("Storage delete error (continuing with firestore delete):", storageError);
+        }
 
-    try {
-      // Delete from storage
-      const storageRef = ref(storage, file.url);
-      await deleteObject(storageRef);
-
-      // Delete from firestore
-      const collectionName = file.type === 'approved' ? 'approvedBudgetFiles' : 'distributedBudgetFiles';
-      await deleteDoc(doc(db, collectionName, file.id));
-      
-      showAlert("File deleted successfully!");
-    } catch (error) {
-      console.error("Delete error:", error);
-      showAlert("Failed to delete file.");
-    }
+        // Delete from firestore
+        const collectionName = file.type === 'approved' ? 'approvedBudgetFiles' : 'distributedBudgetFiles';
+        await deleteDoc(doc(db, collectionName, file.id));
+        
+        showAlert("File deleted successfully!");
+      } catch (error) {
+        console.error("Delete error:", error);
+        showAlert("Failed to delete file.");
+      }
+    });
   };
 
   const renderBudgetFilesTab = (type: 'approved' | 'distributed') => {
     const files = type === 'approved' ? approvedBudgetFiles : distributedBudgetFiles;
+
     const filteredFiles = files.filter(f => {
       if (f.schemeId !== budgetFileSelection.schemeId) return false;
       if (budgetFileSelection.sectorId && f.sectorId !== budgetFileSelection.sectorId) return false;
       if (type === 'distributed' && budgetFileSelection.rangeId && f.rangeId !== budgetFileSelection.rangeId) return false;
-      return true;
+      
+      const matchesSearch = f.name.toLowerCase().includes(budgetSearchTerm.toLowerCase());
+      return matchesSearch;
     });
+
+    const paginatedFiles = budgetItemsPerPage === 'All' 
+      ? filteredFiles 
+      : filteredFiles.slice((budgetPage - 1) * budgetItemsPerPage, budgetPage * budgetItemsPerPage);
 
     return (
       <div className="space-y-6">
@@ -3244,7 +3290,28 @@ export default function App() {
                 showSoe={false}
                 userRole={userRole}
                 userRangeId={userRangeId}
+                showConfirm={showConfirm}
               />
+            </div>
+            <div className="flex flex-col gap-2 w-full md:w-auto">
+              <div className="flex items-center gap-1">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search files..."
+                    value={budgetSearchTerm}
+                    onChange={(e) => { setBudgetSearchTerm(e.target.value); setBudgetPage(1); }}
+                    className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full md:w-64"
+                  />
+                </div>
+                <button 
+                  className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                  title="Search"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
             </div>
             {userRole === 'admin' && (
               <div className="flex flex-col gap-2">
@@ -3293,13 +3360,24 @@ export default function App() {
                     id={`file-upload-${type}`}
                     disabled={uploadStatus[type].isUploading}
                   />
-                  <label
-                    htmlFor={`file-upload-${type}`}
-                    className={`flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer shadow-sm ${uploadStatus[type].isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                  >
-                    {uploadStatus[type].isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    <span>{uploadStatus[type].isUploading ? 'Uploading...' : 'Upload PDF'}</span>
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label
+                      htmlFor={`file-upload-${type}`}
+                      className={`flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer shadow-sm ${uploadStatus[type].isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {uploadStatus[type].isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                      <span>{uploadStatus[type].isUploading ? 'Uploading...' : 'Upload PDF'}</span>
+                    </label>
+                    {uploadStatus[type].isUploading && (
+                      <button
+                        onClick={() => uploadTasks[type]?.cancel()}
+                        className="p-2 bg-red-50 text-red-600 border border-red-100 rounded-lg hover:bg-red-100 transition-colors"
+                        title="Cancel Upload"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -3327,8 +3405,8 @@ export default function App() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {filteredFiles.length > 0 ? (
-                  filteredFiles.map(file => (
+                {paginatedFiles.length > 0 ? (
+                  paginatedFiles.map(file => (
                     <tr key={file.id} className="hover:bg-gray-50 transition-colors group">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -3367,7 +3445,7 @@ export default function App() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={3} className="px-4 py-8 text-center text-gray-400 italic text-sm">
+                    <td colSpan={3} className="px-4 py-12 text-center text-gray-400 italic text-sm">
                       No files found for the selected criteria.
                     </td>
                   </tr>
@@ -3375,6 +3453,17 @@ export default function App() {
               </tbody>
             </table>
           </div>
+          {filteredFiles.length > 0 && (
+            <div className="p-4 bg-gray-50 border-t border-gray-100">
+              <Pagination
+                totalItems={filteredFiles.length}
+                itemsPerPage={budgetItemsPerPage}
+                currentPage={budgetPage}
+                onPageChange={setBudgetPage}
+                onItemsPerPageChange={setBudgetItemsPerPage}
+              />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -3428,7 +3517,7 @@ export default function App() {
         <div className="space-y-3">
           <CascadingDropdowns 
             schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Surrender" userRangeId={userRangeId} userRole={userRole}
+            editingItem={editingItem} type="Surrender" userRangeId={userRangeId} userRole={userRole} showConfirm={showConfirm}
             onSelectionChange={setSurrenderFormSelection}
           >
             {surrenderBudgetStatus && (
@@ -4058,7 +4147,7 @@ export default function App() {
               <form onSubmit={handleAddSoeName} className="space-y-4">
                 <CascadingDropdowns 
                   schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
-                  editingItem={editingItem} type="SOE Name" userRangeId={userRangeId} userRole={userRole}
+                  editingItem={editingItem} type="SOE Name" userRangeId={userRangeId} userRole={userRole} showConfirm={showConfirm}
                 >
                   <select 
                     name="name" 
@@ -4454,7 +4543,29 @@ export default function App() {
                 </button>
               </div>
             <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder={`Search ${title}s...`}
+                    value={currentSearchTerm}
+                    onChange={(e) => currentSetSearchTerm(e.target.value)}
+                    className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full sm:w-64"
+                  />
+                </div>
+                <button 
+                  onClick={() => {
+                    // Trigger search logic if needed, but it's already reactive
+                  }}
+                  className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                  title="Search"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
               {filterContent && setIsFilterExpanded && (
+
                 <button 
                   onClick={() => setIsFilterExpanded(!isFilterExpanded)}
                   className={`flex items-center gap-1 px-2 py-1.5 border rounded-lg text-xs transition-colors ${isFilterExpanded ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
@@ -5276,6 +5387,14 @@ export default function App() {
       return;
     }
 
+    // Calculate deductions
+    let finalDeductedAmount = 0;
+    if (deductionType === 'TDS' && amount > 30000) {
+      finalDeductedAmount = amount * 0.02;
+    } else if (deductionType === 'TDS_GST' && amount > 250000) {
+      finalDeductedAmount = amount * 0.02;
+    }
+
     try {
       if (editingItem?.type === 'Expenditure') {
         const payeeId = e.target.payeeId?.value;
@@ -5284,6 +5403,8 @@ export default function App() {
           allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId,
           payeeId: payeeId || null,
           payeeName: payeeName || null,
+          deductionType: deductionType !== 'None' ? deductionType : null,
+          deductedAmount: finalDeductedAmount || null,
           updatedBy: user.uid,
           updatedByRole: userRole,
           updatedAt: Date.now()
@@ -5291,6 +5412,7 @@ export default function App() {
         setEditingItem(null);
         setExpenseAmount('');
         setExpenseDescription('');
+        setDeductionType('None');
         setCurrentSoeBalance(undefined);
       } else {
         const payeeName = e.target.payeeName?.value;
@@ -5305,11 +5427,14 @@ export default function App() {
           createdAt: Date.now(),
           updatedAt: Date.now(),
           payeeName: payeeName || null,
-          payeeId: payeeId || null
+          payeeId: payeeId || null,
+          deductionType: deductionType !== 'None' ? deductionType : null,
+          deductedAmount: finalDeductedAmount || null
         });
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
         setExpenseDescription('');
+        setDeductionType('None');
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
@@ -5346,7 +5471,252 @@ export default function App() {
     }
   };
 
-  const handleDelete = (collectionName: string, id: string) => {
+  const handleNotificationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const fileList = Array.from(files);
+    for (const file of fileList) {
+      const type = 'notification';
+      setUploadStatus(prev => ({
+        ...prev,
+        [type]: { isUploading: true, progress: 0, fileName: file.name, transferred: 0, total: file.size, error: null }
+      }));
+
+      try {
+        const storagePath = `notifications/${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, storagePath);
+        const uploadTask = uploadBytesResumable(storageRef, file);
+
+        setUploadTasks(prev => ({ ...prev, [type]: uploadTask }));
+
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on('state_changed',
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadStatus(prev => ({
+                ...prev,
+                [type]: { ...prev[type], progress, transferred: snapshot.bytesTransferred, total: snapshot.totalBytes }
+              }));
+            },
+            (error) => {
+              setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, error: error.message } }));
+              reject(error);
+            },
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+                await addDoc(collection(db, 'notifications'), {
+                  name: file.name,
+                  url: downloadURL,
+                  type: file.type,
+                  createdAt: Date.now(),
+                  uploadedBy: user?.uid
+                });
+                setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, progress: 100 } }));
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
+            }
+          );
+        });
+      } catch (error) {
+        console.error("Notification upload error:", error);
+      } finally {
+        setUploadTasks(prev => {
+          const newTasks = { ...prev };
+          delete newTasks[type];
+          return newTasks;
+        });
+      }
+    }
+  };
+
+  const handleDeleteNotification = async (notif: Notification) => {
+    if (!isAdmin()) return;
+    showConfirm(`Are you sure you want to delete "${notif.name}"?`, async () => {
+      try {
+        await deleteDoc(doc(db, 'notifications', notif.id));
+        // Optionally delete from storage too
+        try {
+          const fileRef = ref(storage, notif.url);
+          await deleteObject(fileRef);
+        } catch (e) {
+          console.warn("Could not delete file from storage:", e);
+        }
+        showAlert("Notification deleted successfully.");
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, 'notifications');
+      }
+    });
+  };
+
+  const renderNotificationsTab = () => {
+    const filteredNotifications = notifications.filter(n => 
+      n.name.toLowerCase().includes(notifSearchTerm.toLowerCase()) ||
+      (n.description || '').toLowerCase().includes(notifSearchTerm.toLowerCase())
+    );
+
+    const paginatedNotifications = notifItemsPerPage === 'All' 
+      ? filteredNotifications 
+      : filteredNotifications.slice((notifPage - 1) * notifItemsPerPage, notifPage * notifItemsPerPage);
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Notifications</h2>
+              <p className="text-sm text-gray-500">View and manage official notifications and documents.</p>
+            </div>
+            <div className="flex flex-col sm:flex-row items-center gap-4 w-full md:w-auto">
+              <div className="flex items-center gap-1 w-full sm:w-auto">
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search notifications..."
+                    value={notifSearchTerm}
+                    onChange={(e) => { setNotifSearchTerm(e.target.value); setNotifPage(1); }}
+                    className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
+                  />
+                </div>
+                <button 
+                  className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                  title="Search"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-gray-500">Show:</span>
+                <select 
+                  value={notifItemsPerPage} 
+                  onChange={(e) => { setNotifItemsPerPage(e.target.value === 'All' ? 'All' : Number(e.target.value)); setNotifPage(1); }}
+                  className="p-1.5 border border-gray-200 rounded text-xs bg-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value={10}>10</option>
+                  <option value={25}>25</option>
+                  <option value={50}>50</option>
+                  <option value="All">All</option>
+                </select>
+              </div>
+              {isAdmin() && (
+                <div className="flex items-center gap-4 w-full sm:w-auto">
+                  {uploadStatus['notification']?.isUploading && (
+                    <div className="flex items-center gap-3 bg-emerald-50 px-4 py-2 rounded-lg border border-emerald-100">
+                      <div className="flex flex-col">
+                        <span className="text-[10px] font-bold text-emerald-700 uppercase">Uploading...</span>
+                        <span className="text-xs font-medium text-emerald-600 truncate max-w-[150px]">{uploadStatus['notification'].fileName}</span>
+                      </div>
+                      <div className="w-24 h-1.5 bg-emerald-200 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-600 transition-all duration-300" style={{ width: `${uploadStatus['notification'].progress}%` }}></div>
+                      </div>
+                      <button 
+                        onClick={() => uploadTasks['notification']?.cancel()}
+                        className="p-1 hover:bg-emerald-100 rounded-full text-emerald-600"
+                        title="Cancel Upload"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )}
+                  <label className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-medium transition-all cursor-pointer shadow-sm w-full sm:w-auto">
+                    <Plus className="w-4 h-4" />
+                    Upload
+                    <input type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={handleNotificationUpload} />
+                  </label>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-gray-50/50">
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">File Name</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">Upload Date</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {paginatedNotifications.length > 0 ? (
+                    paginatedNotifications.map((notif) => (
+                      <tr key={notif.id} className="hover:bg-gray-50 transition-colors group">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
+                              {notif.type?.includes('pdf') ? <FileText className="w-4 h-4" /> : <PieChartIcon className="w-4 h-4" />}
+                            </div>
+                            <span className="text-sm font-medium text-gray-700 truncate max-w-xs">{notif.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-gray-500">
+                          {new Date(notif.createdAt).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex justify-end gap-2">
+                            <a 
+                              href={notif.url} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                              title="View"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </a>
+                            <a 
+                              href={notif.url} 
+                              download={notif.name}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                              title="Download"
+                            >
+                              <Download className="w-4 h-4" />
+                            </a>
+                            {isAdmin() && (
+                              <button 
+                                onClick={() => handleDeleteNotification(notif)}
+                                className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={3} className="px-4 py-12 text-center text-gray-400 italic text-sm">
+                        No notifications found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            {filteredNotifications.length > 0 && (
+              <div className="p-4 bg-gray-50 border-t border-gray-100">
+                <Pagination
+                  totalItems={filteredNotifications.length}
+                  itemsPerPage={notifItemsPerPage}
+                  currentPage={notifPage}
+                  onPageChange={setNotifPage}
+                  onItemsPerPageChange={setNotifItemsPerPage}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+  
+  const handleDelete = async (collectionName: string, id: string) => {
     if (collectionName === 'allocations' && isFeatureLocked('Allocation')) {
       showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
       return;
@@ -6338,6 +6708,24 @@ export default function App() {
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4 flex-1">
+              <div className="relative flex-1 max-w-md flex items-center gap-1">
+                <div className="relative flex-1">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search report by scheme, sector, activity, soe, range..."
+                    value={reportSearchTerm}
+                    onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
+                    className="pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
+                  />
+                </div>
+                <button 
+                  className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                  title="Search"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
               <button 
                 onClick={() => setShowReportFilters(!showReportFilters)}
                 className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${showReportFilters ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
@@ -6358,6 +6746,7 @@ export default function App() {
               </select>
             </div>
             <div className="flex gap-2">
+
               <button 
                 onClick={() => downloadPDF('Allocation & Expenditure Report', [], [], tableData, headers)}
                 className="bg-red-600 text-white px-3 py-1.5 rounded text-xs flex items-center gap-1 hover:bg-red-700 transition-colors"
@@ -7047,15 +7436,23 @@ export default function App() {
                   {reportSubTab === 'ledger' && (
                     <div className="lg:col-span-2">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Search Ledger</label>
-                      <div className="relative">
-                        <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                        <input
-                          type="text"
-                          placeholder="Search hierarchy, SOE, range..."
-                          value={ledgerSearchTerm}
-                          onChange={(e) => setLedgerSearchTerm(e.target.value)}
-                          className="pl-9 pr-4 py-2 border border-gray-300 rounded text-xs bg-white w-full"
-                        />
+                      <div className="flex items-center gap-1">
+                        <div className="relative flex-1">
+                          <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                          <input
+                            type="text"
+                            placeholder="Search hierarchy, SOE, range..."
+                            value={ledgerSearchTerm}
+                            onChange={(e) => setLedgerSearchTerm(e.target.value)}
+                            className="pl-9 pr-4 py-2 border border-gray-300 rounded text-xs bg-white w-full"
+                          />
+                        </div>
+                        <button 
+                          className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                          title="Search"
+                        >
+                          <Search className="w-4 h-4" />
+                        </button>
                       </div>
                     </div>
                   )}
@@ -7120,15 +7517,23 @@ export default function App() {
                     </h4>
                     <div className="flex items-center gap-4">
                       {showSoeAbstract && (
-                        <div className="relative" onClick={(e) => e.stopPropagation()}>
-                          <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                          <input
-                            type="text"
-                            placeholder="Search abstract..."
-                            value={soeAbstractSearch}
-                            onChange={(e) => setSoeAbstractSearch(e.target.value)}
-                            className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
-                          />
+                        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                          <div className="relative">
+                            <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                            <input
+                              type="text"
+                              placeholder="Search abstract..."
+                              value={soeAbstractSearch}
+                              onChange={(e) => setSoeAbstractSearch(e.target.value)}
+                              className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                            />
+                          </div>
+                          <button 
+                            className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                            title="Search"
+                          >
+                            <Search className="w-4 h-4" />
+                          </button>
                         </div>
                       )}
                       <button type="button" className="text-gray-500 hover:text-gray-700">
@@ -7759,6 +8164,7 @@ export default function App() {
 
         {/* Tab Content */}
         {activeTab === 'Dashboard' && renderDashboard()}
+        {activeTab === 'Notifications' && renderNotificationsTab()}
         
         {/* Scroll to Top Button */}
         {showScrollTop && (
@@ -7900,7 +8306,7 @@ export default function App() {
           (id) => handleDelete('subActivities', id), 
           <CascadingDropdowns 
             schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
-            editingItem={editingItem} type="Sub-Activity" userRangeId={userRangeId} userRole={userRole}
+            editingItem={editingItem} type="Sub-Activity" userRangeId={userRangeId} userRole={userRole} showConfirm={showConfirm}
           >
             <input name="name" required defaultValue={editingItem?.type === 'Sub-Activity' ? editingItem.item.name : ''} placeholder="Sub-Activity Name" className="w-full p-1.5 border rounded text-sm" />
           </CascadingDropdowns>,
@@ -8029,7 +8435,7 @@ export default function App() {
               (id) => handleDelete('allocations', id), 
               <CascadingDropdowns 
                 schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={currentExpenses}
-                editingItem={editingItem} type="Allocation" userRangeId={userRangeId} userRole={userRole}
+                editingItem={editingItem} type="Allocation" userRangeId={userRangeId} userRole={userRole} showConfirm={showConfirm}
                 onSelectionChange={setAllocationFormFilters}
               >
                 <input 
@@ -8258,7 +8664,16 @@ export default function App() {
                       );
                     }
                   },
-                  {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val) => <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>},
+                  {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val, item) => (
+                    <div className="flex flex-col">
+                      <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>
+                      {item.deductedAmount && (
+                        <div className="text-[9px] text-blue-600 font-medium leading-tight mt-0.5">
+                          Deducted: ₹{item.deductedAmount.toLocaleString()} ({item.deductionType === 'TDS' ? 'TDS' : 'TDS on GST'})
+                        </div>
+                      )}
+                    </div>
+                  )},
                   {key: 'updatedBy', label: 'Modified By', 
                     searchableText: (val, item) => {
                       const u = users.find(u => u.id === val || u.email === val);
@@ -8360,7 +8775,7 @@ export default function App() {
                 (id) => handleDelete('expenditures', id), 
                 <CascadingDropdowns 
                   schemes={currentSchemes} sectors={currentSectors} activities={currentActivities} subActivities={currentSubActivities} soes={currentSoes} soeBudgets={[]} allocations={baseAllocations} surrenders={surrenders} ranges={ranges} expenses={baseExpenses}
-                  editingItem={editingItem} type="Expenditure" userRangeId={userRangeId} userRole={userRole}
+                  editingItem={editingItem} type="Expenditure" userRangeId={userRangeId} userRole={userRole} showConfirm={showConfirm}
                   onBalanceChange={setCurrentSoeBalance}
                   onSelectionChange={setExpenseFormSelection}
                 >
@@ -8430,6 +8845,30 @@ export default function App() {
                           </div>
                         )}
                       </div>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase">Deduction (Optional)</label>
+                      <select 
+                        value={deductionType} 
+                        onChange={(e) => setDeductionType(e.target.value as any)}
+                        className="w-full p-2 border rounded text-sm"
+                      >
+                        <option value="None">No Deduction</option>
+                        <option value="TDS">TDS-8658-112-01 (2% &gt; 30k)</option>
+                        <option value="TDS_GST">TDS on GST-8658-101-08 (2% &gt; 250k)</option>
+                      </select>
+                      {deductionType !== 'None' && (
+                        <div className="text-[10px] text-blue-600 font-bold mt-1">
+                          Deducted Amount: ₹{(() => {
+                            const amt = selectedPayeesForExpense.length > 0 
+                              ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+                              : (parseFloat(expenseAmount) || 0);
+                            if (deductionType === 'TDS' && amt > 30000) return (amt * 0.02).toLocaleString();
+                            if (deductionType === 'TDS_GST' && amt > 250000) return (amt * 0.02).toLocaleString();
+                            return '0';
+                          })()}
+                        </div>
+                      )}
                     </div>
                     <div className="space-y-1">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase">Description / Remarks</label>
@@ -9383,7 +9822,7 @@ export default function App() {
 function CascadingDropdowns({ 
   schemes = [], sectors = [], activities = [], subActivities = [], soes = [], soeBudgets = [], allocations = [], surrenders = [], ranges = [], expenses = [],
   editingItem, type, children, onSelectionChange, onBalanceChange, userRangeId, userRole,
-  showSector, showActivity, showSubActivity, showSoe, showRange
+  showSector, showActivity, showSubActivity, showSoe, showRange, showConfirm
 }: any) {
   const [schemeId, setSchemeId] = useState('');
   const [sectorId, setSectorId] = useState('');
@@ -9797,14 +10236,17 @@ function CascadingDropdowns({
               value={rangeId} 
               onChange={(e) => { 
                 const val = e.target.value;
+                const proceed = () => {
+                  setRangeId(val);
+                  // Force immediate notification for range changes to avoid validation lag
+                  if (onSelectionChange) {
+                    onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                  }
+                };
                 if (editingItem?.type === 'Surrender' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
-                  const confirmChange = window.confirm("Are you sure you want to change the range for this surrender? This will shift the entry to the selected range.");
-                  if (!confirmChange) return;
-                }
-                setRangeId(val);
-                // Force immediate notification for range changes to avoid validation lag
-                if (onSelectionChange) {
-                  onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                  showConfirm("Are you sure you want to change the range for this surrender? This will shift the entry to the selected range.", proceed);
+                } else {
+                  proceed();
                 }
               }}
               required={type === 'Surrender'}
@@ -9871,14 +10313,17 @@ function CascadingDropdowns({
                 value={rangeId} 
                 onChange={(e) => { 
                   const val = e.target.value;
+                  const proceed = () => {
+                    setRangeId(val); 
+                    // Force immediate notification for range changes to avoid validation lag
+                    if (onSelectionChange) {
+                      onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                    }
+                  };
                   if (editingItem?.type === 'Allocation' && val && val !== editingItem.item.rangeId && userRole === 'admin') {
-                    const confirmChange = window.confirm("Are you sure you want to change the range for this allocation? This will shift the entire budget to the selected range.");
-                    if (!confirmChange) return;
-                  }
-                  setRangeId(val); 
-                  // Force immediate notification for range changes to avoid validation lag
-                  if (onSelectionChange) {
-                    onSelectionChange({ schemeId, sectorId, activityId, subActivityId, soeId, fundingSoeName, rangeId: val, allocationId });
+                    showConfirm("Are you sure you want to change the range for this allocation? This will shift the entire budget to the selected range.", proceed);
+                  } else {
+                    proceed();
                   }
                 }}
                 required
@@ -9941,20 +10386,25 @@ function CascadingDropdowns({
                   value={allocationId} 
                   onChange={(e) => { 
                     const val = e.target.value;
+                    const proceed = () => {
+                      setAllocationId(val); 
+                      if (val) {
+                        const alloc = allocations.find((a: any) => a.id === val);
+                        if (alloc) setRangeId(alloc.rangeId);
+                      } else {
+                        if (!userRangeId) setRangeId('');
+                      }
+                    };
                     if (editingItem?.type === 'Expenditure' && val && userRole === 'admin') {
                       const newAlloc = allocations.find((a: any) => a.id === val);
                       const originalRangeId = editingItem.item.rangeId;
                       if (newAlloc && newAlloc.rangeId !== originalRangeId) {
-                        const confirmChange = window.confirm("Are you sure you want to change the range for this expenditure? This will shift the entry to the selected range.");
-                        if (!confirmChange) return;
+                        showConfirm("Are you sure you want to change the range for this expenditure? This will shift the entry to the selected range.", proceed);
+                      } else {
+                        proceed();
                       }
-                    }
-                    setAllocationId(val); 
-                    if (val) {
-                      const alloc = allocations.find((a: any) => a.id === val);
-                      if (alloc) setRangeId(alloc.rangeId);
                     } else {
-                      if (!userRangeId) setRangeId('');
+                      proceed();
                     }
                   }}
                   required
@@ -10048,22 +10498,28 @@ function ActivityFormContent({ schemes, sectors, editingItem }: { schemes: any[]
 
 function Pagination({ 
   totalEntries, 
+  totalItems,
   currentPage, 
   itemsPerPage, 
-  onPageChange 
+  onPageChange,
+  onItemsPerPageChange
 }: { 
-  totalEntries: number, 
+  totalEntries?: number, 
+  totalItems?: number,
   currentPage: number, 
-  itemsPerPage: number, 
-  onPageChange: (page: number) => void 
+  itemsPerPage: number | 'All', 
+  onPageChange: (page: number) => void,
+  onItemsPerPageChange?: (val: number | 'All') => void
 }) {
-  const isAll = itemsPerPage === -1;
-  const totalPages = isAll ? 1 : Math.ceil(totalEntries / itemsPerPage);
+  const actualTotalEntries = totalEntries !== undefined ? totalEntries : (totalItems !== undefined ? totalItems : 0);
+  const isAll = itemsPerPage === 'All' || itemsPerPage === -1;
+  const numericItemsPerPage = isAll ? actualTotalEntries : Number(itemsPerPage);
+  const totalPages = isAll ? 1 : Math.ceil(actualTotalEntries / numericItemsPerPage);
   
-  if (totalPages <= 1 && totalEntries <= itemsPerPage && !isAll) return null;
+  if (totalPages <= 1 && actualTotalEntries <= numericItemsPerPage && !isAll) return null;
 
-  const startEntry = isAll ? 1 : (currentPage - 1) * itemsPerPage + 1;
-  const endEntry = isAll ? totalEntries : Math.min(currentPage * itemsPerPage, totalEntries);
+  const startEntry = isAll ? 1 : (currentPage - 1) * numericItemsPerPage + 1;
+  const endEntry = isAll ? actualTotalEntries : Math.min(currentPage * numericItemsPerPage, actualTotalEntries);
 
   const pages = [];
   const maxVisiblePages = 5;
