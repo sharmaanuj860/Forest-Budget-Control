@@ -622,13 +622,34 @@ export default function App() {
       setBudgetFileSelection({ schemeId: '', sectorId: '', rangeId: '' });
       setShowLedgerFilters(false);
     }, [activeTab]);
+
+    // Reset report filters on sub-tab change
+    useEffect(() => {
+      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+      setReportSearchTerm('');
+      setReportPage(1);
+      setShowReportFilters(false);
+    }, [reportSubTab]);
   const [showReportFilters, setShowReportFilters] = useState(false);
   const [surrenderFormSelection, setSurrenderFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [approvedBudgetFiles, setApprovedBudgetFiles] = useState<BudgetFile[]>([]);
   const [distributedBudgetFiles, setDistributedBudgetFiles] = useState<BudgetFile[]>([]);
-  const [isUploading, setIsUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadingFileName, setUploadingFileName] = useState('');
+  
+  // Per-type upload status
+  const [uploadStatus, setUploadStatus] = useState<{
+    [key: string]: {
+      isUploading: boolean;
+      progress: number;
+      fileName: string;
+      transferred: number;
+      total: number;
+      error: string | null;
+    }
+  }>({
+    approved: { isUploading: false, progress: 0, fileName: '', transferred: 0, total: 0, error: null },
+    distributed: { isUploading: false, progress: 0, fileName: '', transferred: 0, total: 0, error: null }
+  });
+
   const [budgetFileSelection, setBudgetFileSelection] = useState({ schemeId: '', sectorId: '', rangeId: '' });
   const [expenseFormSelection, setExpenseFormSelection] = useState<any>({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', soeId: '', rangeId: '' });
   const [showSoeAbstract, setShowSoeAbstract] = useState(true);
@@ -2035,16 +2056,6 @@ export default function App() {
             <h3 className="text-lg font-semibold flex items-center gap-2">
               <Table className="h-5 w-5 text-gray-500" /> Budget Abstract (Scheme/Sector/Activity)
             </h3>
-            <div className="relative w-full md:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search budget..." 
-                value={dashboardSearch}
-                onChange={(e) => setDashboardSearch(e.target.value)}
-                className="w-full pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-              />
-            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse text-sm min-w-[600px]">
@@ -3066,8 +3077,8 @@ export default function App() {
   };
 
   const handleBudgetFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'approved' | 'distributed') => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedFY) return;
+    const files = e.target.files;
+    if (!files || files.length === 0 || !selectedFY) return;
     
     const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
     if (!activeFy) return;
@@ -3077,57 +3088,110 @@ export default function App() {
       return;
     }
 
-    // Sector and Range are now optional as per user request
-    setIsUploading(true);
-    setUploadProgress(10); // Start with some progress
-    setUploadingFileName(file.name);
+    const fileList = Array.from(files);
+    
+    for (const file of fileList) {
+      // Reset status for this type
+      setUploadStatus(prev => ({
+        ...prev,
+        [type]: { isUploading: true, progress: 0, fileName: file.name, transferred: 0, total: file.size, error: null }
+      }));
 
-    try {
-      const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
-      const storageRef = ref(storage, storagePath);
-      
-      console.log("Starting upload to:", storagePath);
-      
-      // Using uploadBytes instead of uploadBytesResumable for better compatibility
-      // in restricted iframe environments where resumable preflights might be blocked.
-      const snapshot = await uploadBytes(storageRef, file);
-      setUploadProgress(70); // Upload complete, now getting URL
-      
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      setUploadProgress(90); // URL retrieved, now saving to Firestore
+      try {
+        const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
+        const storageRef = ref(storage, storagePath);
+        
+        console.log(`Starting ${type} upload to:`, storagePath);
+        
+        const uploadTask = uploadBytesResumable(storageRef, file);
 
-      const fileData: any = {
-        name: file.name,
-        url: downloadURL,
-        schemeId: budgetFileSelection.schemeId,
-        sectorId: budgetFileSelection.sectorId || '',
-        type,
-        uploadedBy: user?.uid,
-        uploadedAt: Date.now(),
-        fyId: activeFy.id,
-        financialYear: activeFy.name
-      };
+        await new Promise<void>((resolve, reject) => {
+          uploadTask.on('state_changed', 
+            (snapshot) => {
+              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+              setUploadStatus(prev => ({
+                ...prev,
+                [type]: { 
+                  ...prev[type], 
+                  progress, 
+                  transferred: snapshot.bytesTransferred, 
+                  total: snapshot.totalBytes 
+                }
+              }));
+            }, 
+            (error) => {
+              console.error(`${type} upload error:`, error);
+              let errorMsg = "Upload failed.";
+              if (error.code === 'storage/unauthorized') {
+                errorMsg = "Permission denied. Please check storage rules.";
+              } else if (error.code === 'storage/canceled') {
+                errorMsg = "Upload canceled.";
+              } else {
+                errorMsg = `Error: ${error.message}`;
+              }
+              
+              setUploadStatus(prev => ({
+                ...prev,
+                [type]: { ...prev[type], isUploading: false, error: errorMsg }
+              }));
+              showAlert(`${file.name}: ${errorMsg}`);
+              reject(error);
+            }, 
+            async () => {
+              try {
+                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
 
-      if (type === 'approved') {
-        await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
-      } else {
-        fileData.rangeId = budgetFileSelection.rangeId || '';
-        await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
+                const fileData: any = {
+                  name: file.name,
+                  url: downloadURL,
+                  schemeId: budgetFileSelection.schemeId,
+                  sectorId: budgetFileSelection.sectorId || '',
+                  type,
+                  uploadedBy: user?.uid,
+                  uploadedAt: Date.now(),
+                  fyId: activeFy.id,
+                  financialYear: activeFy.name
+                };
+
+                if (type === 'approved') {
+                  await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
+                } else {
+                  fileData.rangeId = budgetFileSelection.rangeId || '';
+                  await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
+                }
+                
+                setUploadStatus(prev => ({
+                  ...prev,
+                  [type]: { ...prev[type], isUploading: false, progress: 100 }
+                }));
+                
+                // Clear status after a delay
+                setTimeout(() => {
+                  setUploadStatus(prev => ({
+                    ...prev,
+                    [type]: { ...prev[type], progress: 0, fileName: '', transferred: 0, total: 0 }
+                  }));
+                }, 3000);
+                resolve();
+              } catch (err) {
+                console.error("Error saving file metadata:", err);
+                showAlert(`${file.name}: File uploaded but failed to save record.`);
+                setUploadStatus(prev => ({
+                  ...prev,
+                  [type]: { ...prev[type], isUploading: false, error: "Failed to save record." }
+                }));
+                reject(err);
+              }
+            }
+          );
+        });
+      } catch (error) {
+        console.error("Upload initialization error:", error);
       }
-      
-      setUploadProgress(100);
-      showAlert("File uploaded successfully!");
-      setIsUploading(false);
-      setUploadProgress(0);
-      setUploadingFileName('');
-    } catch (error) {
-      console.error("Upload error details:", error);
-      showAlert(`Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setIsUploading(false);
-      setUploadProgress(0);
-    } finally {
-      e.target.value = ''; // Reset file input
     }
+    
+    showAlert(`${fileList.length} file(s) processed for ${type === 'approved' ? 'Approved' : 'Distributed'} budget.`);
+    e.target.value = ''; // Reset file input
   };
 
   const handleBudgetFileDelete = async (file: BudgetFile) => {
@@ -3184,35 +3248,57 @@ export default function App() {
             </div>
             {userRole === 'admin' && (
               <div className="flex flex-col gap-2">
-                {isUploading && (
-                  <div className="flex flex-col gap-1 min-w-[200px]">
-                    <div className="flex justify-between text-[10px] font-bold text-gray-500 uppercase">
-                      <span className="truncate max-w-[150px]">{uploadingFileName}</span>
-                      <span>{Math.round(uploadProgress)}%</span>
+                {(uploadStatus[type].isUploading || uploadStatus[type].progress === 100 || uploadStatus[type].error) && (
+                  <div className={`flex flex-col gap-2 min-w-[250px] p-3 rounded-lg border ${uploadStatus[type].error ? 'bg-red-50 border-red-100' : uploadStatus[type].progress === 100 ? 'bg-green-50 border-green-100' : 'bg-blue-50 border-blue-100'}`}>
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex flex-col overflow-hidden">
+                        <span className="text-[10px] font-bold text-gray-700 truncate">{uploadStatus[type].fileName}</span>
+                        <span className="text-[9px] text-gray-500">
+                          {(uploadStatus[type].transferred / (1024 * 1024)).toFixed(2)} MB / {(uploadStatus[type].total / (1024 * 1024)).toFixed(2)} MB
+                        </span>
+                      </div>
+                      <span className={`text-[10px] font-bold ${uploadStatus[type].error ? 'text-red-600' : 'text-blue-600'}`}>
+                        {uploadStatus[type].error ? 'Error' : `${Math.round(uploadStatus[type].progress)}%`}
+                      </span>
                     </div>
-                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                    
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
                       <div 
-                        className="bg-emerald-500 h-full transition-all duration-300 ease-out"
-                        style={{ width: `${uploadProgress}%` }}
+                        className={`h-full transition-all duration-300 ease-out ${uploadStatus[type].error ? 'bg-red-500' : uploadStatus[type].progress === 100 ? 'bg-green-500' : 'bg-blue-500'}`}
+                        style={{ width: `${uploadStatus[type].progress}%` }}
                       />
                     </div>
+
+                    {uploadStatus[type].error && (
+                      <span className="text-[9px] text-red-600 font-medium leading-tight">
+                        {uploadStatus[type].error}
+                      </span>
+                    )}
+                    
+                    {uploadStatus[type].progress === 100 && !uploadStatus[type].error && !uploadStatus[type].isUploading && (
+                      <span className="text-[9px] text-green-600 font-bold flex items-center gap-1">
+                        <Check className="w-3 h-3" /> Upload Complete
+                      </span>
+                    )}
                   </div>
                 )}
+                
                 <div className="relative">
                   <input
                     type="file"
                     accept=".pdf"
+                    multiple
                     onChange={(e) => handleBudgetFileUpload(e, type)}
                     className="hidden"
                     id={`file-upload-${type}`}
-                    disabled={isUploading}
+                    disabled={uploadStatus[type].isUploading}
                   />
                   <label
                     htmlFor={`file-upload-${type}`}
-                    className={`flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer shadow-sm ${isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    className={`flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors cursor-pointer shadow-sm ${uploadStatus[type].isUploading ? 'opacity-50 cursor-not-allowed' : ''}`}
                   >
-                    {isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                    <span>{isUploading ? 'Uploading...' : 'Upload PDF'}</span>
+                    {uploadStatus[type].isUploading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    <span>{uploadStatus[type].isUploading ? 'Uploading...' : 'Upload PDF'}</span>
                   </label>
                 </div>
               </div>
@@ -4368,16 +4454,6 @@ export default function App() {
                 </button>
               </div>
             <div className="flex items-center gap-3">
-              <div className="relative group">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
-                <input 
-                  type="text" 
-                  placeholder={`Search ${title}s...`} 
-                  value={currentSearchTerm}
-                  onChange={(e) => { currentSetSearchTerm(e.target.value); setCurrentPage(1); }}
-                  className="pl-10 pr-4 py-2 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 w-full sm:w-64 transition-all"
-                />
-              </div>
               {filterContent && setIsFilterExpanded && (
                 <button 
                   onClick={() => setIsFilterExpanded(!isFilterExpanded)}
@@ -6262,16 +6338,6 @@ export default function App() {
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div className="flex items-center gap-4 flex-1">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  placeholder="Search by scheme, sector, activity, unit, description..."
-                  value={reportSearchTerm}
-                  onChange={(e) => { setReportSearchTerm(e.target.value); setReportPage(1); }}
-                  className="pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
-                />
-              </div>
               <button 
                 onClick={() => setShowReportFilters(!showReportFilters)}
                 className={`flex items-center gap-1 px-3 py-2 border rounded-lg text-sm transition-colors ${showReportFilters ? 'bg-emerald-50 border-emerald-500 text-emerald-700' : 'bg-white hover:bg-gray-50'}`}
