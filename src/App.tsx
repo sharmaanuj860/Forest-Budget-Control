@@ -440,6 +440,7 @@ export default function App() {
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(false);
+  const [showMobileReportSearch, setShowMobileReportSearch] = useState(false);
   const [showReconSummary, setShowReconSummary] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh' | null>(null);
@@ -5821,13 +5822,26 @@ export default function App() {
 
     const totalAmount = selectedExpObjects.reduce((sum, ex) => sum + ex.amount, 0);
     const activeFy = fys.find(f => f.name === selectedFY || f.id === selectedFY);
+    const currentFyId = activeFy?.id || selectedFY;
+
+    // Check for duplicate bill number
+    const isDuplicate = bills.some(b => 
+      b.billNo === billNo && 
+      b.fyId === currentFyId && 
+      (editingItem?.type === 'Bill' ? b.id !== editingItem.item.id : true)
+    );
+
+    if (isDuplicate) {
+      showAlert(`A bill with number "${billNo}" already exists for the selected financial year.`);
+      return;
+    }
 
     try {
       const billData = {
         billNo,
         billDate,
         expenseIds: selectedExpensesForBill,
-        fyId: activeFy?.id || selectedFY,
+        fyId: currentFyId,
         financialYear: activeFy?.name || selectedFY,
         totalAmount,
         status: isFinalizing ? 'finalized' : (editingItem?.type === 'Bill' ? editingItem.item.status : 'draft'),
@@ -7373,7 +7387,7 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
+        <div className="bg-white p-3 md:p-6 rounded-xl shadow-sm border border-gray-100">
           <div className="flex border-b border-gray-200 mb-6 overflow-x-auto whitespace-nowrap scrollbar-hide">
             <button
               onClick={() => { setReportSubTab('summary'); setReportPage(1); }}
@@ -7719,21 +7733,28 @@ export default function App() {
                     <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
                       <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
                     </h4>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 md:gap-4">
                       {showSoeAbstract && (
                         <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                          <div className="relative">
+                          <div className={`relative transition-all duration-300 ${showMobileReportSearch ? 'w-40 sm:w-64' : 'w-0 sm:w-64 overflow-hidden'}`}>
                             <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                             <input
                               type="text"
                               placeholder="Search abstract..."
                               value={soeAbstractSearch}
                               onChange={(e) => setSoeAbstractSearch(e.target.value)}
-                              className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                              className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
                             />
                           </div>
                           <button 
-                            className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                            onClick={() => setShowMobileReportSearch(!showMobileReportSearch)}
+                            className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm sm:hidden"
+                            title="Search"
+                          >
+                            <Search className="w-4 h-4" />
+                          </button>
+                          <button 
+                            className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm hidden sm:block"
                             title="Search"
                           >
                             <Search className="w-4 h-4" />
@@ -7856,7 +7877,7 @@ export default function App() {
           )}
           
           <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="p-6">
+            <div className="p-3 md:p-6">
               {reportSubTab === 'summary' && (
                 <div className="space-y-6">
                   {/* SOE Abstract Summary Table */}
@@ -7869,21 +7890,28 @@ export default function App() {
                         <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
                           <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
                         </h4>
-                        <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-2 md:gap-4">
                           {showSoeAbstract && (
                             <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                              <div className="relative">
+                              <div className={`relative transition-all duration-300 ${showMobileReportSearch ? 'w-40 sm:w-64' : 'w-0 sm:w-64 overflow-hidden'}`}>
                                 <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
                                 <input
                                   type="text"
                                   placeholder="Search abstract..."
                                   value={soeAbstractSearch}
                                   onChange={(e) => setSoeAbstractSearch(e.target.value)}
-                                  className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                                  className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-full"
                                 />
                               </div>
                               <button 
-                                className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                                onClick={() => setShowMobileReportSearch(!showMobileReportSearch)}
+                                className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm sm:hidden"
+                                title="Search"
+                              >
+                                <Search className="w-4 h-4" />
+                              </button>
+                              <button 
+                                className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm hidden sm:block"
                                 title="Search"
                               >
                                 <Search className="w-4 h-4" />
