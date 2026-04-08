@@ -439,7 +439,7 @@ export default function App() {
   const [soeAbstractSearch, setSoeAbstractSearch] = useState('');
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
-  const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(true);
+  const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(false);
   const [showReconSummary, setShowReconSummary] = useState(false);
   const [user, setUser] = useState<any>(null);
   const [userRole, setUserRole] = useState<'admin' | 'deo' | 'approver' | 'DA' | 'Sarahan' | 'Narag' | 'Habban' | 'Division' | 'Rajgarh' | null>(null);
@@ -3492,6 +3492,9 @@ export default function App() {
 
   const renderSurrenderTab = () => {
     const filteredSurrenders = surrenders.filter(s => {
+      // Filter by user's range if applicable
+      if (userRangeId && s.rangeId !== userRangeId) return false;
+
       const r = ranges.find(range => range.id === s.rangeId);
       const sch = schemes.find(scheme => scheme.id === s.schemeId);
       const soe = soes.find(soe => soe.id === s.soeId);
@@ -3589,9 +3592,16 @@ export default function App() {
               value={surrenderFilters.rangeId}
               onChange={(e) => setSurrenderFilters({ ...surrenderFilters, rangeId: e.target.value })}
               className="w-full p-1.5 border rounded text-xs bg-white"
+              disabled={!!userRangeId}
             >
-              <option value="">All Ranges</option>
-              {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+              {userRangeId ? (
+                <option value={userRangeId}>{ranges.find(r => r.id === userRangeId)?.name}</option>
+              ) : (
+                <>
+                  <option value="">All Ranges</option>
+                  {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                </>
+              )}
             </select>
           </div>
           <div>
@@ -4908,6 +4918,10 @@ export default function App() {
 
 
 
+  useEffect(() => {
+    setIsSoeTrackerExpanded(false);
+  }, [activeTab]);
+
   const allocationBudgetStatus = useMemo(() => {
     if (activeTab !== 'Allocations' || !allocationFormFilters.schemeId) return { isInvalid: false, remaining: 0, availableBudget: 0, currentAllocated: 0 };
     const amount = parseFloat(allocationAmount);
@@ -4925,7 +4939,7 @@ export default function App() {
 
     // 1. Identify relevant SOEs (the "Pool")
     // Use path-inclusive logic: if we are at a deep level, we can fund from SOEs at this level or any parent level.
-    const poolSoes = soes.filter((s: any) => {
+    const poolSoes = currentSoes.filter((s: any) => {
       if (s.schemeId !== schemeId) return false;
       if (fundingSoeName && s.name !== fundingSoeName) return false;
       if (subActivityId && s.subActivityId && s.subActivityId !== subActivityId) return false;
@@ -4938,16 +4952,32 @@ export default function App() {
     const availableBudget = poolSoes.reduce((sum, s) => sum + getReceivedInTry(s), 0);
 
     // 3. Calculate Already Allocated from this Pool
-    const totalAllocated = allocations.reduce((sum, a) => {
+    const totalAllocated = currentAllocations.reduce((sum, a) => {
       const currentAllocId = isEditing ? editingItem.item.id : null;
       if (a.id === currentAllocId) return sum;
 
+      // Count funded amounts from our pool
       const fundedFromOurPool = a.fundedSOEs?.filter((f: any) => poolSoes.some(s => s.id === f.soeId)) || [];
-      return sum + fundedFromOurPool.reduce((s: number, f: any) => s + f.amount, 0);
+      const fundedAmount = fundedFromOurPool.reduce((s: number, f: any) => s + f.amount, 0);
+      
+      // Count unfunded portion if it belongs to this hierarchy
+      // This ensures that even if an allocation isn't funded yet, it's reserved from the pool.
+      const matchesHierarchy = 
+        a.schemeId === schemeId &&
+        (!sectorId || a.sectorId === sectorId) &&
+        (!activityId || a.activityId === activityId) &&
+        (!subActivityId || a.subActivityId === subActivityId);
+      
+      if (matchesHierarchy) {
+        const totalFunded = a.fundedSOEs?.reduce((s, f) => s + f.amount, 0) || 0;
+        const unfunded = Math.max(0, a.amount - totalFunded);
+        return sum + fundedAmount + unfunded;
+      }
+
+      return sum + fundedAmount;
     }, 0);
 
     // 4. Subtract surrenders to get the NET allocated amount
-    // This is necessary because surrenders return funds to the pool.
     const totalSurrendered = surrenders.reduce((sum, s) => {
       if (poolSoes.some(ps => ps.id === s.soeId)) {
         return sum + s.amount;
@@ -4960,7 +4990,7 @@ export default function App() {
     const isInvalid = !isNaN(amount) && amount > 0 && amount > remaining;
 
     return { isInvalid, remaining, availableBudget, currentAllocated: currentNetAllocated };
-  }, [activeTab, allocationAmount, allocationFormFilters, soes, allocations, expenses, surrenders, editingItem]);
+  }, [activeTab, allocationAmount, allocationFormFilters, currentSoes, currentAllocations, expenses, surrenders, editingItem]);
 
   const isAllocationInvalid = allocationBudgetStatus.isInvalid || !allocationFormFilters.rangeId;
 
@@ -7344,36 +7374,36 @@ export default function App() {
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-          <div className="flex border-b border-gray-200 mb-6">
+          <div className="flex border-b border-gray-200 mb-6 overflow-x-auto whitespace-nowrap scrollbar-hide">
             <button
               onClick={() => { setReportSubTab('summary'); setReportPage(1); }}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'summary' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 flex-shrink-0 ${reportSubTab === 'summary' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Summary Report
             </button>
             <button
               onClick={() => { setReportSubTab('allocation-expenditure'); setReportPage(1); }}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'allocation-expenditure' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 flex-shrink-0 ${reportSubTab === 'allocation-expenditure' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Allocation & Expenditure Details
             </button>
             <button
               onClick={() => { setReportSubTab('ledger'); setReportPage(1); }}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'ledger' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 flex-shrink-0 ${reportSubTab === 'ledger' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Scheme Wise Ledger
             </button>
             {(userRole === 'admin' || userRole === 'Division') && (
               <button
                 onClick={() => { setReportSubTab('master-control'); setReportPage(1); }}
-                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'master-control' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 flex-shrink-0 ${reportSubTab === 'master-control' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
               >
                 Master Control
               </button>
             )}
             <button
               onClick={() => { setReportSubTab('tax-deduction'); setReportPage(1); }}
-              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'tax-deduction' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 flex-shrink-0 ${reportSubTab === 'tax-deduction' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
             >
               Tax Deduction
             </button>
@@ -9897,7 +9927,7 @@ export default function App() {
         )}
 
         {activeTab === 'Surrender' && renderSurrenderTab()}
-        {activeTab === 'Approved Budget' && renderBudgetFilesTab('approved')}
+        {activeTab === 'Approved Budget' && (isAdmin() || isDEO() || userRole === 'DA') && renderBudgetFilesTab('approved')}
         {activeTab === 'Distributed Budget' && renderBudgetFilesTab('distributed')}
 
         {activeTab === 'Reconciliation' && renderReconciliation()}
