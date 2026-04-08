@@ -139,7 +139,24 @@
         "createdBy": { "type": "string", "description": "UID of the user who created the expenditure" },
         "createdByRole": { "type": "string", "description": "Role of the user who created the expenditure" },
         "updatedBy": { "type": "string", "description": "UID of the user who last updated the expenditure" },
-        "updatedByRole": { "type": "string", "description": "Role of the user who last updated the expenditure" }
+        "updatedByRole": { "type": "string", "description": "Role of the user who last updated the expenditure" },
+        "deductionType": { "type": "string", "enum": ["None", "TDS", "TDS_GST", "Both"], "description": "Type of tax deduction applied" },
+        "deductions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "type": { "type": "string" },
+              "amount": { "type": "number" }
+            }
+          }
+        },
+        "deductedAmount": { "type": "number", "description": "Total amount deducted" },
+        "tdsAmount": { "type": "number", "description": "TDS amount (1%)" },
+        "tdsGstAmount": { "type": "number", "description": "TDS on GST amount (2%)" },
+        "netAmount": { "type": "number", "description": "Net amount payable after deductions" },
+        "panNumber": { "type": "string", "description": "PAN number of the payee" },
+        "gstNumber": { "type": "string", "description": "GST number of the payee" }
       },
       "required": ["allocationId", "soeId", "amount", "date", "description"]
     },
@@ -212,6 +229,8 @@
         "name": { "type": "string", "description": "The name of the payee" },
         "address": { "type": "string", "description": "The address of the payee" },
         "accountNumber": { "type": "string", "description": "The bank account number of the payee" },
+        "panNumber": { "type": "string", "description": "PAN number of the payee" },
+        "gstNumber": { "type": "string", "description": "GST number of the payee" },
         "rangeId": { "type": "string", "description": "ID of the range (optional)" },
         "createdBy": { "type": "string", "description": "UID of the user who created the payee" },
         "createdAt": { "type": "number", "description": "Timestamp of creation" },

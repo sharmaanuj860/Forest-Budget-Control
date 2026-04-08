@@ -80,8 +80,16 @@ type Expense = {
   createdAt?: number;
   approvalReason?: string;
   payeeId?: string;
-  deductionType?: 'None' | 'TDS' | 'TDS_GST';
+  payeeName?: string;
+  rangeId?: string;
+  deductionType?: 'None' | 'TDS' | 'TDS_GST' | 'Both';
+  deductions?: { type: 'TDS' | 'TDS_GST'; amount: number }[];
   deductedAmount?: number;
+  tdsAmount?: number;
+  tdsGstAmount?: number;
+  panNumber?: string;
+  gstNumber?: string;
+  netAmount?: number;
 };
 
 type Notification = {
@@ -113,6 +121,8 @@ type Payee = {
   name: string;
   address: string;
   accountNumber: string;
+  panNumber?: string;
+  gstNumber?: string;
   rangeId?: string;
   createdAt: number;
   updatedAt: number;
@@ -411,7 +421,12 @@ export default function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [deductionType, setDeductionType] = useState<'None' | 'TDS' | 'TDS_GST'>('None');
+  const [deductionType, setDeductionType] = useState<'None' | 'TDS' | 'TDS_GST' | 'Both'>('None');
+  const [selectedDeductions, setSelectedDeductions] = useState<('TDS' | 'TDS_GST')[]>([]);
+  const [panNumber, setPanNumber] = useState('');
+  const [gstNumber, setGstNumber] = useState('');
+  const [payeePan, setPayeePan] = useState('');
+  const [payeeGst, setPayeeGst] = useState('');
   const [uploadTasks, setUploadTasks] = useState<{[key: string]: any}>({});
   const [billSearchTerm, setBillSearchTerm] = useState('');
   const [payeeSearchTerm, setPayeeSearchTerm] = useState('');
@@ -506,7 +521,7 @@ export default function App() {
   const [budgetPage, setBudgetPage] = useState(1);
   const [budgetItemsPerPage, setBudgetItemsPerPage] = useState<number | 'All'>(25);
 
-  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+  const [reportFilters, setReportFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '', deductionType: '' });
   const [ledgerFilters, setLedgerFilters] = useState({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
   const [showLedgerFilters, setShowLedgerFilters] = useState(false);
   const [ledgerSearchTerm, setLedgerSearchTerm] = useState('');
@@ -624,7 +639,7 @@ export default function App() {
       setShowReportFilters(false);
       
       // Reset all filters when switching main tabs
-      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '', deductionType: '' });
       setLedgerFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
       setReportSearchTerm('');
       setLedgerSearchTerm('');
@@ -652,7 +667,7 @@ export default function App() {
 
     // Reset report filters on sub-tab change
     useEffect(() => {
-      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+      setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '', deductionType: '' });
       setReportSearchTerm('');
       setSoeAbstractSearch('');
       setLedgerSearchTerm('');
@@ -764,7 +779,17 @@ export default function App() {
         const email = currentUser.email?.toLowerCase();
         
         try {
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+          // Parallelize initial data fetching for faster load
+          const [userDoc, locksSnap, rangesSnap] = await Promise.all([
+            getDoc(doc(db, 'users', currentUser.uid)),
+            getDocs(query(
+              collection(db, 'featureLocks'),
+              where('feature', '==', 'Access'),
+              where('isLocked', '==', true)
+            )),
+            getDocs(collection(db, 'ranges'))
+          ]);
+
           let userData = userDoc.exists() ? userDoc.data() as AppUser : null;
 
           // Hardcode roles for specific emails
@@ -792,44 +817,33 @@ export default function App() {
 
             // Check if user's role or range is disabled via featureLocks
             if (userData.role !== 'admin') {
-              try {
-                const locksSnap = await getDocs(query(
-                  collection(db, 'featureLocks'),
-                  where('feature', '==', 'Access'),
-                  where('isLocked', '==', true)
-                ));
-                
-                const activeAccessLocks = locksSnap.docs.map(d => d.data() as FeatureLock);
-                
-                // Check individual user lock via featureLocks (legacy or fallback)
-                if (activeAccessLocks.some(l => l.target === userData!.id)) {
-                  showAlert(`Access for your account has been disabled by the administrator.`);
-                  await signOut(auth);
-                  setLoading(false);
-                  return;
-                }
-                
-                // Check role lock
-                if (activeAccessLocks.some(l => l.target === userData!.role)) {
-                  showAlert(`Access for the ${userData.role.toUpperCase()} role has been disabled by the administrator.`);
-                  await signOut(auth);
-                  setLoading(false);
-                  return;
-                }
+              const activeAccessLocks = locksSnap.docs.map(d => d.data() as FeatureLock);
+              
+              // Check individual user lock via featureLocks (legacy or fallback)
+              if (activeAccessLocks.some(l => l.target === userData!.id)) {
+                showAlert(`Access for your account has been disabled by the administrator.`);
+                await signOut(auth);
+                setLoading(false);
+                return;
+              }
+              
+              // Check role lock
+              if (activeAccessLocks.some(l => l.target === userData!.role)) {
+                showAlert(`Access for the ${userData.role.toUpperCase()} role has been disabled by the administrator.`);
+                await signOut(auth);
+                setLoading(false);
+                return;
+              }
 
-                // Check range lock (if role is a range name)
-                if (['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userData.role)) {
-                  const rangesSnap = await getDocs(collection(db, 'ranges'));
-                  const userRange = rangesSnap.docs.find(d => d.data().name === userData!.role);
-                  if (userRange && activeAccessLocks.some(l => l.target === userRange.id)) {
-                    showAlert(`Access for the ${userData.role} range has been disabled by the administrator.`);
-                    await signOut(auth);
-                    setLoading(false);
-                    return;
-                  }
+              // Check range lock (if role is a range name)
+              if (['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userData.role)) {
+                const userRange = rangesSnap.docs.find(d => d.data().name === userData!.role);
+                if (userRange && activeAccessLocks.some(l => l.target === userRange.id)) {
+                  showAlert(`Access for the ${userData.role} range has been disabled by the administrator.`);
+                  await signOut(auth);
+                  setLoading(false);
+                  return;
                 }
-              } catch (lockError) {
-                console.warn("Could not check feature locks during login:", lockError);
               }
             }
 
@@ -1194,6 +1208,8 @@ export default function App() {
       console.error('Auth error:', error);
       if (error.code === 'auth/network-request-failed') {
         setLoginError('Network request failed. This may be due to a poor connection or browser restrictions. Please refresh and try again.');
+      } else if (error.code === 'auth/too-many-requests') {
+        setLoginError('Too many failed login attempts. Please try again later or reset your password.');
       } else if (error.code === 'auth/operation-not-allowed') {
         setLoginError('Email/Password authentication is not enabled in your Firebase project. Please go to the Firebase Console -> Authentication -> Sign-in method, and enable "Email/Password".');
       } else if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
@@ -2014,19 +2030,23 @@ export default function App() {
 
     return (
       <div className="space-y-6">
-        <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-4' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-2 sm:gap-3`}>
-          <StatCard title={userRangeId ? "Total Allocation" : "Total Approved Budget"} amount={dashboardStats.totalBudget} icon={<Wallet />} color="text-blue-600" />
+        <div className={`grid grid-cols-2 sm:grid-cols-2 md:grid-cols-3 ${userRangeId ? 'lg:grid-cols-3' : 'xl:grid-cols-6 lg:grid-cols-3'} gap-2 sm:gap-3`}>
+          {!userRangeId && <StatCard title="Total Approved Budget" amount={dashboardStats.totalBudget} icon={<Wallet />} color="text-blue-600" />}
           {!userRangeId && <StatCard title="Total Received (Try)" amount={dashboardStats.totalReceivedInTry} icon={<Landmark />} color="text-indigo-500" />}
-          <StatCard title="Total Allocated" amount={dashboardStats.totalAllocated} icon={<Map />} color="text-indigo-600" />
+          <StatCard title={userRangeId ? "My Allocated Budget" : "Total Allocated"} amount={dashboardStats.totalAllocated} icon={<Map />} color="text-indigo-600" />
           {!userRangeId && <StatCard title="To Be Allocated (Received)" amount={dashboardStats.totalTryBalance} icon={<IndianRupee />} color="text-orange-500" />}
           <StatCard 
-            title="Total Expenditure" 
+            title={userRangeId ? "My Total Expenditure" : "Total Expenditure"} 
             amount={dashboardStats.totalSpent} 
             icon={<TrendingDown />} 
             color="text-red-600" 
-            subtitle={dashboardStats.totalBudget > 0 ? `${((dashboardStats.totalSpent / dashboardStats.totalBudget) * 100).toFixed(1)}% of Budget` : undefined}
+            subtitle={
+              userRangeId 
+                ? (dashboardStats.totalAllocated > 0 ? `${((dashboardStats.totalSpent / dashboardStats.totalAllocated) * 100).toFixed(1)}% of My Allocation` : undefined)
+                : (dashboardStats.totalBudget > 0 ? `${((dashboardStats.totalSpent / dashboardStats.totalBudget) * 100).toFixed(1)}% of Budget` : undefined)
+            }
           />
-          <StatCard title="Remaining Balance (Unspent)" amount={dashboardStats.remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
+          <StatCard title={userRangeId ? "My Remaining Balance" : "Remaining Balance (Unspent)"} amount={dashboardStats.remainingBalance} icon={<IndianRupee />} color="text-emerald-600" />
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -5325,9 +5345,23 @@ export default function App() {
       try {
         const batch = writeBatch(db);
         for (const p of selectedPayeesForExpense) {
+          const pAmt = parseFloat(p.amount) || 0;
+          let pTdsAmt = 0;
+          let pTdsGstAmt = 0;
+          
+          if (selectedDeductions.includes('TDS') && pAmt > 30000) {
+            pTdsAmt = Math.round(pAmt * 0.01);
+          }
+          if (selectedDeductions.includes('TDS_GST') && pAmt > 250000) {
+            pTdsGstAmt = Math.round(pAmt * 0.02);
+          }
+          
+          const pTotalDeducted = pTdsAmt + pTdsGstAmt;
+          const pNetAmt = pAmt - pTotalDeducted;
+
           const docRef = doc(collection(db, 'expenditures'));
           batch.set(docRef, {
-            allocationId, soeId, amount: parseFloat(p.amount) || 0, date, description, financialYear: targetFyId,
+            allocationId, soeId, amount: pAmt, date, description, financialYear: targetFyId,
             rangeId: alloc.rangeId,
             createdBy: user.uid,
             createdByRole: userRole,
@@ -5335,7 +5369,15 @@ export default function App() {
             isLocked: false,
             createdAt: Date.now(),
             updatedAt: Date.now(),
-            payeeId: p.payeeId
+            payeeId: p.payeeId,
+            deductionType: selectedDeductions.length > 0 ? (selectedDeductions.length > 1 ? 'Both' : selectedDeductions[0]) : 'None',
+            deductions: selectedDeductions.map(type => ({ type, amount: type === 'TDS' ? pTdsAmt : pTdsGstAmt })),
+            deductedAmount: pTotalDeducted || null,
+            tdsAmount: pTdsAmt || null,
+            tdsGstAmount: pTdsGstAmt || null,
+            netAmount: pNetAmt,
+            panNumber: panNumber || null,
+            gstNumber: gstNumber || null
           });
         }
         await batch.commit();
@@ -5343,6 +5385,9 @@ export default function App() {
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
         setExpenseDescription('');
+        setSelectedDeductions([]);
+        setPanNumber('');
+        setGstNumber('');
         showAlert(`${selectedPayeesForExpense.length} expenditures added successfully.`);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'expenditures');
@@ -5361,12 +5406,19 @@ export default function App() {
     }
 
     // Calculate deductions
-    let finalDeductedAmount = 0;
-    if (deductionType === 'TDS' && amount > 30000) {
-      finalDeductedAmount = amount * 0.02;
-    } else if (deductionType === 'TDS_GST' && amount > 250000) {
-      finalDeductedAmount = amount * 0.02;
+    const amt = amount;
+    let tdsAmt = 0;
+    let tdsGstAmt = 0;
+    
+    if (selectedDeductions.includes('TDS') && amt > 30000) {
+      tdsAmt = Math.round(amt * 0.01);
     }
+    if (selectedDeductions.includes('TDS_GST') && amt > 250000) {
+      tdsGstAmt = Math.round(amt * 0.02);
+    }
+    
+    const finalDeductedAmount = tdsAmt + tdsGstAmt;
+    const netAmount = amt - finalDeductedAmount;
 
     try {
       if (editingItem?.type === 'Expenditure') {
@@ -5376,8 +5428,14 @@ export default function App() {
           allocationId, soeId, amount, date, description, financialYear: targetFyId, rangeId: alloc.rangeId,
           payeeId: payeeId || null,
           payeeName: payeeName || null,
-          deductionType: deductionType !== 'None' ? deductionType : null,
+          deductionType: selectedDeductions.length > 0 ? (selectedDeductions.length > 1 ? 'Both' : selectedDeductions[0]) : 'None',
+          deductions: selectedDeductions.map(type => ({ type, amount: type === 'TDS' ? tdsAmt : tdsGstAmt })),
           deductedAmount: finalDeductedAmount || null,
+          tdsAmount: tdsAmt || null,
+          tdsGstAmount: tdsGstAmt || null,
+          netAmount: netAmount,
+          panNumber: panNumber || null,
+          gstNumber: gstNumber || null,
           updatedBy: user.uid,
           updatedByRole: userRole,
           updatedAt: Date.now()
@@ -5385,7 +5443,9 @@ export default function App() {
         setEditingItem(null);
         setExpenseAmount('');
         setExpenseDescription('');
-        setDeductionType('None');
+        setSelectedDeductions([]);
+        setPanNumber('');
+        setGstNumber('');
         setCurrentSoeBalance(undefined);
       } else {
         const payeeName = e.target.payeeName?.value;
@@ -5401,13 +5461,21 @@ export default function App() {
           updatedAt: Date.now(),
           payeeName: payeeName || null,
           payeeId: payeeId || null,
-          deductionType: deductionType !== 'None' ? deductionType : null,
-          deductedAmount: finalDeductedAmount || null
+          deductionType: selectedDeductions.length > 0 ? (selectedDeductions.length > 1 ? 'Both' : selectedDeductions[0]) : 'None',
+          deductions: selectedDeductions.map(type => ({ type, amount: type === 'TDS' ? tdsAmt : tdsGstAmt })),
+          deductedAmount: finalDeductedAmount || null,
+          tdsAmount: tdsAmt || null,
+          tdsGstAmount: tdsGstAmt || null,
+          netAmount: netAmount,
+          panNumber: panNumber || null,
+          gstNumber: gstNumber || null
         });
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
         setExpenseDescription('');
-        setDeductionType('None');
+        setSelectedDeductions([]);
+        setPanNumber('');
+        setGstNumber('');
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
@@ -5419,19 +5487,21 @@ export default function App() {
     const name = e.target.name.value;
     const address = e.target.address.value;
     const accountNumber = e.target.accountNumber.value;
+    const panNumber = e.target.panNumber?.value || '';
+    const gstNumber = e.target.gstNumber?.value || '';
     const rangeId = e.target.rangeId.value;
 
     try {
       if (editingItem?.type === 'Payee') {
         await updateDoc(doc(db, 'payees', editingItem.item.id), {
-          name, address, accountNumber, rangeId: rangeId || null,
+          name, address, accountNumber, panNumber, gstNumber, rangeId: rangeId || null,
           updatedAt: Date.now()
         });
         setEditingItem(null);
         e.target.reset();
       } else {
         await addDoc(collection(db, 'payees'), {
-          name, address, accountNumber, rangeId: rangeId || null,
+          name, address, accountNumber, panNumber, gstNumber, rangeId: rangeId || null,
           createdBy: user.uid,
           createdAt: Date.now(),
           updatedAt: Date.now()
@@ -6729,7 +6799,7 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                       <select 
                         value={reportFilters.range}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
                         <option value="">All Ranges</option>
@@ -6740,7 +6810,7 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
                       <select 
                         value={reportFilters.scheme}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
                         <option value="">All Schemes</option>
@@ -6754,7 +6824,7 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
                       <select 
                         value={reportFilters.sector}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
                         <option value="">All Sectors</option>
@@ -6772,7 +6842,7 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
                       <select 
                         value={reportFilters.activity}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
                         <option value="">All Activities</option>
@@ -6791,7 +6861,7 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
                       <select 
                         value={reportFilters.subActivity}
-                        onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
+                        onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                         className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                       >
                         <option value="">All Sub-Activities</option>
@@ -6831,7 +6901,7 @@ export default function App() {
                     <div className="lg:col-span-6 flex justify-end">
                       <button 
                         onClick={() => {
-                          setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                          setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '', deductionType: '' });
                           setReportSearchTerm('');
                           setReportPage(1);
                         }}
@@ -7147,6 +7217,130 @@ export default function App() {
       return cols;
     });
 
+    const renderTaxDeductionReport = () => {
+      const filtered = baseExpenses.filter(e => {
+        if (e.status === 'rejected') return false;
+        if (!e.deductionType || e.deductionType === 'None') return false;
+        
+        const alloc = allocations.find(a => a.id === e.allocationId);
+        if (!alloc) return false;
+
+        const scheme = schemes.find(s => s.id === alloc.schemeId)?.name || 'N/A';
+        const sector = sectors.find(s => s.id === alloc.sectorId)?.name || 'N/A';
+        const range = ranges.find(r => r.id === alloc.rangeId)?.name || 'N/A';
+
+        const matchesFilters = (
+          (!reportFilters.scheme || scheme === reportFilters.scheme) &&
+          (!reportFilters.sector || sector === reportFilters.sector) &&
+          (!reportFilters.range || range === reportFilters.range) &&
+          (!reportFilters.deductionType || 
+            (reportFilters.deductionType === 'TDS' && (e.deductionType === 'TDS' || e.deductionType === 'Both')) ||
+            (reportFilters.deductionType === 'TDS_GST' && (e.deductionType === 'TDS_GST' || e.deductionType === 'Both'))
+          )
+        );
+
+        return matchesFilters;
+      });
+
+      const headers = ['Date', 'Bill No', 'Range', 'Scheme', 'Sector', 'Payee', 'PAN', 'GST', 'Gross Amt', 'TDS (1%)', 'TDS GST (2%)', 'Total Deducted', 'Net Paid'];
+      const tableData = filtered.map(e => {
+        const alloc = allocations.find(a => a.id === e.allocationId);
+        const bill = bills.find(b => b.expenseIds.includes(e.id));
+        const payee = payees.find(p => p.id === e.payeeId);
+        return [
+          e.date,
+          bill?.billNo || 'N/A',
+          ranges.find(r => r.id === alloc?.rangeId)?.name || 'N/A',
+          schemes.find(s => s.id === alloc?.schemeId)?.name || 'N/A',
+          sectors.find(s => s.id === alloc?.sectorId)?.name || 'N/A',
+          e.payeeName || payee?.name || 'N/A',
+          e.panNumber || payee?.panNumber || '-',
+          e.gstNumber || payee?.gstNumber || '-',
+          e.amount,
+          Math.round(e.tdsAmount || 0),
+          Math.round(e.tdsGstAmount || 0),
+          Math.round(e.deductedAmount || 0),
+          Math.round(e.netAmount || (e.amount - (e.deductedAmount || 0)))
+        ];
+      });
+
+      return (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h4 className="text-sm font-bold text-gray-700 uppercase">Tax Deduction Report</h4>
+            <div className="flex gap-2">
+              <button 
+                onClick={() => downloadPDF('Tax Deduction Report', [], [], tableData, headers)}
+                className="bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 hover:bg-red-700 transition-colors"
+              >
+                <Download className="w-3 h-3" /> PDF
+              </button>
+              <button 
+                onClick={() => downloadExcel('Tax Deduction Report', [], [], tableData, headers)}
+                className="bg-emerald-600 text-white px-3 py-1.5 rounded-lg text-xs flex items-center gap-1 hover:bg-emerald-700 transition-colors"
+              >
+                <Download className="w-3 h-3" /> Excel
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border rounded-xl shadow-sm">
+            <table className="w-full text-xs border-collapse">
+              <thead className="bg-gray-50">
+                <tr>
+                  {headers.map(h => (
+                    <th key={h} className="p-2 text-[10px] font-bold text-gray-700 border border-gray-200 uppercase tracking-tight text-left">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((e, i) => {
+                  const alloc = allocations.find(a => a.id === e.allocationId);
+                  const bill = bills.find(b => b.expenseIds.includes(e.id));
+                  const payee = payees.find(p => p.id === e.payeeId);
+                  const net = e.netAmount || (e.amount - (e.deductedAmount || 0));
+                  return (
+                    <tr key={e.id} className="hover:bg-gray-50 border-b border-gray-100">
+                      <td className="p-2 border border-gray-100">{e.date}</td>
+                      <td className="p-2 border border-gray-100 font-medium">{bill?.billNo || '-'}</td>
+                      <td className="p-2 border border-gray-100">{ranges.find(r => r.id === alloc?.rangeId)?.name || '-'}</td>
+                      <td className="p-2 border border-gray-100">{schemes.find(s => s.id === alloc?.schemeId)?.name || '-'}</td>
+                      <td className="p-2 border border-gray-100">{sectors.find(s => s.id === alloc?.sectorId)?.name || '-'}</td>
+                      <td className="p-2 border border-gray-100">{e.payeeName || payee?.name || '-'}</td>
+                      <td className="p-2 border border-gray-100 font-mono text-[10px]">{e.panNumber || payee?.panNumber || '-'}</td>
+                      <td className="p-2 border border-gray-100 font-mono text-[10px]">{e.gstNumber || payee?.gstNumber || '-'}</td>
+                      <td className="p-2 border border-gray-100 text-right">₹{e.amount.toLocaleString()}</td>
+                      <td className="p-2 border border-gray-100 text-right text-blue-600">₹{Math.round(e.tdsAmount || 0).toLocaleString()}</td>
+                      <td className="p-2 border border-gray-100 text-right text-blue-600">₹{Math.round(e.tdsGstAmount || 0).toLocaleString()}</td>
+                      <td className="p-2 border border-gray-100 text-right font-bold text-red-600">₹{Math.round(e.deductedAmount || 0).toLocaleString()}</td>
+                      <td className="p-2 border border-gray-100 text-right font-bold text-emerald-700">₹{Math.round(net).toLocaleString()}</td>
+                    </tr>
+                  );
+                })}
+                {filtered.length === 0 && (
+                  <tr>
+                    <td colSpan={headers.length} className="p-8 text-center text-gray-500">No tax deduction records found.</td>
+                  </tr>
+                )}
+              </tbody>
+              {filtered.length > 0 && (
+                <tfoot className="bg-gray-50 font-bold">
+                  <tr>
+                    <td colSpan={8} className="p-2 text-right uppercase">Totals</td>
+                    <td className="p-2 text-right">₹{filtered.reduce((sum, e) => sum + e.amount, 0).toLocaleString()}</td>
+                    <td className="p-2 text-right text-blue-600">₹{filtered.reduce((sum, e) => sum + Math.round(e.tdsAmount || 0), 0).toLocaleString()}</td>
+                    <td className="p-2 text-right text-blue-600">₹{filtered.reduce((sum, e) => sum + Math.round(e.tdsGstAmount || 0), 0).toLocaleString()}</td>
+                    <td className="p-2 text-right text-red-600">₹{filtered.reduce((sum, e) => sum + Math.round(e.deductedAmount || 0), 0).toLocaleString()}</td>
+                    <td className="p-2 text-right text-emerald-700">₹{filtered.reduce((sum, e) => sum + Math.round(e.netAmount || (e.amount - (e.deductedAmount || 0))), 0).toLocaleString()}</td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
@@ -7177,6 +7371,12 @@ export default function App() {
                 Master Control
               </button>
             )}
+            <button
+              onClick={() => { setReportSubTab('tax-deduction'); setReportPage(1); }}
+              className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${reportSubTab === 'tax-deduction' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+            >
+              Tax Deduction
+            </button>
           </div>
 
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -7294,7 +7494,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Range</label>
                     <select 
                       value={reportFilters.range}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, range: e.target.value, scheme: '', sector: '', activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All Ranges</option>
@@ -7305,7 +7505,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Scheme</label>
                     <select 
                       value={reportFilters.scheme}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, scheme: e.target.value, sector: '', activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All Schemes</option>
@@ -7319,7 +7519,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sector</label>
                     <select 
                       value={reportFilters.sector}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '' }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, sector: e.target.value, activity: '', subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All Sectors</option>
@@ -7337,7 +7537,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Activity</label>
                     <select 
                       value={reportFilters.activity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '' }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, activity: e.target.value, subActivity: '', soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All Activities</option>
@@ -7356,7 +7556,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Sub-Activity</label>
                     <select 
                       value={reportFilters.subActivity}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '' }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, subActivity: e.target.value, soe: '', deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All Sub-Activities</option>
@@ -7376,7 +7576,7 @@ export default function App() {
                     <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">SOE</label>
                     <select 
                       value={reportFilters.soe}
-                      onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value }); setReportPage(1); }}
+                      onChange={(e) => { setReportFilters({ ...reportFilters, soe: e.target.value, deductionType: reportFilters.deductionType }); setReportPage(1); }}
                       className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
                     >
                       <option value="">All SOEs</option>
@@ -7393,6 +7593,20 @@ export default function App() {
                       }).map(s => <option key={s} value={s}>{s}</option>)}
                     </select>
                   </div>
+                  {reportSubTab === 'tax-deduction' && (
+                    <div>
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Deduction Type</label>
+                      <select 
+                        value={reportFilters.deductionType}
+                        onChange={(e) => setReportFilters({ ...reportFilters, deductionType: e.target.value })}
+                        className="w-full p-2 border border-gray-300 rounded text-xs bg-white"
+                      >
+                        <option value="">All Deductions</option>
+                        <option value="TDS">TDS (1%)</option>
+                        <option value="TDS_GST">TDS on GST (2%)</option>
+                      </select>
+                    </div>
+                  )}
                   {reportSubTab === 'ledger' && (
                     <div className="lg:col-span-2">
                       <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Search Ledger</label>
@@ -7419,7 +7633,7 @@ export default function App() {
                   <div className={`${reportSubTab === 'ledger' ? 'lg:col-span-4' : 'lg:col-span-6'} flex justify-end`}>
                     <button 
                       onClick={() => {
-                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '' });
+                        setReportFilters({ scheme: '', sector: '', activity: '', subActivity: '', range: '', soe: '', deductionType: '' });
                         setSoeAbstractSearch('');
                         setLedgerSearchTerm('');
                         setReportPage(1);
@@ -7611,63 +7825,215 @@ export default function App() {
             </>
           )}
           
-          {reportSubTab === 'ledger' && renderSchemeWiseLedger()}
-          {reportSubTab === 'allocation-expenditure' && renderAllocationExpenditureReport()}
-          {reportSubTab === 'master-control' && (
-            <>
-              <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
-                  <p className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocated</p>
-                  <p className="text-lg font-bold text-emerald-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.allocated, 0).toLocaleString()}</p>
-                </div>
-                <div className="bg-red-50 p-3 rounded-lg border border-red-100">
-                  <p className="text-[10px] font-bold text-red-800 uppercase">Total Expenditure</p>
-                  <p className="text-lg font-bold text-red-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.expenditure, 0).toLocaleString()}</p>
-                </div>
-                <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
-                  <p className="text-[10px] font-bold text-blue-800 uppercase">Total Balance</p>
-                  <p className="text-lg font-bold text-blue-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.balance, 0).toLocaleString()}</p>
-                </div>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse border border-gray-300">
-                  <thead>
-                    <tr className="bg-emerald-50 border-b border-gray-300">
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Range</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Scheme</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sector</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Activity</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sub-Activity</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">SOE</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Allocated</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Expenditure</th>
-                      <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Balance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {masterControlData.map((row, i) => (
-                      <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30">
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.rangeName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.schemeName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.sectorName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.activityName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.subActivityName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
-                        <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.balance.toLocaleString()}</td>
-                      </tr>
-                    ))}
-                    {masterControlData.length === 0 && (
-                      <tr>
-                        <td colSpan={9} className="p-8 text-center text-gray-400 italic">No budget data found for the selected filters.</td>
-                      </tr>
+          <div className="bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
+            <div className="p-6">
+              {reportSubTab === 'summary' && (
+                <div className="space-y-6">
+                  {/* SOE Abstract Summary Table */}
+                  {(userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || userRole === 'Division') && (
+                    <div className="mb-10">
+                      <div 
+                        className="flex justify-between items-center mb-4 cursor-pointer hover:bg-gray-50 p-2 rounded -mx-2"
+                        onClick={() => setShowSoeAbstract(!showSoeAbstract)}
+                      >
+                        <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+                          <Table className="w-4 h-4 text-emerald-600" /> SOE Abstract Summary
+                        </h4>
+                        <div className="flex items-center gap-4">
+                          {showSoeAbstract && (
+                            <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                              <div className="relative">
+                                <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                                <input
+                                  type="text"
+                                  placeholder="Search abstract..."
+                                  value={soeAbstractSearch}
+                                  onChange={(e) => setSoeAbstractSearch(e.target.value)}
+                                  className="pl-9 pr-4 py-1.5 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500 w-64"
+                                />
+                              </div>
+                              <button 
+                                className="p-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors shadow-sm"
+                                title="Search"
+                              >
+                                <Search className="w-4 h-4" />
+                              </button>
+                            </div>
+                          )}
+                          <button type="button" className="text-gray-500 hover:text-gray-700">
+                            {showSoeAbstract ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                          </button>
+                        </div>
+                      </div>
+                      
+                      {showSoeAbstract && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left border-collapse border border-gray-300">
+                            <thead>
+                              <tr className="bg-emerald-50 border-b border-gray-300">
+                                {abstractHeaders.map(h => <th key={h} className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {abstractRows.map((row, i) => (
+                                <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30 transition-colors">
+                                  <td className="p-1.5 text-[10px] border border-gray-300 font-medium text-gray-600">{row.hierarchy}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 text-right text-gray-700">₹{row.approvedBudget.toLocaleString()}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 text-right text-indigo-700">₹{row.receivedInTry.toLocaleString()}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 text-right text-amber-700 font-medium">₹{row.toBeAllocated.toLocaleString()}</td>
+                                  <td className="p-1.5 text-[10px] border border-gray-300 text-right text-purple-700 font-medium">₹{row.tryBalance.toLocaleString()}</td>
+                                  <td 
+                                    className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium cursor-pointer hover:underline"
+                                    onClick={() => setViewingSoeExp({ soeId: row.soeId, soeName: row.soeName, hierarchy: row.hierarchy })}
+                                    title="Click to view expenditure details"
+                                  >
+                                    ₹{row.expenditure.toLocaleString()}
+                                  </td>
+                                  <td className={`p-1.5 text-[10px] border border-gray-300 text-right font-bold ${row.remaining < 0 ? 'text-red-600 bg-red-50' : 'text-blue-700'}`}>
+                                    ₹{row.remaining.toLocaleString()}
+                                  </td>
+                                </tr>
+                              ))}
+                              {abstractRows.length === 0 && (
+                                <tr>
+                                  <td colSpan={9} className="p-4 text-center text-gray-500 border border-gray-300 text-xs">No abstract data available.</td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div className="mb-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+                    <div 
+                      className="flex items-center justify-between cursor-pointer group"
+                      onClick={() => setShowDetailedReport(!showDetailedReport)}
+                    >
+                      <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+                        <Table className="w-4 h-4 text-emerald-600" /> Detailed Budget Report
+                      </h4>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 group-hover:text-gray-600 transition-colors">
+                          {showDetailedReport ? 'Click to collapse' : 'Click to expand'}
+                        </span>
+                        <button type="button" className="p-1 rounded-full hover:bg-gray-100 text-gray-500 hover:text-gray-700 transition-all">
+                          {showDetailedReport ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {showDetailedReport && (
+                      <div className="overflow-x-auto mt-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                        <table className="w-full text-left border-collapse border border-gray-300">
+                          <thead>
+                            <tr className="bg-gray-100 border-b border-gray-300">
+                              {detailedHeaders.map(h => <th key={h} className="p-1.5 text-[10px] font-bold text-gray-700 border border-gray-300 uppercase tracking-tight">{h}</th>)}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {groupedData.map((row, i) => {
+                              let rowClass = "border-b border-gray-300 hover:bg-gray-50";
+                              let textClass = "text-[10px]";
+                              if (row.isTotal) {
+                                textClass = "text-[9px] uppercase tracking-tight";
+                                if (row.level === 'grand') rowClass = "bg-gray-800 text-white font-bold";
+                                else if (row.level === 'scheme') rowClass = "bg-amber-50 font-bold";
+                                else if (row.level === 'sector') rowClass = "bg-emerald-50 font-bold";
+                                else if (row.level === 'activity') rowClass = "bg-blue-50 font-bold";
+                                else if (row.level === 'subActivity') rowClass = "bg-gray-100 font-bold";
+                              }
+
+                              return (
+                                <tr key={i} className={rowClass}>
+                                  <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.range}</td>
+                                  <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.scheme}</td>
+                                  <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.sector}</td>
+                                  <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.activity}</td>
+                                  <td className={`p-1.5 border border-gray-300 whitespace-nowrap ${textClass}`}>{row.subActivity}</td>
+                                  <td className={`p-1.5 font-medium border border-gray-300 whitespace-nowrap ${textClass}`}>{row.soe}</td>
+                                  {!userRangeId && <td className={`p-1.5 text-right border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-gray-600'}`}>₹{row.totalBudget.toLocaleString()}</td>}
+                                  <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-emerald-700'}`}>₹{row.allocated.toLocaleString()}</td>
+                                  <td className={`p-1.5 text-right font-medium border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-red-700'}`}>₹{row.expenditure.toLocaleString()}</td>
+                                  <td className={`p-1.5 text-right font-bold border border-gray-300 whitespace-nowrap ${textClass} ${row.level === 'grand' ? 'text-white' : 'text-blue-700'}`}>₹{row.remaining.toLocaleString()}</td>
+                                </tr>
+                              );
+                            })}
+                            {groupedData.length === 0 && (
+                              <tr>
+                                <td colSpan={detailedHeaders.length} className="p-8 text-center text-gray-500 border border-gray-300">No data available for the selected filters.</td>
+                              </tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     )}
-                  </tbody>
-                </table>
-              </div>
-            </>
-          )}
+                  </div>
+                </div>
+              )}
+              {reportSubTab === 'allocation-expenditure' && renderAllocationExpenditureReport()}
+              {reportSubTab === 'ledger' && renderSchemeWiseLedger()}
+              {reportSubTab === 'master-control' && (
+                <>
+                  <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-emerald-50 p-3 rounded-lg border border-emerald-100">
+                      <p className="text-[10px] font-bold text-emerald-800 uppercase">Total Allocated</p>
+                      <p className="text-lg font-bold text-emerald-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.allocated, 0).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-red-50 p-3 rounded-lg border border-red-100">
+                      <p className="text-[10px] font-bold text-red-800 uppercase">Total Expenditure</p>
+                      <p className="text-lg font-bold text-red-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.expenditure, 0).toLocaleString()}</p>
+                    </div>
+                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-100">
+                      <p className="text-[10px] font-bold text-blue-800 uppercase">Total Balance</p>
+                      <p className="text-lg font-bold text-blue-700">₹{masterControlData.reduce((sum: any, r: any) => sum + r.balance, 0).toLocaleString()}</p>
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse border border-gray-300">
+                      <thead>
+                        <tr className="bg-emerald-50 border-b border-gray-300">
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Range</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Scheme</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sector</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Activity</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">Sub-Activity</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase">SOE</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Allocated</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Expenditure</th>
+                          <th className="p-1.5 text-[9px] font-bold text-emerald-900 border border-gray-300 uppercase text-right">Balance</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {masterControlData.map((row, i) => (
+                          <tr key={i} className="border-b border-gray-300 hover:bg-emerald-50/30">
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.rangeName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.schemeName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.sectorName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.activityName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-gray-600">{row.subActivityName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 font-bold text-gray-800">{row.soeName}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-right text-emerald-700 font-medium">₹{row.allocated.toLocaleString()}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-right text-red-700 font-medium">₹{row.expenditure.toLocaleString()}</td>
+                            <td className="p-1.5 text-[10px] border border-gray-300 text-right text-blue-700 font-bold">₹{row.balance.toLocaleString()}</td>
+                          </tr>
+                        ))}
+                        {masterControlData.length === 0 && (
+                          <tr>
+                            <td colSpan={9} className="p-8 text-center text-gray-400 italic">No budget data found for the selected filters.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+              {reportSubTab === 'tax-deduction' && renderTaxDeductionReport()}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -8629,7 +8995,7 @@ export default function App() {
                       <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>
                       {item.deductedAmount && (
                         <div className="text-[9px] text-blue-600 font-medium leading-tight mt-0.5">
-                          Deducted: ₹{item.deductedAmount.toLocaleString()} ({item.deductionType === 'TDS' ? 'TDS' : 'TDS on GST'})
+                          Deducted: ₹{Math.round(item.deductedAmount).toLocaleString()} ({item.deductionType === 'TDS' ? 'TDS' : 'TDS on GST'})
                         </div>
                       )}
                     </div>
@@ -8806,27 +9172,115 @@ export default function App() {
                         )}
                       </div>
                     </div>
-                    <div className="space-y-1">
-                      <label className="block text-[10px] font-bold text-gray-500 uppercase">Deduction (Optional)</label>
-                      <select 
-                        value={deductionType} 
-                        onChange={(e) => setDeductionType(e.target.value as any)}
-                        className="w-full p-2 border rounded text-sm"
-                      >
-                        <option value="None">No Deduction</option>
-                        <option value="TDS">TDS-8658-112-01 (2% &gt; 30k)</option>
-                        <option value="TDS_GST">TDS on GST-8658-101-08 (2% &gt; 250k)</option>
-                      </select>
-                      {deductionType !== 'None' && (
-                        <div className="text-[10px] text-blue-600 font-bold mt-1">
-                          Deducted Amount: ₹{(() => {
-                            const amt = selectedPayeesForExpense.length > 0 
-                              ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-                              : (parseFloat(expenseAmount) || 0);
-                            if (deductionType === 'TDS' && amt > 30000) return (amt * 0.02).toLocaleString();
-                            if (deductionType === 'TDS_GST' && amt > 250000) return (amt * 0.02).toLocaleString();
-                            return '0';
-                          })()}
+
+                    <div className="space-y-2">
+                      <label className="block text-[10px] font-bold text-gray-500 uppercase">Deductions (Optional)</label>
+                      <div className="flex flex-wrap gap-2">
+                        <label className="flex items-center gap-2 p-2 border rounded text-xs cursor-pointer hover:bg-gray-50">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedDeductions.includes('TDS')}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedDeductions([...selectedDeductions, 'TDS']);
+                              else setSelectedDeductions(selectedDeductions.filter(d => d !== 'TDS'));
+                            }}
+                          />
+                          <span>TDS (1% &gt; 30k)</span>
+                        </label>
+                        <label className="flex items-center gap-2 p-2 border rounded text-xs cursor-pointer hover:bg-gray-50">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedDeductions.includes('TDS_GST')}
+                            onChange={(e) => {
+                              if (e.target.checked) setSelectedDeductions([...selectedDeductions, 'TDS_GST']);
+                              else setSelectedDeductions(selectedDeductions.filter(d => d !== 'TDS_GST'));
+                            }}
+                          />
+                          <span>TDS on GST (2% &gt; 250k)</span>
+                        </label>
+                      </div>
+
+                      {(selectedDeductions.length > 0) && (
+                        <div className="bg-blue-50 p-2 rounded border border-blue-100 space-y-2">
+                          <table className="w-full text-[10px]">
+                            <thead>
+                              <tr className="text-gray-500 uppercase font-bold border-b border-blue-200">
+                                <th className="text-left pb-1">Type</th>
+                                <th className="text-right pb-1">Amount</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(() => {
+                                const amt = selectedPayeesForExpense.length > 0 
+                                  ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
+                                  : (parseFloat(expenseAmount) || 0);
+                                let totalDeduction = 0;
+                                return (
+                                  <>
+                                    {selectedDeductions.includes('TDS') && (
+                                      <tr>
+                                        <td className="py-1">TDS (1%)</td>
+                                        <td className="py-1 text-right font-bold">
+                                          ₹{(() => {
+                                            const d = amt > 30000 ? Math.round(amt * 0.01) : 0;
+                                            totalDeduction += d;
+                                            return d.toLocaleString();
+                                          })()}
+                                        </td>
+                                      </tr>
+                                    )}
+                                    {selectedDeductions.includes('TDS_GST') && (
+                                      <tr>
+                                        <td className="py-1">TDS on GST (2%)</td>
+                                        <td className="py-1 text-right font-bold">
+                                          ₹{(() => {
+                                            const d = amt > 250000 ? Math.round(amt * 0.02) : 0;
+                                            totalDeduction += d;
+                                            return d.toLocaleString();
+                                          })()}
+                                        </td>
+                                      </tr>
+                                    )}
+                                    <tr className="border-t border-blue-200 font-bold text-blue-700">
+                                      <td className="pt-1">Total Deduction</td>
+                                      <td className="pt-1 text-right">₹{totalDeduction.toLocaleString()}</td>
+                                    </tr>
+                                    <tr className="text-emerald-700 font-bold">
+                                      <td className="pt-1">Net Amount to Pay</td>
+                                      <td className="pt-1 text-right">₹{(amt - totalDeduction).toLocaleString()}</td>
+                                    </tr>
+                                  </>
+                                );
+                              })()}
+                            </tbody>
+                          </table>
+                          
+                          <div className="grid grid-cols-2 gap-2">
+                            {selectedDeductions.includes('TDS') && (
+                              <div>
+                                <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">PAN Number</label>
+                                <input 
+                                  type="text" 
+                                  value={panNumber}
+                                  onChange={(e) => setPanNumber(e.target.value.toUpperCase())}
+                                  placeholder="ABCDE1234F"
+                                  className="w-full p-1.5 border rounded text-xs"
+                                />
+                              </div>
+                            )}
+                            {selectedDeductions.includes('TDS_GST') && (
+                              <div>
+                                <label className="block text-[9px] font-bold text-gray-500 uppercase mb-1">GST Number</label>
+                                <input 
+                                  type="text" 
+                                  value={gstNumber}
+                                  onChange={(e) => setGstNumber(e.target.value.toUpperCase())}
+                                  placeholder="22AAAAA0000A1Z5"
+                                  className="w-full p-1.5 border rounded text-xs"
+                                />
+                              </div>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -9412,6 +9866,8 @@ export default function App() {
                   <input name="name" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.name : ''} placeholder="Payee Name" className="w-full p-2 border rounded" />
                   <input name="address" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.address : ''} placeholder="Address" className="w-full p-2 border rounded" />
                   <input name="accountNumber" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.accountNumber : ''} placeholder="Account Number" className="w-full p-2 border rounded" />
+                  <input name="panNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.panNumber : ''} placeholder="PAN Number (Optional)" className="w-full p-2 border rounded" />
+                  <input name="gstNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.gstNumber : ''} placeholder="GST Number (Optional)" className="w-full p-2 border rounded" />
                   {(isAdmin() || isDEO()) ? (
                     <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
                       <option value="">Select Range (Optional)</option>

@@ -79,13 +79,44 @@ service cloud.firestore {
 
     function isValidPayee(data) {
       return hasRequiredFields(['name', 'address', 'accountNumber', 'createdBy', 'createdAt', 'updatedAt']) &&
-             hasOnlyAllowedFields(['name', 'address', 'accountNumber', 'rangeId', 'createdBy', 'createdAt', 'updatedAt']) &&
+             hasOnlyAllowedFields(['name', 'address', 'accountNumber', 'panNumber', 'gstNumber', 'rangeId', 'createdBy', 'createdAt', 'updatedAt']) &&
              data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
              data.address is string && data.address.size() > 0 && data.address.size() < 500 &&
              data.accountNumber is string && data.accountNumber.size() > 0 && data.accountNumber.size() < 50 &&
+             (!('panNumber' in data) || data.panNumber is string) &&
+             (!('gstNumber' in data) || data.gstNumber is string) &&
              data.createdBy is string &&
              data.createdAt is number &&
              data.updatedAt is number;
+    }
+
+    function isValidExpenditure(data) {
+      return hasRequiredFields(['allocationId', 'soeId', 'amount', 'date', 'description', 'createdBy', 'status', 'createdAt', 'updatedAt']) &&
+             data.allocationId is string &&
+             data.soeId is string &&
+             data.amount is number &&
+             data.date is string &&
+             data.description is string &&
+             data.createdBy is string &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             data.createdAt is number &&
+             data.updatedAt is number &&
+             (!('isLocked' in data) || data.isLocked is bool) &&
+             (!('createdByRole' in data) || data.createdByRole is string) &&
+             (!('financialYear' in data) || data.financialYear is string) &&
+             (!('rangeId' in data) || data.rangeId is string) &&
+             (!('payeeId' in data) || data.payeeId == null || data.payeeId is string) &&
+             (!('payeeName' in data) || data.payeeName == null || data.payeeName is string) &&
+             (!('deductionType' in data) || data.deductionType in ['None', 'TDS', 'TDS_GST', 'Both']) &&
+             (!('deductions' in data) || data.deductions is list) &&
+             (!('deductedAmount' in data) || data.deductedAmount == null || data.deductedAmount is number) &&
+             (!('tdsAmount' in data) || data.tdsAmount == null || data.tdsAmount is number) &&
+             (!('tdsGstAmount' in data) || data.tdsGstAmount == null || data.tdsGstAmount is number) &&
+             (!('netAmount' in data) || data.netAmount is number) &&
+             (!('panNumber' in data) || data.panNumber == null || data.panNumber is string) &&
+             (!('gstNumber' in data) || data.gstNumber == null || data.gstNumber is string) &&
+             (!('updatedBy' in data) || data.updatedBy is string) &&
+             (!('updatedByRole' in data) || data.updatedByRole is string);
     }
 
     function isValidFeatureLock(data) {
@@ -189,8 +220,8 @@ service cloud.firestore {
 
     match /expenditures/{id} {
       allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data);
-      allow update: if isAuthenticated() && (
+      allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data) && isValidExpenditure(request.resource.data);
+      allow update: if isAuthenticated() && isValidExpenditure(request.resource.data) && (
         isAdmin() || 
         (isDEO() && !resource.data.isLocked) ||
         (resource.data.createdBy == request.auth.uid && resource.data.status == 'pending' && !resource.data.isLocked) ||
