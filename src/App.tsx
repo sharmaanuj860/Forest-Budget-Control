@@ -1254,6 +1254,9 @@ export default function App() {
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setLoginError('');
+    if (loginFY) {
+      setSelectedFY(loginFY);
+    }
     if (!navigator.onLine) {
       setLoginError('No internet connection. Please check your network.');
       return;
@@ -3206,6 +3209,138 @@ export default function App() {
     }
   };
 
+  const dataUrlToBlob = (dataUrl: string): Blob | null => {
+    try {
+      const parts = dataUrl.split(',');
+      if (parts.length < 2) return null;
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mime = mimeMatch ? mimeMatch[1] : 'application/pdf';
+      const bstr = atob(parts[1]);
+      let n = bstr.length;
+      const u8arr = new Uint8Array(n);
+      while (n--) {
+        u8arr[n] = bstr.charCodeAt(n);
+      }
+      return new Blob([u8arr], { type: mime });
+    } catch (e) {
+      console.error("Error converting data URL to blob:", e);
+      return null;
+    }
+  };
+
+  const readFileAsDataUrl = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = (err) => reject(err);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleViewFile = async (fileObj: { url?: string; fileData?: string; name?: string; type?: string }) => {
+    const fileSource = fileObj.fileData || fileObj.url;
+    if (!fileSource) {
+      showAlert("File data or link is missing.");
+      return;
+    }
+
+    if (fileSource.startsWith('data:')) {
+      const blob = dataUrlToBlob(fileSource);
+      if (blob) {
+        const blobUrl = URL.createObjectURL(blob);
+        const newWin = window.open(blobUrl, '_blank');
+        if (!newWin) {
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          a.target = '_blank';
+          a.click();
+        }
+        return;
+      }
+    }
+
+    if (fileSource.startsWith('http://') || fileSource.startsWith('https://')) {
+      try {
+        const response = await fetch(fileSource);
+        if (!response.ok) {
+          if (response.status === 402) {
+            showAlert("Firebase Storage payment required (Error 402: Storage billing account delinquent). Please delete and re-upload this file so it embeds directly.");
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        window.open(blobUrl, '_blank');
+      } catch (err) {
+        console.warn("Direct fetch failed, falling back to window.open:", err);
+        window.open(fileSource, '_blank');
+      }
+      return;
+    }
+
+    showAlert("Unable to open file.");
+  };
+
+  const handleDownloadFile = async (fileObj: { url?: string; fileData?: string; name?: string; type?: string }) => {
+    const fileSource = fileObj.fileData || fileObj.url;
+    if (!fileSource) {
+      showAlert("File data or link is missing.");
+      return;
+    }
+
+    const fileName = fileObj.name || 'document.pdf';
+
+    if (fileSource.startsWith('data:')) {
+      const blob = dataUrlToBlob(fileSource);
+      if (blob) {
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        return;
+      }
+    }
+
+    if (fileSource.startsWith('http://') || fileSource.startsWith('https://')) {
+      try {
+        const response = await fetch(fileSource);
+        if (!response.ok) {
+          if (response.status === 402) {
+            showAlert("Firebase Storage payment required (Error 402: Storage billing account delinquent). Please delete and re-upload this file so it embeds directly.");
+            return;
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      } catch (err) {
+        console.warn("Fetch download failed, opening direct link:", err);
+        const a = document.createElement('a');
+        a.href = fileSource;
+        a.download = fileName;
+        a.target = '_blank';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+      return;
+    }
+
+    showAlert("Unable to download file.");
+  };
+
   const handleBudgetFileUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'approved' | 'distributed') => {
     const files = e.target.files;
     if (!files || files.length === 0 || !selectedFY) return;
@@ -3221,107 +3356,102 @@ export default function App() {
     const fileList = Array.from(files);
     
     for (const file of fileList) {
-      // Reset status for this type
       setUploadStatus(prev => ({
         ...prev,
         [type]: { isUploading: true, progress: 0, fileName: file.name, transferred: 0, total: file.size, error: null }
       }));
 
       try {
-        const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
-        const storageRef = ref(storage, storagePath);
-        
-        console.log(`Starting ${type} upload to:`, storagePath);
-        
-        const uploadTask = uploadBytesResumable(storageRef, file);
+        let base64Data = '';
+        try {
+          base64Data = await readFileAsDataUrl(file);
+        } catch (readErr) {
+          console.error("Error reading file as data URL:", readErr);
+        }
 
-        await new Promise<void>((resolve, reject) => {
-          uploadTask.on('state_changed', 
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadStatus(prev => ({
-                ...prev,
-                [type]: { 
-                  ...prev[type], 
-                  progress, 
-                  transferred: snapshot.bytesTransferred, 
-                  total: snapshot.totalBytes 
-                }
-              }));
-            }, 
-            (error) => {
-              console.error(`${type} upload error:`, error);
-              let errorMsg = "Upload failed.";
-              if (error.code === 'storage/unauthorized') {
-                errorMsg = "Permission denied. Please check storage rules.";
-              } else if (error.code === 'storage/canceled') {
-                errorMsg = "Upload canceled.";
-              } else {
-                errorMsg = `Error: ${error.message}`;
-              }
-              
-              setUploadStatus(prev => ({
-                ...prev,
-                [type]: { ...prev[type], isUploading: false, error: errorMsg }
-              }));
-              showAlert(`${file.name}: ${errorMsg}`);
-              reject(error);
-            }, 
-            async () => {
-              try {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+        let downloadURL = base64Data;
 
-                const fileData: any = {
-                  name: file.name,
-                  url: downloadURL,
-                  schemeId: budgetFileSelection.schemeId,
-                  sectorId: budgetFileSelection.sectorId || '',
-                  type,
-                  uploadedBy: user?.uid,
-                  uploadedAt: Date.now(),
-                  fyId: activeFy.id,
-                  financialYear: activeFy.name
-                };
+        try {
+          const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
+          const storageRef = ref(storage, storagePath);
+          const uploadTask = uploadBytesResumable(storageRef, file);
 
-                if (type === 'approved') {
-                  await addDoc(collection(db, 'approvedBudgetFiles'), fileData);
-                } else {
-                  fileData.rangeId = budgetFileSelection.rangeId || '';
-                  await addDoc(collection(db, 'distributedBudgetFiles'), fileData);
-                }
-                
+          await new Promise<void>((resolve) => {
+            uploadTask.on('state_changed', 
+              (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
                 setUploadStatus(prev => ({
                   ...prev,
-                  [type]: { ...prev[type], isUploading: false, progress: 100 }
+                  [type]: { 
+                    ...prev[type], 
+                    progress, 
+                    transferred: snapshot.bytesTransferred, 
+                    total: snapshot.totalBytes 
+                  }
                 }));
-                
-                // Clear status after a delay
-                setTimeout(() => {
-                  setUploadStatus(prev => ({
-                    ...prev,
-                    [type]: { ...prev[type], progress: 0, fileName: '', transferred: 0, total: 0 }
-                  }));
-                }, 3000);
+              }, 
+              (error) => {
+                console.warn("Storage upload warning (using base64 fallback):", error);
                 resolve();
-              } catch (err) {
-                console.error("Error saving file metadata:", err);
-                showAlert(`${file.name}: File uploaded but failed to save record.`);
-                setUploadStatus(prev => ({
-                  ...prev,
-                  [type]: { ...prev[type], isUploading: false, error: "Failed to save record." }
-                }));
-                reject(err);
+              }, 
+              async () => {
+                try {
+                  const remoteUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                  downloadURL = remoteUrl;
+                } catch (e) {
+                  console.warn("Could not fetch remote URL, using base64 data:", e);
+                }
+                resolve();
               }
-            }
-          );
-        });
-      } catch (error) {
-        console.error("Upload initialization error:", error);
+            );
+          });
+        } catch (storageErr) {
+          console.warn("Storage upload error, saving base64 to Firestore:", storageErr);
+        }
+
+        const fileRecord: any = {
+          name: file.name,
+          url: downloadURL,
+          fileData: base64Data,
+          schemeId: budgetFileSelection.schemeId,
+          sectorId: budgetFileSelection.sectorId || '',
+          type,
+          uploadedBy: user?.uid,
+          uploadedAt: Date.now(),
+          fyId: activeFy.id,
+          financialYear: activeFy.name
+        };
+
+        if (type === 'approved') {
+          await addDoc(collection(db, 'approvedBudgetFiles'), fileRecord);
+        } else {
+          fileRecord.rangeId = budgetFileSelection.rangeId || '';
+          await addDoc(collection(db, 'distributedBudgetFiles'), fileRecord);
+        }
+        
+        setUploadStatus(prev => ({
+          ...prev,
+          [type]: { ...prev[type], isUploading: false, progress: 100 }
+        }));
+        
+        setTimeout(() => {
+          setUploadStatus(prev => ({
+            ...prev,
+            [type]: { ...prev[type], progress: 0, fileName: '', transferred: 0, total: 0 }
+          }));
+        }, 3000);
+      } catch (err) {
+        console.error("Error saving budget file:", err);
+        showAlert(`${file.name}: Failed to save file.`);
+        setUploadStatus(prev => ({
+          ...prev,
+          [type]: { ...prev[type], isUploading: false, error: "Failed to save file." }
+        }));
       }
     }
     
     showAlert(`${fileList.length} file(s) processed for ${type === 'approved' ? 'Approved' : 'Distributed'} budget.`);
-    e.target.value = ''; // Reset file input
+    e.target.value = '';
   };
 
   const handleBudgetFileDelete = async (file: BudgetFile) => {
@@ -3517,19 +3647,27 @@ export default function App() {
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex justify-end gap-2">
-                          <a
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="View/Download"
+                          <button
+                            type="button"
+                            onClick={() => handleViewFile(file)}
+                            className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                            title="View PDF"
                           >
                             <Eye className="w-4 h-4" />
-                          </a>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadFile(file)}
+                            className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
+                            title="Download PDF"
+                          >
+                            <Download className="w-4 h-4" />
+                          </button>
                           {userRole === 'admin' && (
                             <button
+                              type="button"
                               onClick={() => handleBudgetFileDelete(file)}
-                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                               title="Delete"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -5736,45 +5874,63 @@ export default function App() {
       }));
 
       try {
-        const storagePath = `notifications/${Date.now()}_${file.name}`;
-        const storageRef = ref(storage, storagePath);
-        const uploadTask = uploadBytesResumable(storageRef, file);
+        let base64Data = '';
+        try {
+          base64Data = await readFileAsDataUrl(file);
+        } catch (readErr) {
+          console.error("Error reading file:", readErr);
+        }
 
-        setUploadTasks(prev => ({ ...prev, [type]: uploadTask }));
+        let downloadURL = base64Data;
 
-        await new Promise<void>((resolve, reject) => {
-          uploadTask.on('state_changed',
-            (snapshot) => {
-              const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-              setUploadStatus(prev => ({
-                ...prev,
-                [type]: { ...prev[type], progress, transferred: snapshot.bytesTransferred, total: snapshot.totalBytes }
-              }));
-            },
-            (error) => {
-              setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, error: error.message } }));
-              reject(error);
-            },
-            async () => {
-              try {
-                const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
-                await addDoc(collection(db, 'notifications'), {
-                  name: file.name,
-                  url: downloadURL,
-                  type: file.type,
-                  createdAt: Date.now(),
-                  uploadedBy: user?.uid
-                });
-                setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, progress: 100 } }));
+        try {
+          const storagePath = `notifications/${Date.now()}_${file.name}`;
+          const storageRef = ref(storage, storagePath);
+          const uploadTask = uploadBytesResumable(storageRef, file);
+
+          setUploadTasks(prev => ({ ...prev, [type]: uploadTask }));
+
+          await new Promise<void>((resolve) => {
+            uploadTask.on('state_changed',
+              (snapshot) => {
+                const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                setUploadStatus(prev => ({
+                  ...prev,
+                  [type]: { ...prev[type], progress, transferred: snapshot.bytesTransferred, total: snapshot.totalBytes }
+                }));
+              },
+              (error) => {
+                console.warn("Storage upload warning (using embedded base64 fallback):", error);
                 resolve();
-              } catch (err) {
-                reject(err);
+              },
+              async () => {
+                try {
+                  const remoteUrl = await getDownloadURL(uploadTask.snapshot.ref);
+                  downloadURL = remoteUrl;
+                } catch (err) {
+                  console.warn("Could not get remote download URL:", err);
+                }
+                resolve();
               }
-            }
-          );
+            );
+          });
+        } catch (storageErr) {
+          console.warn("Storage upload bypassed, saving embedded file data:", storageErr);
+        }
+
+        await addDoc(collection(db, 'notifications'), {
+          name: file.name,
+          url: downloadURL,
+          fileData: base64Data,
+          type: file.type,
+          createdAt: Date.now(),
+          uploadedBy: user?.uid
         });
+
+        setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, progress: 100 } }));
       } catch (error) {
         console.error("Notification upload error:", error);
+        showAlert("Failed to upload notification file.");
       } finally {
         setUploadTasks(prev => {
           const newTasks = { ...prev };
@@ -5783,6 +5939,7 @@ export default function App() {
         });
       }
     }
+    e.target.value = '';
   };
 
   const handleDeleteNotification = async (notif: Notification) => {
@@ -5956,23 +6113,22 @@ export default function App() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end gap-2">
-                            <a 
-                              href={notif.url} 
-                              target="_blank" 
-                              rel="noopener noreferrer"
-                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                            <button 
+                              type="button"
+                              onClick={() => handleViewFile(notif)}
+                              className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors cursor-pointer"
                               title="View"
                             >
                               <Eye className="w-4 h-4" />
-                            </a>
-                            <a 
-                              href={notif.url} 
-                              download={notif.name}
-                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                            </button>
+                            <button 
+                              type="button"
+                              onClick={() => handleDownloadFile(notif)}
+                              className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
                               title="Download"
                             >
                               <Download className="w-4 h-4" />
-                            </a>
+                            </button>
                             {isAdmin() && (
                               <button 
                                 onClick={() => handleDeleteNotification(notif)}
@@ -8592,7 +8748,10 @@ export default function App() {
               </label>
               <select
                 value={loginFY}
-                onChange={(e) => setLoginFY(e.target.value)}
+                onChange={(e) => {
+                  setLoginFY(e.target.value);
+                  setSelectedFY(e.target.value);
+                }}
                 disabled={!loginEmail.toLowerCase().includes('admin') && loginEmail !== '' && !loginEmail.includes('sharmaanuj860')}
                 className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-semibold text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 cursor-pointer"
               >
@@ -8665,11 +8824,11 @@ export default function App() {
               <div className="flex items-center gap-1.5 bg-emerald-50 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-emerald-100">
                 <span className="text-xs md:text-sm font-semibold text-emerald-800">FY:</span>
                 <select 
-                  value={selectedFY} 
+                  value={fys.find(f => f.id === selectedFY || f.name === selectedFY)?.name || selectedFY} 
                   onChange={(e) => setSelectedFY(e.target.value)}
                   className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-xs md:text-sm"
                 >
-                  {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
+                  {fys.map(fy => <option key={fy.id} value={fy.name}>{fy.name}</option>)}
                 </select>
               </div>
             ) : (
