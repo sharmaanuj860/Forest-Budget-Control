@@ -100,6 +100,7 @@ type Notification = {
   createdAt: number;
   uploadedBy: string;
   description?: string;
+  targetRanges?: string[];
 };
 
 type Bill = {
@@ -121,6 +122,7 @@ type Payee = {
   name: string;
   address: string;
   accountNumber: string;
+  ifscCode?: string;
   panNumber?: string;
   gstNumber?: string;
   rangeId?: string;
@@ -288,13 +290,28 @@ const PayeeSelector = ({
 }) => {
   const [search, setSearch] = useState('');
   const [showResults, setShowResults] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowResults(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const filteredPayees = useMemo(() => {
     const lower = search.toLowerCase();
-    return payees.filter(p => 
+    const base = payees.filter(p => !selectedPayees.some(sp => sp.payeeId === p.id));
+    if (!search) return base;
+    return base.filter(p => 
       p.name.toLowerCase().includes(lower) || 
-      p.accountNumber.toLowerCase().includes(lower)
-    ).filter(p => !selectedPayees.some(sp => sp.payeeId === p.id));
+      p.accountNumber.toLowerCase().includes(lower) ||
+      p.panNumber?.toLowerCase().includes(lower) ||
+      p.gstNumber?.toLowerCase().includes(lower)
+    );
   }, [search, payees, selectedPayees]);
 
   const totalAmount = useMemo(() => 
@@ -302,9 +319,9 @@ const PayeeSelector = ({
   , [selectedPayees]);
 
   return (
-    <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+    <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200" ref={dropdownRef}>
       <div className="flex justify-between items-center">
-        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee Selection (Multiple Allowed)</label>
+        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee Selection</label>
         {availableBalance !== undefined && (
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-gray-500 uppercase">Available:</span>
@@ -313,23 +330,54 @@ const PayeeSelector = ({
         )}
       </div>
       
-      <div className="relative">
-        <div className="flex gap-2">
+      <div className="space-y-2">
+        <div className="flex flex-col sm:flex-row gap-2">
+          {/* Select Payee Dropdown */}
+          <select 
+            className="w-full sm:w-1/2 p-2 text-sm border rounded bg-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-gray-800"
+            value=""
+            onChange={(e) => {
+              if (e.target.value) {
+                onSelect(e.target.value);
+                setSearch('');
+                setShowResults(false);
+              }
+            }}
+          >
+            <option value="">-- Select Payee from List --</option>
+            {filteredPayees.map(p => {
+              const rName = ranges.find(r => r.id === p.rangeId)?.name || '';
+              return (
+                <option key={p.id} value={p.id}>
+                  {p.name} (A/C: {p.accountNumber}){rName ? ` - [${rName}]` : ''}
+                </option>
+              );
+            })}
+          </select>
+
+          {/* Search Input Box */}
           <div className="relative flex-1">
             <Search className="absolute left-2 top-2.5 w-4 h-4 text-gray-400" />
             <input 
               type="text" 
-              placeholder="Search payee by name or account..." 
+              placeholder="Or type to search payee..." 
               value={search}
               onChange={(e) => { setSearch(e.target.value); setShowResults(true); }}
               onFocus={() => setShowResults(true)}
-              className="w-full pl-8 p-2 text-sm border rounded bg-white"
+              className="w-full pl-8 pr-8 p-2 text-sm border rounded bg-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none transition-all"
             />
+            <button 
+              type="button"
+              onClick={() => setShowResults(!showResults)}
+              className="absolute right-2 top-2 text-gray-400 hover:text-gray-600"
+            >
+              {showResults ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </button>
           </div>
         </div>
 
-        {showResults && search && (
-          <div className="absolute z-10 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-48 overflow-y-auto">
+        {showResults && (
+          <div className="relative w-full mt-1 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto z-20">
             {filteredPayees.length > 0 ? (
               filteredPayees.map(p => (
                 <button
@@ -340,14 +388,26 @@ const PayeeSelector = ({
                     setSearch('');
                     setShowResults(false);
                   }}
-                  className="w-full text-left px-4 py-2 text-sm hover:bg-emerald-50 border-b last:border-0"
+                  className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 border-b last:border-0 group transition-colors"
                 >
-                  <div className="font-medium">{p.name}</div>
-                  <div className="text-[10px] text-gray-500">{p.accountNumber} | {ranges.find(r => r.id === p.rangeId)?.name || 'N/A'}</div>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="font-bold text-gray-800">{p.name}</div>
+                      <div className="text-[10px] text-gray-500 font-mono">A/C: {p.accountNumber}</div>
+                      <div className="flex gap-2 mt-0.5">
+                        {p.ifscCode && <span className="text-[9px] bg-blue-50 px-1 rounded text-blue-700">IFSC: {p.ifscCode}</span>}
+                        {p.panNumber && <span className="text-[9px] bg-gray-100 px-1 rounded text-gray-600">PAN: {p.panNumber}</span>}
+                        {p.gstNumber && <span className="text-[9px] bg-gray-100 px-1 rounded text-gray-600">GST: {p.gstNumber}</span>}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[9px] font-bold text-emerald-600 truncate max-w-[80px]">{ranges.find(r => r.id === p.rangeId)?.name || 'N/A'}</div>
+                    </div>
+                  </div>
                 </button>
               ))
             ) : (
-              <div className="px-4 py-2 text-sm text-gray-500 italic">No payees found</div>
+              <div className="px-4 py-3 text-sm text-gray-500 italic text-center">No matching payees available</div>
             )}
           </div>
         )}
@@ -475,7 +535,9 @@ export default function App() {
 
   // --- State ---
   const [fys, setFys] = useState<FinancialYear[]>([]);
-  const [selectedFY, setSelectedFY] = useState<string>('2025-26');
+  const [selectedFY, setSelectedFY] = useState<string>('2026-27');
+  const [loginFY, setLoginFY] = useState<string>('2026-27');
+  const [isFyHiddenForUsers, setIsFyHiddenForUsers] = useState<boolean>(false);
   const [ranges, setRanges] = useState<Range[]>([]);
   const [schemes, setSchemes] = useState<Scheme[]>([]);
   const [sectors, setSectors] = useState<Sector[]>([]);
@@ -1237,6 +1299,18 @@ export default function App() {
     }
     return null;
   }, [userRole, ranges]);
+
+  const filteredPayeesList = useMemo(() => {
+    if (!userRole) return payees;
+    const roleLower = userRole.toLowerCase();
+    if (roleLower === 'admin' || roleLower === 'deo' || roleLower === 'da' || roleLower === 'approver') {
+      return payees;
+    }
+    if (userRangeId) {
+      return payees.filter(p => !p.rangeId || p.rangeId === userRangeId || p.createdBy === user?.uid);
+    }
+    return payees;
+  }, [payees, userRole, userRangeId, user?.uid]);
 
   const isAdmin = () => userRole === 'admin';
   const isDEO = () => userRole === 'deo';
@@ -4475,9 +4549,16 @@ export default function App() {
       });
     }
 
+    const isFormVisible = (
+      userRole === 'admin' || 
+      userRole === 'deo' || 
+      ((title === 'Expenditure' || title === 'Bill' || title === 'Payee') && userRole !== 'approver' && userRole !== 'DA') || 
+      (editingItem?.type === title && (userRole === 'admin' || userRole === 'deo'))
+    );
+
     return (
     <div className={`grid grid-cols-1 ${isFullScreen ? '' : 'lg:grid-cols-4'} gap-6 items-start relative`}>
-      {(userRole === 'admin' || userRole === 'deo' || ((title === 'Expenditure' || title === 'Allocation' || title === 'Bill' || title === 'Payee') && (userRole !== 'approver' && userRole !== 'DA')) || (editingItem?.type === title)) && !isTableFullScreen && (
+      {isFormVisible && !isTableFullScreen && (
         <div className={`bg-white p-4 rounded-2xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
@@ -4545,7 +4626,7 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${isTableFullScreen ? 'fixed inset-0 z-[60] bg-white p-6 overflow-y-auto' : (isFullScreen ? 'hidden' : ((userRole === 'admin' || userRole === 'deo' || (title === 'Expenditure' && userRole !== 'approver')) ? 'lg:col-span-3' : 'lg:col-span-4'))}`}>
+      <div className={`space-y-6 ${isTableFullScreen ? 'fixed inset-0 z-[60] bg-white p-6 overflow-y-auto' : (isFullScreen ? 'hidden' : (isFormVisible ? 'lg:col-span-3' : 'lg:col-span-4'))}`}>
         {extraContent}
         <div className={`bg-white ${isTableFullScreen ? '' : 'p-4 rounded-2xl shadow-sm border border-gray-100'}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-3">
@@ -5518,21 +5599,22 @@ export default function App() {
     const name = e.target.name.value;
     const address = e.target.address.value;
     const accountNumber = e.target.accountNumber.value;
+    const ifscCode = e.target.ifscCode?.value || '';
     const panNumber = e.target.panNumber?.value || '';
     const gstNumber = e.target.gstNumber?.value || '';
-    const rangeId = e.target.rangeId.value;
+    const rangeId = e.target.rangeId?.value || null;
 
     try {
       if (editingItem?.type === 'Payee') {
         await updateDoc(doc(db, 'payees', editingItem.item.id), {
-          name, address, accountNumber, panNumber, gstNumber, rangeId: rangeId || null,
+          name, address, accountNumber, ifscCode, panNumber, gstNumber, rangeId: rangeId || null,
           updatedAt: Date.now()
         });
         setEditingItem(null);
         e.target.reset();
       } else {
         await addDoc(collection(db, 'payees'), {
-          name, address, accountNumber, panNumber, gstNumber, rangeId: rangeId || null,
+          name, address, accountNumber, ifscCode, panNumber, gstNumber, rangeId: rangeId || null,
           createdBy: user.uid,
           createdAt: Date.now(),
           updatedAt: Date.now()
@@ -5542,6 +5624,102 @@ export default function App() {
       showAlert(`Payee ${editingItem?.type === 'Payee' ? 'updated' : 'added'} successfully.`);
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Payee' ? OperationType.UPDATE : OperationType.CREATE, 'payees');
+    }
+  };
+
+  const downloadPayeesPDF = () => {
+    try {
+      const doc = new jsPDF('landscape');
+      doc.setFontSize(16);
+      doc.text('Forest Budget Control System - Payee Details', 14, 15);
+      doc.setFontSize(10);
+      doc.text(`Role / Range: ${userRole || 'All'} | Date: ${new Date().toLocaleDateString('en-IN')}`, 14, 22);
+
+      const tableData = filteredPayeesList.map((p, index) => [
+        index + 1,
+        p.name || '',
+        p.address || '',
+        p.accountNumber || '',
+        p.ifscCode || 'N/A',
+        p.panNumber || 'N/A',
+        p.gstNumber || 'N/A',
+        ranges.find(r => r.id === p.rangeId)?.name || 'N/A'
+      ]);
+
+      autoTable(doc, {
+        startY: 28,
+        head: [['S.No', 'Payee Name', 'Address', 'Account No', 'IFSC Code', 'PAN No', 'GST No', 'Range']],
+        body: tableData,
+        theme: 'grid',
+        headStyles: { fillColor: [0, 77, 64] },
+        styles: { fontSize: 8 }
+      });
+
+      doc.save(`Payees_List_${userRole || 'All'}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error("PDF export error:", err);
+      showAlert("Failed to export PDF.");
+    }
+  };
+
+  const downloadPayeesWord = () => {
+    try {
+      const payeeData = filteredPayeesList;
+      let html = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head><title>Payee List</title>
+        <style>
+          body { font-family: Arial, sans-serif; }
+          table { border-collapse: collapse; width: 100%; }
+          th, td { border: 1px solid #000; padding: 6px 8px; text-align: left; font-size: 10pt; }
+          th { background-color: #004d40; color: #ffffff; }
+          h2 { color: #004d40; }
+        </style>
+        </head>
+        <body>
+          <h2>Forest Budget Control System - Payee Details</h2>
+          <p><b>Role / Range:</b> ${userRole || 'All'} | <b>Date:</b> ${new Date().toLocaleDateString('en-IN')}</p>
+          <table>
+            <thead>
+              <tr>
+                <th>S.No</th>
+                <th>Payee Name</th>
+                <th>Address</th>
+                <th>Account Number</th>
+                <th>IFSC Code</th>
+                <th>PAN Number</th>
+                <th>GST Number</th>
+                <th>Range</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${payeeData.map((p, index) => `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td>${p.name || ''}</td>
+                  <td>${p.address || ''}</td>
+                  <td>${p.accountNumber || ''}</td>
+                  <td>${p.ifscCode || 'N/A'}</td>
+                  <td>${p.panNumber || 'N/A'}</td>
+                  <td>${p.gstNumber || 'N/A'}</td>
+                  <td>${ranges.find(r => r.id === p.rangeId)?.name || 'N/A'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </body>
+        </html>
+      `;
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Payees_List_${userRole || 'All'}_${new Date().toISOString().split('T')[0]}.doc`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Word export error:", err);
+      showAlert("Failed to export Word document.");
     }
   };
 
@@ -5627,10 +5805,20 @@ export default function App() {
   };
 
   const renderNotificationsTab = () => {
-    const filteredNotifications = notifications.filter(n => 
-      n.name.toLowerCase().includes(notifSearchTerm.toLowerCase()) ||
-      (n.description || '').toLowerCase().includes(notifSearchTerm.toLowerCase())
-    );
+    const filteredNotifications = notifications.filter(n => {
+      // Visibility Check for non-admins
+      if (userRole !== 'admin' && userRole !== 'deo' && userRole !== 'approver' && userRole !== 'DA') {
+        if (n.targetRanges && n.targetRanges.length > 0 && !n.targetRanges.includes('All')) {
+          const userRangeObj = ranges.find(r => r.id === userRangeId);
+          const matches = n.targetRanges.includes(userRole || '') ||
+                          (userRangeId && n.targetRanges.includes(userRangeId)) ||
+                          (userRangeObj && n.targetRanges.includes(userRangeObj.name));
+          if (!matches) return false;
+        }
+      }
+      return n.name.toLowerCase().includes(notifSearchTerm.toLowerCase()) ||
+             (n.description || '').toLowerCase().includes(notifSearchTerm.toLowerCase());
+    });
 
     const paginatedNotifications = notifItemsPerPage === 'All' 
       ? filteredNotifications 
@@ -5700,6 +5888,7 @@ export default function App() {
                   <tr className="bg-gray-50/50">
                     <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">File Name</th>
                     <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">Upload Date</th>
+                    <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b">Visible To (Ranges)</th>
                     <th className="px-4 py-3 text-[10px] font-bold text-gray-500 uppercase tracking-wider border-b text-right">Actions</th>
                   </tr>
                 </thead>
@@ -5717,6 +5906,53 @@ export default function App() {
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-500">
                           {new Date(notif.createdAt).toLocaleString()}
+                        </td>
+                        <td className="px-4 py-3">
+                          {isAdmin() ? (
+                            <div className="flex flex-wrap gap-1 max-w-xs">
+                              {['All', 'Narag', 'Sarahan', 'Rajgarh', 'Habban', 'Division'].map(rangeName => {
+                                const currentRanges = notif.targetRanges || ['All'];
+                                const isChecked = currentRanges.includes(rangeName);
+                                return (
+                                  <button
+                                    key={rangeName}
+                                    type="button"
+                                    onClick={async () => {
+                                      let updated: string[];
+                                      if (rangeName === 'All') {
+                                        updated = isChecked ? [] : ['All'];
+                                      } else {
+                                        let filtered = currentRanges.filter(r => r !== 'All');
+                                        if (isChecked) {
+                                          updated = filtered.filter(r => r !== rangeName);
+                                        } else {
+                                          updated = [...filtered, rangeName];
+                                        }
+                                        if (updated.length === 0) updated = ['All'];
+                                      }
+                                      try {
+                                        await updateDoc(doc(db, 'notifications', notif.id), { targetRanges: updated });
+                                      } catch (e) {
+                                        console.error("Error updating notification target ranges:", e);
+                                      }
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold transition-all border ${
+                                      isChecked 
+                                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300' 
+                                        : 'bg-gray-100 text-gray-400 border-gray-200 hover:bg-gray-200'
+                                    }`}
+                                    title={`Click to toggle visibility for ${rangeName}`}
+                                  >
+                                    {rangeName}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold text-emerald-700">
+                              {(notif.targetRanges && notif.targetRanges.length > 0) ? notif.targetRanges.join(', ') : 'All Ranges'}
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-3 text-right">
                           <div className="flex justify-end gap-2">
@@ -8344,6 +8580,33 @@ export default function App() {
                 className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none"
               />
             </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1 flex justify-between items-center">
+                <span>Financial Year (FY)</span>
+                {loginEmail.toLowerCase().includes('admin') || loginEmail.includes('sharmaanuj860') ? (
+                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">Admin Editable</span>
+                ) : (
+                  <span className="text-[10px] text-gray-500 font-medium">Default: 2026-27 (Locked)</span>
+                )}
+              </label>
+              <select
+                value={loginFY}
+                onChange={(e) => setLoginFY(e.target.value)}
+                disabled={!loginEmail.toLowerCase().includes('admin') && loginEmail !== '' && !loginEmail.includes('sharmaanuj860')}
+                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-semibold text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 cursor-pointer"
+              >
+                {fys.length > 0 ? (
+                  fys.map(f => <option key={f.id} value={f.name}>{f.name}</option>)
+                ) : (
+                  <>
+                    <option value="2026-27">2026-27</option>
+                    <option value="2025-26">2025-26</option>
+                    <option value="2024-25">2024-25</option>
+                  </>
+                )}
+              </select>
+            </div>
             
             <div className="flex justify-between items-center">
             </div>
@@ -8398,16 +8661,26 @@ export default function App() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2 md:gap-3 justify-between md:justify-end">
-            <div className="flex items-center gap-1.5 bg-emerald-50 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-emerald-100">
-              <span className="text-xs md:text-sm font-semibold text-emerald-800">FY:</span>
-              <select 
-                value={selectedFY} 
-                onChange={(e) => setSelectedFY(e.target.value)}
-                className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-xs md:text-sm"
-              >
-                {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
-              </select>
-            </div>
+            {isAdmin() ? (
+              <div className="flex items-center gap-1.5 bg-emerald-50 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-emerald-100">
+                <span className="text-xs md:text-sm font-semibold text-emerald-800">FY:</span>
+                <select 
+                  value={selectedFY} 
+                  onChange={(e) => setSelectedFY(e.target.value)}
+                  className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-xs md:text-sm"
+                >
+                  {fys.map(fy => <option key={fy.id} value={fy.id}>{fy.name}</option>)}
+                </select>
+              </div>
+            ) : (
+              !isFyHiddenForUsers && (
+                <div className="flex items-center gap-1.5 bg-gray-100 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200" title="Financial Year is locked for standard users">
+                  <Lock className="w-3.5 h-3.5 text-gray-500" />
+                  <span className="text-xs md:text-sm font-semibold text-gray-600">FY:</span>
+                  <span className="text-xs md:text-sm font-bold text-gray-800">{fys.find(f => f.id === selectedFY || f.name === selectedFY)?.name || selectedFY}</span>
+                </div>
+              )
+            )}
 
             <div className="flex items-center gap-2 w-full md:w-auto">
                 {activeTab !== 'Dashboard' && (
@@ -9170,7 +9443,7 @@ export default function App() {
                           <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee</label>
                           <select name="payeeId" defaultValue={editingItem.item.payeeId || ''} className="w-full p-2 border rounded text-sm">
                             <option value="">Select Payee (Optional)</option>
-                            {payees.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
+                            {filteredPayeesList.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
                           </select>
                         </div>
                         <div className="space-y-1">
@@ -9181,7 +9454,7 @@ export default function App() {
                     ) : (
                       <div className="space-y-2">
                         <PayeeSelector 
-                          payees={payees}
+                          payees={filteredPayeesList}
                           selectedPayees={selectedPayeesForExpense}
                           onSelect={(payeeId) => setSelectedPayeesForExpense([...selectedPayeesForExpense, { payeeId, amount: '' }])}
                           onRemove={(payeeId) => setSelectedPayeesForExpense(selectedPayeesForExpense.filter(p => p.payeeId !== payeeId))}
@@ -9903,53 +10176,82 @@ export default function App() {
               )
             })()}
 
-            {expenditureSubTab === 'payees' && (userRole === 'admin' || userRole === 'deo' || userRangeId) && (
-              renderSimpleManager(
-                'Payee',
-                payees,
-                [
-                  { key: 'name', label: 'Name', searchableText: (val) => val },
-                  { key: 'address', label: 'Address', searchableText: (val) => val },
-                  { key: 'accountNumber', label: 'Account Number', searchableText: (val) => val },
-                  { 
-                    key: 'rangeId', 
-                    label: 'Range', 
-                    searchableText: (val) => ranges.find(r => r.id === val)?.name || 'N/A',
-                    render: (val) => ranges.find(r => r.id === val)?.name || <span className="text-gray-400 italic">Not Specified</span>
-                  }
-                ],
-                handleAddPayee,
-                (id) => handleDelete('payees', id),
-                <>
-                  <input name="name" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.name : ''} placeholder="Payee Name" className="w-full p-2 border rounded" />
-                  <input name="address" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.address : ''} placeholder="Address" className="w-full p-2 border rounded" />
-                  <input name="accountNumber" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.accountNumber : ''} placeholder="Account Number" className="w-full p-2 border rounded" />
-                  <input name="panNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.panNumber : ''} placeholder="PAN Number (Optional)" className="w-full p-2 border rounded" />
-                  <input name="gstNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.gstNumber : ''} placeholder="GST Number (Optional)" className="w-full p-2 border rounded" />
-                  {(isAdmin() || isDEO()) ? (
-                    <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
-                      <option value="">Select Range (Optional)</option>
-                      {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                    </select>
-                  ) : (
-                    <input type="hidden" name="rangeId" value={userRangeId || ''} />
-                  )}
-                </>,
-                (item) => setEditingItem({ type: 'Payee', item }),
-                (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId),
-                undefined,
-                undefined,
-                false,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                undefined,
-                payeeSearchTerm,
-                setPayeeSearchTerm
-              )
+            {expenditureSubTab === 'payees' && (userRole === 'admin' || userRole === 'deo' || userRole === 'approver' || userRole === 'DA' || userRangeId) && (
+              <div className="space-y-4">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 rounded-xl border border-gray-200 shadow-sm gap-3">
+                  <div>
+                    <h3 className="text-base font-bold text-gray-800">Payee Directory & Account Exports</h3>
+                    <p className="text-xs text-gray-500">Download payee account, IFSC code, PAN, and GST details for your logged-in range/role.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={downloadPayeesPDF}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                    >
+                      <Download className="w-4 h-4" /> Export PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={downloadPayeesWord}
+                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                    >
+                      <FileText className="w-4 h-4" /> Export Word (.doc)
+                    </button>
+                  </div>
+                </div>
+
+                {renderSimpleManager(
+                  'Payee',
+                  filteredPayeesList,
+                  [
+                    { key: 'name', label: 'Name', searchableText: (val) => val },
+                    { key: 'address', label: 'Address', searchableText: (val) => val },
+                    { key: 'accountNumber', label: 'Account Number', searchableText: (val) => val },
+                    { key: 'ifscCode', label: 'IFSC Code', searchableText: (val) => val || 'N/A', render: (val) => val || <span className="text-gray-400 italic">N/A</span> },
+                    { key: 'panNumber', label: 'PAN Number', searchableText: (val) => val || 'N/A', render: (val) => val || <span className="text-gray-400 italic">N/A</span> },
+                    { key: 'gstNumber', label: 'GST Number', searchableText: (val) => val || 'N/A', render: (val) => val || <span className="text-gray-400 italic">N/A</span> },
+                    { 
+                      key: 'rangeId', 
+                      label: 'Range', 
+                      searchableText: (val) => ranges.find(r => r.id === val)?.name || 'N/A',
+                      render: (val) => ranges.find(r => r.id === val)?.name || <span className="text-gray-400 italic">Not Specified</span>
+                    }
+                  ],
+                  handleAddPayee,
+                  (id) => handleDelete('payees', id),
+                  <>
+                    <input name="name" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.name : ''} placeholder="Payee Name" className="w-full p-2 border rounded" />
+                    <input name="address" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.address : ''} placeholder="Address" className="w-full p-2 border rounded" />
+                    <input name="accountNumber" type="text" required defaultValue={editingItem?.type === 'Payee' ? editingItem.item.accountNumber : ''} placeholder="Account Number" className="w-full p-2 border rounded" />
+                    <input name="ifscCode" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.ifscCode : ''} placeholder="IFSC Code (Optional)" className="w-full p-2 border rounded" />
+                    <input name="panNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.panNumber : ''} placeholder="PAN Number (Optional)" className="w-full p-2 border rounded" />
+                    <input name="gstNumber" type="text" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.gstNumber : ''} placeholder="GST Number (Optional)" className="w-full p-2 border rounded" />
+                    {(isAdmin() || isDEO()) ? (
+                      <select name="rangeId" defaultValue={editingItem?.type === 'Payee' ? editingItem.item.rangeId : ''} className="w-full p-2 border rounded">
+                        <option value="">Select Range (Optional)</option>
+                        {ranges.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
+                      </select>
+                    ) : (
+                      <input type="hidden" name="rangeId" value={userRangeId || ''} />
+                    )}
+                  </>,
+                  (item) => setEditingItem({ type: 'Payee', item }),
+                  (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId),
+                  undefined,
+                  undefined,
+                  false,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  undefined,
+                  payeeSearchTerm,
+                  setPayeeSearchTerm
+                )}
+              </div>
             )}
           </div>
         )}
