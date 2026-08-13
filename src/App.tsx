@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell, MoveHorizontal } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -331,10 +331,10 @@ const PayeeSelector = ({
       </div>
       
       <div className="space-y-2">
-        <div className="flex flex-col sm:flex-row gap-2">
+        <div className="flex flex-col gap-2">
           {/* Select Payee Dropdown */}
           <select 
-            className="w-full sm:w-1/2 p-2 text-sm border rounded bg-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-gray-800"
+            className="w-full p-2 text-sm border rounded bg-white shadow-sm focus:ring-2 focus:ring-emerald-500 outline-none font-medium text-gray-800"
             value=""
             onChange={(e) => {
               if (e.target.value) {
@@ -348,7 +348,7 @@ const PayeeSelector = ({
             {filteredPayees.map(p => {
               const rName = ranges.find(r => r.id === p.rangeId)?.name || '';
               return (
-                <option key={p.id} value={p.id}>
+                <option key={p.id} value={p.id} title={`${p.name} (A/C: ${p.accountNumber})`}>
                   {p.name} (A/C: {p.accountNumber}){rName ? ` - [${rName}]` : ''}
                 </option>
               );
@@ -499,6 +499,7 @@ export default function App() {
   const [soeAbstractSearch, setSoeAbstractSearch] = useState('');
   const [showAllRange, setShowAllRange] = useState(false);
   const [isFormExpanded, setIsFormExpanded] = useState(window.innerWidth > 1024);
+  const [formWidth, setFormWidth] = useState<'normal' | 'wide' | 'extra'>(() => (localStorage.getItem('fbc_form_width') as 'normal' | 'wide' | 'extra') || 'wide');
   const [isSoeTrackerExpanded, setIsSoeTrackerExpanded] = useState(false);
   const [showMobileReportSearch, setShowMobileReportSearch] = useState(false);
   const [showReconSummary, setShowReconSummary] = useState(false);
@@ -4374,12 +4375,32 @@ export default function App() {
       return matchesSearch && matchesScheme && matchesSector && matchesActivity && matchesSubActivity && matchesSoeName && matchesRange;
     });
 
+    const soeFormSpan = formWidth === 'extra' ? 'lg:col-span-6' : formWidth === 'wide' ? 'lg:col-span-5' : 'lg:col-span-4';
+    const soeTableSpan = formWidth === 'extra' ? 'lg:col-span-6' : formWidth === 'wide' ? 'lg:col-span-7' : 'lg:col-span-8';
+
     return (
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-1">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className={soeFormSpan}>
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 sticky top-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Add SOE Head</h3>
+            <div className="flex items-center justify-between mb-4 pb-2 border-b">
+              <div className="flex items-center gap-2">
+                <h3 className="text-lg font-semibold">Add SOE Head</h3>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextWidth = formWidth === 'normal' ? 'wide' : formWidth === 'wide' ? 'extra' : 'normal';
+                    setFormWidth(nextWidth);
+                    localStorage.setItem('fbc_form_width', nextWidth);
+                  }}
+                  className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 hover:bg-gray-100 rounded text-gray-700 text-[11px] font-bold border border-gray-200 bg-gray-50 transition-colors ml-1"
+                  title="Form Size: Click to cycle between Standard (33%), Wide (42%), and Extra Wide (50%)"
+                >
+                  <MoveHorizontal className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="text-[10px] text-gray-700 whitespace-nowrap">
+                    {formWidth === 'wide' ? 'Width: 42%' : formWidth === 'extra' ? 'Width: 50%' : 'Width: 33%'}
+                  </span>
+                </button>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={() => setIsFormExpanded(!isFormExpanded)} className="lg:hidden">
                   {isFormExpanded ? <ChevronUp /> : <ChevronDown />}
@@ -4432,7 +4453,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="lg:col-span-3 space-y-4">
+        <div className={`${soeTableSpan} space-y-4`}>
           <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 space-y-4">
             <div className="flex items-center gap-4">
               <div className="relative flex-1">
@@ -4694,15 +4715,35 @@ export default function App() {
       (editingItem?.type === title && (userRole === 'admin' || userRole === 'deo'))
     );
 
+    const formColSpanClass = isFullScreen
+      ? 'lg:col-span-12 z-50 fixed inset-0 m-4 overflow-y-auto'
+      : formWidth === 'extra'
+        ? 'lg:col-span-6 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'
+        : formWidth === 'wide'
+          ? 'lg:col-span-5 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'
+          : 'lg:col-span-4 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto';
+
+    const tableColSpanClass = isTableFullScreen
+      ? 'fixed inset-0 z-[60] bg-white p-6 overflow-y-auto'
+      : isFullScreen
+        ? 'hidden'
+        : !isFormVisible
+          ? 'lg:col-span-12'
+          : formWidth === 'extra'
+            ? 'lg:col-span-6'
+            : formWidth === 'wide'
+              ? 'lg:col-span-7'
+              : 'lg:col-span-8';
+
     return (
-    <div className={`grid grid-cols-1 ${isFullScreen ? '' : 'lg:grid-cols-4'} gap-6 items-start relative`}>
+    <div className={`grid grid-cols-1 ${isFullScreen ? '' : 'lg:grid-cols-12'} gap-6 items-start relative`}>
       {isFormVisible && !isTableFullScreen && (
-        <div className={`bg-white p-4 rounded-2xl shadow-sm border border-gray-100 ${isFullScreen ? 'lg:col-span-4 z-50 fixed inset-0 m-4 overflow-y-auto' : 'lg:col-span-1 lg:sticky lg:top-6 max-h-[calc(100vh-120px)] overflow-y-auto'} custom-scrollbar transition-all duration-300`}>
+        <div className={`bg-white p-4 rounded-2xl shadow-sm border border-gray-100 ${formColSpanClass} custom-scrollbar transition-all duration-300`}>
           <div 
             className="flex justify-between items-center mb-2 border-b pb-1.5 cursor-pointer hover:bg-gray-50 -mx-3 px-3 pt-0.5" 
             onClick={() => setIsFormExpanded(!isFormExpanded)}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <h3 className="text-sm font-semibold">
                 {editingItem?.type === title ? `Edit ${title}` : `Add ${title}`}
               </h3>
@@ -4714,12 +4755,29 @@ export default function App() {
                   New
                 </button>
               )}
+              {/* Form Width Controls */}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const nextWidth = formWidth === 'normal' ? 'wide' : formWidth === 'wide' ? 'extra' : 'normal';
+                  setFormWidth(nextWidth);
+                  localStorage.setItem('fbc_form_width', nextWidth);
+                }}
+                className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 hover:bg-gray-100 rounded text-gray-700 text-[11px] font-bold border border-gray-200 bg-gray-50 transition-colors"
+                title="Form Size: Click to switch between Standard (33%), Wide (42%), and Extra Wide (50%)"
+              >
+                <MoveHorizontal className="w-3.5 h-3.5 text-emerald-600" />
+                <span className="text-[10px] text-gray-700 whitespace-nowrap">
+                  {formWidth === 'wide' ? 'Width: 42%' : formWidth === 'extra' ? 'Width: 50%' : 'Width: 33%'}
+                </span>
+              </button>
               {setIsFullScreen && (
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); setIsFullScreen(!isFullScreen); }}
                   className="p-1 hover:bg-gray-100 rounded text-gray-500"
-                  title={isFullScreen ? "Exit Full Screen" : "Full Screen"}
+                  title={isFullScreen ? "Exit Full Screen" : "Full Screen Modal"}
                 >
                   {isFullScreen ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
                 </button>
@@ -4764,7 +4822,7 @@ export default function App() {
           </div>
         </div>
       )}
-      <div className={`space-y-6 ${isTableFullScreen ? 'fixed inset-0 z-[60] bg-white p-6 overflow-y-auto' : (isFullScreen ? 'hidden' : (isFormVisible ? 'lg:col-span-3' : 'lg:col-span-4'))}`}>
+      <div className={`space-y-6 ${tableColSpanClass}`}>
         {extraContent}
         <div className={`bg-white ${isTableFullScreen ? '' : 'p-4 rounded-2xl shadow-sm border border-gray-100'}`}>
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4 border-b pb-3">
