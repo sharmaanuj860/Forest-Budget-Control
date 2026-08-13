@@ -283,5 +283,9 @@ service cloud.firestore {
       allow get, list: if isAuthenticated();
       allow create, update, delete: if isAdmin();
     }
+
+    match /memos/{id} {
+      allow read, create, update, delete: if isAuthenticated();
+    }
   }
 }

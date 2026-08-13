@@ -267,6 +267,38 @@
         "fyId": { "type": "string", "description": "ID of the financial year" }
       },
       "required": ["name", "url", "schemeId", "rangeId", "uploadedBy", "uploadedAt", "fyId"]
+    },
+    "MemoForFund": {
+      "title": "Memo For Fund",
+      "description": "Represents a Memo for Fund letter containing multiple payee payment entries",
+      "type": "object",
+      "properties": {
+        "memoNo": { "type": "string", "description": "Reference memo number" },
+        "date": { "type": "string", "description": "Date of memo" },
+        "monthYear": { "type": "string", "description": "Month and year of fund demand" },
+        "schemeId": { "type": "string", "description": "ID of scheme" },
+        "schemeName": { "type": "string", "description": "Name of scheme" },
+        "sectorId": { "type": "string", "description": "ID of sector" },
+        "sectorName": { "type": "string", "description": "Name of sector" },
+        "rangeId": { "type": "string", "description": "ID of range" },
+        "rangeName": { "type": "string", "description": "Name of range" },
+        "financialYear": { "type": "string", "description": "Financial year name" },
+        "status": { "type": "string", "enum": ["draft", "submitted", "correction"], "description": "Status of memo" },
+        "totalAmount": { "type": "number", "description": "Total gross amount" },
+        "totalITax": { "type": "number", "description": "Total ITax deducted" },
+        "totalGst": { "type": "number", "description": "Total GST TDS deducted" },
+        "totalNetRtgs": { "type": "number", "description": "Total net RTGS amount" },
+        "payeeEntries": {
+          "type": "array",
+          "items": { "type": "object" },
+          "description": "List of payee entries"
+        },
+        "createdBy": { "type": "string", "description": "Creator UID" },
+        "createdByRole": { "type": "string", "description": "Creator role" },
+        "createdAt": { "type": "number", "description": "Creation timestamp" },
+        "updatedAt": { "type": "number", "description": "Update timestamp" }
+      },
+      "required": ["memoNo", "date", "monthYear", "status", "totalAmount", "payeeEntries", "createdBy"]
     }
   },
   "firestore": {
@@ -287,6 +319,7 @@
     "/payees": { "schema": "Payee", "description": "Collection of payee details" },
     "/featureLocks": { "schema": "FeatureLock", "description": "Collection of feature locks" },
     "/approvedBudgetFiles": { "schema": "ApprovedBudgetFile", "description": "Collection of approved budget PDF files" },
-    "/distributedBudgetFiles": { "schema": "DistributedBudgetFile", "description": "Collection of distributed budget PDF files" }
+    "/distributedBudgetFiles": { "schema": "DistributedBudgetFile", "description": "Collection of distributed budget PDF files" },
+    "/memos": { "schema": "MemoForFund", "description": "Collection of memos for fund" }
   }
 }

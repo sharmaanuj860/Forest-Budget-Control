@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell, MoveHorizontal } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell, MoveHorizontal, PlusCircle, Users, Send } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -64,6 +64,8 @@ type Expense = {
   id: string; 
   allocationId: string; 
   soeId: string; 
+  schemeId?: string;
+  sectorId?: string;
   amount: number; 
   date: string; 
   description: string; 
@@ -129,6 +131,54 @@ type Payee = {
   createdAt: number;
   updatedAt: number;
   createdBy: string;
+};
+
+type MemoPayeeEntry = {
+  id?: string;
+  payeeId?: string;
+  name: string;
+  address: string;
+  accountNumber: string;
+  ifscCode: string;
+  panNumber: string;
+  gstNumber?: string;
+  totalAmount: number;
+  deductITax?: boolean;
+  iTaxPercent: number;
+  iTaxAmount: number;
+  deductGst?: boolean;
+  gstPercent?: number;
+  gstAmount?: number;
+  netRtgsAmount: number;
+  description?: string;
+};
+
+type MemoForFund = {
+  id: string;
+  memoNo: string;
+  date: string;
+  monthYear: string;
+  schemeId?: string;
+  schemeName?: string;
+  sectorId?: string;
+  sectorName?: string;
+  rangeId?: string;
+  rangeName?: string;
+  toAuthority?: string;
+  financialYear: string;
+  fyId?: string;
+  status: 'draft' | 'submitted' | 'correction';
+  totalAmount: number;
+  totalITax: number;
+  totalGst?: number;
+  totalNetRtgs: number;
+  payeeEntries: MemoPayeeEntry[];
+  createdBy: string;
+  createdByRole?: string;
+  createdByName?: string;
+  createdAt: number;
+  updatedAt: number;
+  remarks?: string;
 };
 
 type BudgetFile = {
@@ -207,6 +257,54 @@ interface FirestoreErrorInfo {
       photoUrl: string | null;
     }[];
   }
+}
+
+function convertNumberToWords(amount: number): string {
+  if (isNaN(amount) || amount <= 0) return 'Zero';
+  
+  const single = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine'];
+  const double = ['Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function numToWords(n: number): string {
+    let str = '';
+    if (n > 99) {
+      str += single[Math.floor(n / 100)] + ' Hundred ';
+      n %= 100;
+    }
+    if (n > 19) {
+      str += tens[Math.floor(n / 10)] + ' ';
+      n %= 10;
+    } else if (n >= 10) {
+      str += double[n - 10] + ' ';
+      n = 0;
+    }
+    if (n > 0) {
+      str += single[n] + ' ';
+    }
+    return str;
+  }
+
+  const rounded = Math.floor(Math.abs(amount));
+  let str = '';
+  
+  const crore = Math.floor(rounded / 10000000);
+  let rem = rounded % 10000000;
+  
+  const lakh = Math.floor(rem / 100000);
+  rem %= 100000;
+  
+  const thousand = Math.floor(rem / 1000);
+  rem %= 1000;
+  
+  const hundred = rem;
+
+  if (crore > 0) str += numToWords(crore) + 'Crore ';
+  if (lakh > 0) str += numToWords(lakh) + 'Lakh ';
+  if (thousand > 0) str += numToWords(thousand) + 'Thousand ';
+  if (hundred > 0) str += numToWords(hundred);
+
+  return str.trim() || 'Zero';
 }
 
 function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
@@ -567,7 +665,49 @@ export default function App() {
   // --- Filters ---
   const [expDateRange, setExpDateRange] = useState({ start: '', end: '' });
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
-  const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees'>('list');
+  const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees' | 'memo'>('list');
+  const [showExpenditurePrintModal, setShowExpenditurePrintModal] = useState(false);
+
+  // Memo for Fund states
+  const [memos, setMemos] = useState<MemoForFund[]>([]);
+  const [editingMemo, setEditingMemo] = useState<MemoForFund | null>(null);
+  const [viewingMemo, setViewingMemo] = useState<MemoForFund | null>(null);
+
+  // Form Header State
+  const [memoNoInput, setMemoNoInput] = useState<string>('');
+  const [memoDateInput, setMemoDateInput] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [memoMonthYearInput, setMemoMonthYearInput] = useState<string>('08/2026');
+  const [memoSchemeIdInput, setMemoSchemeIdInput] = useState<string>('');
+  const [memoSectorIdInput, setMemoSectorIdInput] = useState<string>('');
+  const [memoFromInput, setMemoFromInput] = useState<string>('RFO Sarahan');
+  const [memoToInput, setMemoToInput] = useState<string>('DCF Rajgarh');
+
+  // Payee Entry Form State
+  const [memoPayeeEntries, setMemoPayeeEntries] = useState<MemoPayeeEntry[]>([]);
+  const [entryPayeeId, setEntryPayeeId] = useState<string>('');
+  const [entryName, setEntryName] = useState<string>('');
+  const [entryAddress, setEntryAddress] = useState<string>('');
+  const [entryAccountNo, setEntryAccountNo] = useState<string>('');
+  const [entryIfsc, setEntryIfsc] = useState<string>('');
+  const [entryPan, setEntryPan] = useState<string>('');
+  const [entryGst, setEntryGst] = useState<string>('');
+  const [entryTotalAmount, setEntryTotalAmount] = useState<string>('');
+  const [entryDeductITax, setEntryDeductITax] = useState<boolean>(true);
+  const [entryITaxPercent, setEntryITaxPercent] = useState<string>('1');
+  const [entryDeductGst, setEntryDeductGst] = useState<boolean>(false);
+  const [entryGstPercent, setEntryGstPercent] = useState<string>('2');
+  const [editingEntryIndex, setEditingEntryIndex] = useState<number | null>(null);
+
+  const [selectedMemoPayeeId, setSelectedMemoPayeeId] = useState<string>('');
+  const [selectedMemoSchemeId, setSelectedMemoSchemeId] = useState<string>('');
+  const [selectedMemoSectorId, setSelectedMemoSectorId] = useState<string>('');
+  const [memoMonthYear, setMemoMonthYear] = useState<string>(() => {
+    const now = new Date();
+    return now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  });
+  const [memoRefNo, setMemoRefNo] = useState<string>('RFO/RAJGARH/Memo/2026-27/01');
+  const [memoDate, setMemoDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [manualMemoAmount, setManualMemoAmount] = useState<string>('');
   const [selectedExpensesForBill, setSelectedExpensesForBill] = useState<string[]>([]);
   const [billFilters, setBillFilters] = useState({ billNo: '', rangeId: '', soeId: '', amount: '' });
   const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
@@ -1152,8 +1292,17 @@ export default function App() {
       setDistributedBudgetFiles(data.sort((a, b) => b.uploadedAt - a.uploadedAt));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'distributedBudgetFiles'));
 
+    const memosQuery = query(
+      collection(db, 'memos'),
+      or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
+    );
+    const unsubMemos = onSnapshot(memosQuery, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as MemoForFund));
+      setMemos(data.sort((a: any, b: any) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)));
+    }, (error) => handleFirestoreError(error, OperationType.LIST, 'memos'));
+
     return () => {
-      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills(); unsubSurrenders(); unsubApprovedFiles(); unsubDistributedFiles();
+      unsubSoes(); unsubAllocations(); unsubExpenses(); unsubBills(); unsubSurrenders(); unsubApprovedFiles(); unsubDistributedFiles(); unsubMemos();
     };
   }, [user, userRole, selectedFY, fys]);
 
@@ -1462,6 +1611,50 @@ export default function App() {
 
     return filtered;
   }, [expenses, currentAllocations, expDateRange, expFilters, allocations, userRangeId]);
+
+  // Memo for Fund Computed Values
+  const selectedPayeeObj = useMemo(() => {
+    return payees.find(p => p.id === selectedMemoPayeeId);
+  }, [payees, selectedMemoPayeeId]);
+
+  const selectedSchemeObj = useMemo(() => {
+    return currentSchemes.find(s => s.id === selectedMemoSchemeId);
+  }, [currentSchemes, selectedMemoSchemeId]);
+
+  const selectedSectorObj = useMemo(() => {
+    return currentSectors.find(s => s.id === selectedMemoSectorId);
+  }, [currentSectors, selectedMemoSectorId]);
+
+  const userRangeName = useMemo(() => {
+    const r = ranges.find(r => r.id === userRangeId);
+    if (r) return r.name;
+    if (userRole === 'Sarahan') return 'Sarahan Range';
+    if (userRole === 'Narag') return 'Narag Range';
+    if (userRole === 'Habban') return 'Habban Range';
+    if (userRole === 'Rajgarh') return 'Rajgarh Range';
+    if (userRole === 'Division') return 'Division Office';
+    return 'Rajgarh Forest Division';
+  }, [ranges, userRangeId, userRole]);
+
+  const memoFilteredExpenses = useMemo(() => {
+    if (!selectedMemoPayeeId) return [];
+    return currentExpenses.filter(e => {
+      const alloc = allocations.find(a => a.id === e.allocationId);
+      const eSchemeId = e.schemeId || alloc?.schemeId;
+      const eSectorId = e.sectorId || alloc?.sectorId;
+      const payeeMatch = e.payeeId === selectedMemoPayeeId || (selectedPayeeObj && e.payeeName === selectedPayeeObj.name);
+      const schemeMatch = !selectedMemoSchemeId || eSchemeId === selectedMemoSchemeId;
+      const sectorMatch = !selectedMemoSectorId || eSectorId === selectedMemoSectorId;
+      return payeeMatch && schemeMatch && sectorMatch;
+    });
+  }, [currentExpenses, selectedMemoPayeeId, selectedMemoSchemeId, selectedMemoSectorId, selectedPayeeObj, allocations]);
+
+  const memoTotalAmount = useMemo(() => {
+    if (manualMemoAmount !== '' && !isNaN(Number(manualMemoAmount))) {
+      return Number(manualMemoAmount);
+    }
+    return memoFilteredExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+  }, [memoFilteredExpenses, manualMemoAmount]);
 
   const comprehensiveReportData = useMemo(() => {
     return baseAllocations.map(a => {
@@ -4712,7 +4905,7 @@ export default function App() {
       userRole === 'admin' || 
       userRole === 'deo' || 
       ((title === 'Expenditure' || title === 'Bill' || title === 'Payee') && userRole !== 'approver' && userRole !== 'DA') || 
-      (editingItem?.type === title && (userRole === 'admin' || userRole === 'deo'))
+      (editingItem?.type === title && (isAdmin() || isDEO()))
     );
 
     const formColSpanClass = isFullScreen
@@ -4868,6 +5061,17 @@ export default function App() {
                   <Filter className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Filters</span>
                   {isFilterExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
+              )}
+              {title === 'Expenditure' && (
+                <button
+                  type="button"
+                  onClick={() => setShowExpenditurePrintModal(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95"
+                  title="Print Expenditure List"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Print List</span>
                 </button>
               )}
             </div>
@@ -5940,6 +6144,320 @@ export default function App() {
       console.error("Word export error:", err);
       showAlert("Failed to export Word document.");
     }
+  };
+
+  // --- Derived default From authority and auto-generated Memo Number ---
+  const defaultFromAuthority = useMemo(() => {
+    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].includes(userRole)) {
+      return `RFO ${userRole}`;
+    }
+    if (userRangeName) {
+      return `RFO ${userRangeName}`;
+    }
+    return 'RFO Sarahan';
+  }, [userRole, userRangeName]);
+
+  const autoMemoNo = useMemo(() => {
+    if (editingMemo) return editingMemo.memoNo;
+
+    const rangeKey = userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].includes(userRole)
+      ? userRole
+      : (userRangeName || 'Sarahan');
+
+    const codeMap: Record<string, string> = {
+      Sarahan: 'SRH',
+      Narag: 'NRG',
+      Habban: 'HBN',
+      Rajgarh: 'RJG',
+      Division: 'DIV',
+    };
+    const code = codeMap[rangeKey] || 'RNG';
+
+    // Count existing memos for this range
+    const rangeCount = memos.filter(m => {
+      if (m.createdByRole && m.createdByRole === rangeKey) return true;
+      if (m.rangeName && m.rangeName.toLowerCase().includes(rangeKey.toLowerCase())) return true;
+      return false;
+    }).length;
+
+    const nextNum = 100 + rangeCount;
+    return `RFO/${code}/Memo/${nextNum}`;
+  }, [memos, editingMemo, userRole, userRangeName]);
+
+  useEffect(() => {
+    if (!editingMemo) {
+      setMemoFromInput(defaultFromAuthority);
+      setMemoToInput('DCF Rajgarh');
+      setMemoNoInput(autoMemoNo);
+    }
+  }, [defaultFromAuthority, autoMemoNo, editingMemo]);
+
+  // --- Memo for Fund Handlers ---
+  const handleSelectPayeeForMemoEntry = (payeeId: string) => {
+    setEntryPayeeId(payeeId);
+    if (!payeeId) return;
+    const p = payees.find(item => item.id === payeeId);
+    if (p) {
+      setEntryName(p.name || '');
+      setEntryAddress(p.address || '');
+      setEntryAccountNo(p.accountNumber || '');
+      setEntryIfsc(p.ifscCode || '');
+      setEntryPan(p.panNumber || '');
+      setEntryGst(p.gstNumber || '');
+    }
+  };
+
+  const handleTotalAmountInputChange = (val: string) => {
+    setEntryTotalAmount(val);
+    const tot = parseFloat(val);
+    if (!isNaN(tot) && tot > 0) {
+      if (tot >= 30000) {
+        setEntryDeductITax(true);
+      } else {
+        setEntryDeductITax(false);
+      }
+      if (tot >= 250000) {
+        setEntryDeductGst(true);
+      } else {
+        setEntryDeductGst(false);
+      }
+    } else {
+      setEntryDeductITax(false);
+      setEntryDeductGst(false);
+    }
+  };
+
+  const handleAddOrUpdatePayeeEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!entryName.trim()) {
+      showAlert('Please enter Payee Name.');
+      return;
+    }
+    const tot = parseFloat(entryTotalAmount);
+    if (isNaN(tot) || tot <= 0) {
+      showAlert('Please enter a valid Total Amount.');
+      return;
+    }
+    const iTaxP = entryDeductITax ? (parseFloat(entryITaxPercent) || 0) : 0;
+    const gstP = entryDeductGst ? (parseFloat(entryGstPercent) || 0) : 0;
+
+    const iTaxAmt = entryDeductITax ? Math.round((tot * iTaxP) / 100 * 100) / 100 : 0;
+    const gstAmt = entryDeductGst ? Math.round((tot * gstP) / 100 * 100) / 100 : 0;
+    const netRtgs = Math.round((tot - iTaxAmt - gstAmt) * 100) / 100;
+
+    const newEntry: MemoPayeeEntry = {
+      payeeId: entryPayeeId || undefined,
+      name: entryName.trim(),
+      address: entryAddress.trim(),
+      accountNumber: entryAccountNo.trim(),
+      ifscCode: entryIfsc.trim(),
+      panNumber: entryPan.trim(),
+      gstNumber: entryGst.trim(),
+      totalAmount: tot,
+      deductITax: entryDeductITax,
+      iTaxPercent: parseFloat(entryITaxPercent) || 0,
+      iTaxAmount: iTaxAmt,
+      deductGst: entryDeductGst,
+      gstPercent: parseFloat(entryGstPercent) || 0,
+      gstAmount: gstAmt,
+      netRtgsAmount: netRtgs,
+    };
+
+    if (editingEntryIndex !== null) {
+      const updated = [...memoPayeeEntries];
+      updated[editingEntryIndex] = newEntry;
+      setMemoPayeeEntries(updated);
+      setEditingEntryIndex(null);
+    } else {
+      setMemoPayeeEntries(prev => [...prev, newEntry]);
+    }
+
+    // Reset entry input fields
+    setEntryPayeeId('');
+    setEntryName('');
+    setEntryAddress('');
+    setEntryAccountNo('');
+    setEntryIfsc('');
+    setEntryPan('');
+    setEntryGst('');
+    setEntryTotalAmount('');
+    setEntryDeductITax(true);
+    setEntryITaxPercent('1');
+    setEntryDeductGst(false);
+    setEntryGstPercent('2');
+  };
+
+  const handleEditPayeeEntryInForm = (index: number) => {
+    const entry = memoPayeeEntries[index];
+    if (!entry) return;
+    setEditingEntryIndex(index);
+    setEntryPayeeId(entry.payeeId || '');
+    setEntryName(entry.name || '');
+    setEntryAddress(entry.address || '');
+    setEntryAccountNo(entry.accountNumber || '');
+    setEntryIfsc(entry.ifscCode || '');
+    setEntryPan(entry.panNumber || '');
+    setEntryGst(entry.gstNumber || '');
+    setEntryTotalAmount(entry.totalAmount ? String(entry.totalAmount) : '');
+    setEntryDeductITax(entry.deductITax !== undefined ? entry.deductITax : (entry.iTaxAmount > 0));
+    setEntryITaxPercent(entry.iTaxPercent !== undefined ? String(entry.iTaxPercent) : '1');
+    setEntryDeductGst(entry.deductGst !== undefined ? entry.deductGst : ((entry.gstAmount || 0) > 0));
+    setEntryGstPercent(entry.gstPercent !== undefined ? String(entry.gstPercent) : '2');
+  };
+
+  const handleRemovePayeeEntryFromForm = (index: number) => {
+    setMemoPayeeEntries(prev => prev.filter((_, i) => i !== index));
+    if (editingEntryIndex === index) {
+      setEditingEntryIndex(null);
+      setEntryPayeeId('');
+      setEntryName('');
+      setEntryAddress('');
+      setEntryAccountNo('');
+      setEntryIfsc('');
+      setEntryPan('');
+      setEntryGst('');
+      setEntryTotalAmount('');
+      setEntryDeductITax(true);
+      setEntryITaxPercent('1');
+      setEntryDeductGst(false);
+      setEntryGstPercent('2');
+    }
+  };
+
+  const handleSaveMemo = async (status: 'draft' | 'submitted') => {
+    if (memoPayeeEntries.length === 0) {
+      showAlert('Please add at least one Payee to the Memo before saving.');
+      return;
+    }
+    if (!memoNoInput.trim()) {
+      showAlert('Please enter Memo Reference Number.');
+      return;
+    }
+    if (!memoMonthYearInput.trim()) {
+      showAlert('Please enter Month / Period.');
+      return;
+    }
+
+    const schemeObj = currentSchemes.find(s => s.id === memoSchemeIdInput);
+    const sectorObj = currentSectors.find(s => s.id === memoSectorIdInput);
+
+    const totalGross = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.totalAmount) || 0), 0);
+    const totalITax = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.iTaxAmount) || 0), 0);
+    const totalGst = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.gstAmount) || 0), 0);
+    const totalNetRtgs = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.netRtgsAmount) || 0), 0);
+
+    const memoData = {
+      memoNo: memoNoInput.trim(),
+      date: memoDateInput,
+      monthYear: memoMonthYearInput.trim(),
+      schemeId: memoSchemeIdInput || '',
+      schemeName: schemeObj ? schemeObj.name : 'All Schemes',
+      sectorId: memoSectorIdInput || '',
+      sectorName: sectorObj ? sectorObj.name : '',
+      rangeId: userRangeId || '',
+      rangeName: memoFromInput || defaultFromAuthority,
+      toAuthority: memoToInput || 'DCF Rajgarh',
+      financialYear: selectedFY,
+      status,
+      totalAmount: totalGross,
+      totalITax: totalITax,
+      totalGst: totalGst,
+      totalNetRtgs: totalNetRtgs,
+      payeeEntries: memoPayeeEntries,
+      createdBy: user?.uid || '',
+      createdByRole: userRole || '',
+      createdByName: user?.email || '',
+      updatedAt: Date.now()
+    };
+
+    try {
+      if (editingMemo) {
+        await updateDoc(doc(db, 'memos', editingMemo.id), memoData);
+        showAlert(`Memo for Fund ${status === 'submitted' ? 'submitted and locked' : 'updated as draft'} successfully.`);
+      } else {
+        await addDoc(collection(db, 'memos'), {
+          ...memoData,
+          createdAt: Date.now()
+        });
+        showAlert(`Memo for Fund ${status === 'submitted' ? 'submitted and locked' : 'saved as draft'} successfully.`);
+      }
+      handleResetMemoForm();
+    } catch (error) {
+      handleFirestoreError(error, editingMemo ? OperationType.UPDATE : OperationType.CREATE, 'memos');
+    }
+  };
+
+  const handleEditMemo = (memo: MemoForFund) => {
+    setEditingMemo(memo);
+    setMemoNoInput(memo.memoNo || '');
+    setMemoDateInput(memo.date || new Date().toISOString().split('T')[0]);
+    setMemoMonthYearInput(memo.monthYear || '');
+    setMemoSchemeIdInput(memo.schemeId || '');
+    setMemoSectorIdInput(memo.sectorId || '');
+    setMemoFromInput(memo.rangeName || defaultFromAuthority);
+    setMemoToInput(memo.toAuthority || 'DCF Rajgarh');
+    setMemoPayeeEntries(memo.payeeEntries || []);
+    setEditingEntryIndex(null);
+  };
+
+  const handleDeleteMemo = (memo: MemoForFund) => {
+    showConfirm(`Are you sure you want to delete Memo No. ${memo.memoNo}?`, async () => {
+      try {
+        await deleteDoc(doc(db, 'memos', memo.id));
+        showAlert('Memo deleted successfully.');
+        if (editingMemo?.id === memo.id) {
+          handleResetMemoForm();
+        }
+        if (viewingMemo?.id === memo.id) {
+          setViewingMemo(null);
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `memos/${memo.id}`);
+      }
+    });
+  };
+
+  const handleSendBackForCorrection = (memo: MemoForFund) => {
+    if (userRole !== 'admin' && userRole !== 'deo') {
+      showAlert('Only Admin or Data Entry Operator can send back memo for correction.');
+      return;
+    }
+    showConfirm(`Send Memo No. ${memo.memoNo} back to user for correction?`, async () => {
+      try {
+        await updateDoc(doc(db, 'memos', memo.id), {
+          status: 'correction',
+          updatedAt: Date.now()
+        });
+        showAlert('Memo sent back for correction successfully.');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `memos/${memo.id}`);
+      }
+    });
+  };
+
+  const handleResetMemoForm = () => {
+    setEditingMemo(null);
+    setMemoNoInput(autoMemoNo);
+    setMemoDateInput(new Date().toISOString().split('T')[0]);
+    setMemoMonthYearInput('08/2026');
+    setMemoSchemeIdInput('');
+    setMemoSectorIdInput('');
+    setMemoFromInput(defaultFromAuthority);
+    setMemoToInput('DCF Rajgarh');
+    setMemoPayeeEntries([]);
+    setEditingEntryIndex(null);
+    setEntryPayeeId('');
+    setEntryName('');
+    setEntryAddress('');
+    setEntryAccountNo('');
+    setEntryIfsc('');
+    setEntryPan('');
+    setEntryGst('');
+    setEntryTotalAmount('');
+    setEntryDeductITax(true);
+    setEntryITaxPercent('1');
+    setEntryDeductGst(false);
+    setEntryGstPercent('2');
   };
 
   const handleNotificationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -9477,6 +9995,13 @@ export default function App() {
                   {expenditureSubTab === 'payees' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
                 </button>
               )}
+              <button 
+                onClick={() => setExpenditureSubTab('memo')}
+                className={`pb-2 px-4 text-sm font-medium transition-colors relative ${expenditureSubTab === 'memo' ? 'text-emerald-600 font-bold' : 'text-gray-500 hover:text-gray-700'}`}
+              >
+                Memo for Fund
+                {expenditureSubTab === 'memo' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />}
+              </button>
             </div>
 
             {expenditureSubTab === 'list' && (
@@ -10479,7 +11004,20 @@ export default function App() {
                   (item) => setEditingItem({ type: 'Payee', item }),
                   (item) => isAdmin() || isDEO() || (userRangeId && item.rangeId === userRangeId),
                   undefined,
-                  undefined,
+                  (item) => (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedMemoPayeeId(item.id);
+                        setExpenditureSubTab('memo');
+                      }}
+                      className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-bold border border-emerald-200 flex items-center gap-1 transition-colors"
+                      title="Generate Memo for Fund for this Payee"
+                    >
+                      <FileText className="w-3 h-3" />
+                      <span>Memo</span>
+                    </button>
+                  ),
                   false,
                   undefined,
                   undefined,
@@ -10493,6 +11031,939 @@ export default function App() {
                 )}
               </div>
             )}
+
+            {expenditureSubTab === 'memo' && (
+              <div className="space-y-8">
+                {/* Header Banner */}
+                <div className="no-print bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-emerald-600" />
+                      Memo for Fund Generator & Register
+                    </h3>
+                    <p className="text-xs text-gray-500">
+                      Create, edit, and lock formal Memo for Fund letters for multiple payees (10, 20+ payees per memo) with income tax deduction calculations.
+                    </p>
+                  </div>
+                  {editingMemo && (
+                    <div className="flex items-center gap-2 bg-amber-50 border border-amber-200 px-3 py-1.5 rounded-xl">
+                      <span className="text-xs font-bold text-amber-800">
+                        Editing Memo No. {editingMemo.memoNo} ({editingMemo.status})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleResetMemoForm}
+                        className="px-2 py-0.5 bg-amber-200 hover:bg-amber-300 text-amber-900 rounded text-xs font-bold"
+                      >
+                        Cancel Editing
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Main 2-Column Grid: Memo Form + Side Table */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                  {/* Left Panel: Memo Creation Form (7 cols) */}
+                  <div className="lg:col-span-7 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-6">
+                    <div className="border-b pb-3 flex justify-between items-center">
+                      <h4 className="text-sm font-extrabold text-gray-800 uppercase tracking-wide flex items-center gap-2">
+                        <PlusCircle className="w-4 h-4 text-emerald-600" />
+                        {editingMemo ? '1. Edit Memo Details' : '1. Create New Memo for Fund'}
+                      </h4>
+                      <span className="text-xs text-gray-400 font-medium">* Required fields</span>
+                    </div>
+
+                    {/* Step 1: Letter Header Configuration */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-50 p-4 rounded-xl border border-gray-200 text-xs">
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700">
+                          Memo Ref Number <span className="text-gray-400 font-normal">(Auto-generated)</span>
+                        </label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={memoNoInput}
+                          className="w-full p-2 border border-gray-300 rounded-lg font-mono bg-gray-100 font-bold text-gray-700 cursor-not-allowed outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700">
+                          Memo Date <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="date"
+                          value={memoDateInput}
+                          onChange={(e) => setMemoDateInput(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-lg font-mono bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700">
+                          For Month / Period <span className="text-red-500">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={memoMonthYearInput}
+                          onChange={(e) => setMemoMonthYearInput(e.target.value)}
+                          placeholder="e.g. August 2026 or 08/2026"
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none font-semibold text-gray-900"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700">Select Scheme</label>
+                        <select
+                          value={memoSchemeIdInput}
+                          onChange={(e) => {
+                            setMemoSchemeIdInput(e.target.value);
+                            setMemoSectorIdInput('');
+                          }}
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                        >
+                          <option value="">-- All / Select Scheme --</option>
+                          {currentSchemes.map(s => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700">Select Sector (Optional)</label>
+                        <select
+                          value={memoSectorIdInput}
+                          onChange={(e) => setMemoSectorIdInput(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                        >
+                          <option value="">-- All Sectors --</option>
+                          {currentSectors
+                            .filter(sec => !memoSchemeIdInput || sec.schemeId === memoSchemeIdInput)
+                            .map(sec => (
+                              <option key={sec.id} value={sec.id}>{sec.name}</option>
+                            ))
+                          }
+                        </select>
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="block font-bold text-gray-700 flex items-center justify-between">
+                          <span>From Authority</span>
+                          <span className="text-gray-400 font-normal text-[10px]">(Auto-locked)</span>
+                        </label>
+                        <input
+                          type="text"
+                          readOnly
+                          value={memoFromInput}
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-100 font-bold text-gray-800 cursor-not-allowed outline-none"
+                        />
+                      </div>
+
+                      <div className="sm:col-span-2 space-y-1">
+                        <label className="block font-bold text-gray-700">To (Authority)</label>
+                        <input
+                          type="text"
+                          value={memoToInput}
+                          onChange={(e) => setMemoToInput(e.target.value)}
+                          placeholder="DCF Rajgarh"
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none font-semibold text-gray-900"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Step 2: Payee Row Input Section */}
+                    <div className="border-t pt-4 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-extrabold text-gray-800 uppercase tracking-wide flex items-center gap-1.5">
+                          <Users className="w-4 h-4 text-emerald-600" />
+                          2. Add Payee to Memo ({memoPayeeEntries.length} Payees Added)
+                        </h4>
+                        {editingEntryIndex !== null && (
+                          <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                            Editing Row #{editingEntryIndex + 1}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Select existing payee directory drop-down */}
+                      <div className="space-y-1 text-xs">
+                        <label className="block font-bold text-gray-600">Quick Select Payee Directory (Optional)</label>
+                        <select
+                          value={entryPayeeId}
+                          onChange={(e) => handleSelectPayeeForMemoEntry(e.target.value)}
+                          className="w-full p-2 border border-emerald-300 rounded-lg bg-emerald-50/50 font-semibold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
+                        >
+                          <option value="">-- Choose Payee from Directory or Fill Form Below --</option>
+                          {filteredPayeesList.map(p => (
+                            <option key={p.id} value={p.id}>
+                              {p.name} (A/C: {p.accountNumber} - IFSC: {p.ifscCode || 'N/A'})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Individual Payee Entry Inputs */}
+                      <form onSubmit={handleAddOrUpdatePayeeEntry} className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 bg-gray-50 p-3.5 rounded-xl border border-gray-200 text-xs">
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">Payee Name <span className="text-red-500">*</span></label>
+                          <input
+                            type="text"
+                            required
+                            value={entryName}
+                            onChange={(e) => setEntryName(e.target.value)}
+                            placeholder="e.g. Hemant Kumar"
+                            className="w-full p-2 border rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">Address / Remarks</label>
+                          <input
+                            type="text"
+                            value={entryAddress}
+                            onChange={(e) => setEntryAddress(e.target.value)}
+                            placeholder="e.g. Sarahan"
+                            className="w-full p-2 border rounded-lg bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">Account Number <span className="text-red-500">*</span></label>
+                          <input
+                            type="text"
+                            required
+                            value={entryAccountNo}
+                            onChange={(e) => setEntryAccountNo(e.target.value)}
+                            placeholder="e.g. 501002394821"
+                            className="w-full p-2 border rounded-lg font-mono bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">IFSC Code <span className="text-red-500">*</span></label>
+                          <input
+                            type="text"
+                            required
+                            value={entryIfsc}
+                            onChange={(e) => setEntryIfsc(e.target.value)}
+                            placeholder="e.g. HDFC0001234"
+                            className="w-full p-2 border rounded-lg font-mono bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">PAN Number</label>
+                          <input
+                            type="text"
+                            value={entryPan}
+                            onChange={(e) => setEntryPan(e.target.value)}
+                            placeholder="e.g. ABCDE1234F"
+                            className="w-full p-2 border rounded-lg font-mono uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="block font-bold text-gray-700">GST Number</label>
+                          <input
+                            type="text"
+                            value={entryGst}
+                            onChange={(e) => setEntryGst(e.target.value)}
+                            placeholder="e.g. 02ABCDE1234F1Z5"
+                            className="w-full p-2 border rounded-lg font-mono uppercase bg-white focus:ring-2 focus:ring-emerald-500 outline-none"
+                          />
+                        </div>
+
+                        <div className="space-y-1 sm:col-span-2">
+                          <label className="block font-bold text-gray-700">Total Expenditure Amount (₹) <span className="text-red-500">*</span></label>
+                          <input
+                            type="number"
+                            required
+                            step="0.01"
+                            value={entryTotalAmount}
+                            onChange={(e) => handleTotalAmountInputChange(e.target.value)}
+                            placeholder="e.g. 35000"
+                            className="w-full p-2 border rounded-lg font-bold text-base bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-emerald-950"
+                          />
+                        </div>
+
+                        {/* Deductions Checkboxes */}
+                        <div className="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-100 p-2.5 rounded-lg border border-slate-200">
+                          <label className="flex items-center gap-2 cursor-pointer bg-white p-2 rounded-lg border border-gray-200 hover:border-emerald-400 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={entryDeductITax}
+                              onChange={(e) => setEntryDeductITax(e.target.checked)}
+                              className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
+                            />
+                            <div className="text-[11px]">
+                              <span className="font-bold text-gray-800 block">Deduct I/Tax @ 1%</span>
+                              <span className="text-[10px] text-gray-500">Applicable above ₹30,000</span>
+                            </div>
+                          </label>
+
+                          <label className="flex items-center gap-2 cursor-pointer bg-white p-2 rounded-lg border border-gray-200 hover:border-emerald-400 transition-colors">
+                            <input
+                              type="checkbox"
+                              checked={entryDeductGst}
+                              onChange={(e) => setEntryDeductGst(e.target.checked)}
+                              className="w-4 h-4 text-emerald-600 rounded border-gray-300 focus:ring-emerald-500"
+                            />
+                            <div className="text-[11px]">
+                              <span className="font-bold text-gray-800 block">Deduct GST TDS @ 2%</span>
+                              <span className="text-[10px] text-gray-500">Applicable above ₹2,50,000</span>
+                            </div>
+                          </label>
+                        </div>
+
+                        {/* Calculated amounts preview & Add button */}
+                        <div className="sm:col-span-2 pt-2 flex flex-col sm:flex-row justify-between items-center gap-3 bg-emerald-50/70 p-3 rounded-lg border border-emerald-200">
+                          <div className="text-xs text-emerald-900 font-medium grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
+                            <div>
+                              <span className="text-[10px] text-gray-500 block">Gross Amt:</span>
+                              <strong className="text-gray-900">₹{(parseFloat(entryTotalAmount) || 0).toLocaleString('en-IN')}</strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-red-600 block">I/Tax (1%):</span>
+                              <strong className="text-red-700">
+                                -₹{(entryDeductITax ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0).toLocaleString('en-IN')}
+                              </strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-purple-600 block">GST TDS (2%):</span>
+                              <strong className="text-purple-700">
+                                -₹{(entryDeductGst ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0).toLocaleString('en-IN')}
+                              </strong>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-emerald-700 block">Net RTGS:</span>
+                              <strong className="text-emerald-950 text-sm">
+                                ₹{(
+                                  (parseFloat(entryTotalAmount) || 0) -
+                                  (entryDeductITax ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0) -
+                                  (entryDeductGst ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0)
+                                ).toLocaleString('en-IN')}
+                              </strong>
+                            </div>
+                          </div>
+                          <button
+                            type="submit"
+                            className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 active:scale-95 shrink-0"
+                          >
+                            <Plus className="w-4 h-4" />
+                            <span>{editingEntryIndex !== null ? 'Update Payee Row' : '+ Add Payee to Memo'}</span>
+                          </button>
+                        </div>
+                      </form>
+                    </div>
+
+                    {/* Step 3: Added Payees Table inside Form */}
+                    <div className="border-t pt-4 space-y-3">
+                      <h4 className="text-xs font-extrabold text-gray-800 uppercase tracking-wide">
+                        3. Payees Included in Memo ({memoPayeeEntries.length})
+                      </h4>
+
+                      {memoPayeeEntries.length > 0 ? (
+                        <div className="overflow-x-auto border border-gray-200 rounded-xl shadow-sm">
+                          <table className="w-full text-left text-[11px] border-collapse">
+                            <thead>
+                              <tr className="bg-gray-100 font-bold text-gray-800 border-b border-gray-200">
+                                <th className="p-2 w-8 text-center border-r">#</th>
+                                <th className="p-2 border-r min-w-[120px]">Name & Address</th>
+                                <th className="p-2 border-r text-right">Total Amt (₹)</th>
+                                <th className="p-2 border-r text-right">I/Tax (1%)</th>
+                                <th className="p-2 border-r text-right">GST TDS (2%)</th>
+                                <th className="p-2 border-r text-right">Net RTGS (₹)</th>
+                                <th className="p-2 border-r">A/C No. & IFSC</th>
+                                <th className="p-2 border-r">PAN & GSTIN</th>
+                                <th className="p-2 text-center w-16">Action</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              {memoPayeeEntries.map((entry, idx) => (
+                                <tr key={idx} className={editingEntryIndex === idx ? 'bg-amber-50 font-medium' : 'hover:bg-gray-50'}>
+                                  <td className="p-2 text-center font-bold text-gray-500 border-r">{idx + 1}</td>
+                                  <td className="p-2 border-r">
+                                    <div className="font-bold text-gray-900">{entry.name}</div>
+                                    {entry.address && <div className="text-[10px] text-gray-500">{entry.address}</div>}
+                                  </td>
+                                  <td className="p-2 text-right font-bold border-r">
+                                    ₹{(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="p-2 text-right text-red-600 font-medium border-r">
+                                    ₹{(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="p-2 text-right text-purple-600 font-medium border-r">
+                                    ₹{(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="p-2 text-right font-black text-emerald-800 border-r">
+                                    ₹{(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                                  </td>
+                                  <td className="p-2 border-r font-mono text-[10px]">
+                                    <div>{entry.accountNumber}</div>
+                                    <div className="text-gray-500">{entry.ifscCode}</div>
+                                  </td>
+                                  <td className="p-2 border-r font-mono text-[10px]">
+                                    <div>PAN: {entry.panNumber || 'N/A'}</div>
+                                    {entry.gstNumber && <div className="text-gray-500">GST: {entry.gstNumber}</div>}
+                                  </td>
+                                  <td className="p-2 text-center">
+                                    <div className="flex items-center justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleEditPayeeEntryInForm(idx)}
+                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                        title="Edit Row"
+                                      >
+                                        <Edit2 className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemovePayeeEntryFromForm(idx)}
+                                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                        title="Remove Payee"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot>
+                              <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-300">
+                                <td colSpan={2} className="p-2 text-right uppercase border-r">
+                                  Total:
+                                </td>
+                                <td className="p-2 text-right text-xs text-gray-900 border-r">
+                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0).toLocaleString('en-IN')}
+                                </td>
+                                <td className="p-2 text-right text-xs text-red-700 border-r">
+                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.iTaxAmount) || 0), 0).toLocaleString('en-IN')}
+                                </td>
+                                <td className="p-2 text-right text-xs text-purple-700 border-r">
+                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.gstAmount) || 0), 0).toLocaleString('en-IN')}
+                                </td>
+                                <td className="p-2 text-right text-xs font-black text-emerald-900 border-r">
+                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.netRtgsAmount) || 0), 0).toLocaleString('en-IN')}
+                                </td>
+                                <td colSpan={3}></td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+                      ) : (
+                        <div className="p-6 text-center border-2 border-dashed border-gray-200 rounded-xl bg-gray-50 text-xs text-gray-500 space-y-1">
+                          <p className="font-semibold text-gray-700">No payees added to this memo yet.</p>
+                          <p>Fill out the form above and click <strong>"+ Add Payee to Memo"</strong> to append payees (10, 20+ allowed).</p>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Step 4: Form Actions (Save Draft / Submit) */}
+                    <div className="border-t pt-4 flex flex-wrap items-center justify-between gap-3">
+                      <button
+                        type="button"
+                        onClick={handleResetMemoForm}
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-bold transition-all"
+                      >
+                        Reset / Clear Form
+                      </button>
+
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleSaveMemo('draft')}
+                          className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                        >
+                          <Save className="w-4 h-4" />
+                          <span>{editingMemo ? 'Update as Draft' : 'Save as Draft'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveMemo('submitted')}
+                          className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                        >
+                          <Send className="w-4 h-4" />
+                          <span>Submit & Lock Memo</span>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Right Panel: Memos Summary Table / Register (5 cols) */}
+                  <div className="lg:col-span-5 bg-white p-6 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+                    <div className="border-b pb-3 flex justify-between items-center">
+                      <h4 className="text-sm font-extrabold text-gray-800 uppercase tracking-wide flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-emerald-600" />
+                        Saved Memos ({memos.length})
+                      </h4>
+                      <span className="text-[11px] font-bold text-gray-500">FY: {selectedFY}</span>
+                    </div>
+
+                    {memos.length > 0 ? (
+                      <div className="space-y-3 max-h-[800px] overflow-y-auto pr-1">
+                        {memos.map((m) => {
+                          const isSubmitted = m.status === 'submitted';
+                          const isCorrection = m.status === 'correction';
+                          const canEdit = userRole === 'admin' || userRole === 'deo' || !isSubmitted;
+
+                          return (
+                            <div
+                              key={m.id}
+                              className={`p-4 rounded-xl border transition-all ${
+                                editingMemo?.id === m.id
+                                  ? 'border-emerald-500 ring-2 ring-emerald-200 bg-emerald-50/30'
+                                  : isSubmitted
+                                  ? 'border-gray-200 bg-gray-50/80'
+                                  : isCorrection
+                                  ? 'border-amber-300 bg-amber-50/50'
+                                  : 'border-gray-200 bg-white hover:border-gray-300'
+                              }`}
+                            >
+                              {/* Header info */}
+                              <div className="flex justify-between items-start gap-2 mb-2">
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-extrabold text-xs text-gray-900">
+                                      Memo #{m.memoNo}
+                                    </span>
+                                    {isSubmitted && (
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
+                                        <Lock className="w-2.5 h-2.5" /> Submitted
+                                      </span>
+                                    )}
+                                    {isCorrection && (
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900">
+                                        Needs Correction
+                                      </span>
+                                    )}
+                                    {m.status === 'draft' && (
+                                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-700">
+                                        Draft
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[11px] text-gray-500 font-medium">
+                                    Date: {m.date ? m.date.split('-').reverse().join('/') : ''} | Month: {m.monthYear}
+                                  </div>
+                                </div>
+                                <div className="text-right">
+                                  <div className="text-xs font-black text-emerald-950">
+                                    ₹{(m.totalNetRtgs || m.totalAmount || 0).toLocaleString('en-IN')}
+                                  </div>
+                                  <div className="text-[10px] text-gray-500 font-medium">
+                                    {m.payeeEntries ? m.payeeEntries.length : 0} Payee(s)
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Scheme & Sector info */}
+                              <div className="text-xs text-gray-700 bg-white/70 p-2 rounded-lg border border-gray-100 mb-3 space-y-0.5">
+                                <p><strong>Scheme:</strong> {m.schemeName || 'All Schemes'}</p>
+                                {m.sectorName && <p><strong>Sector:</strong> {m.sectorName}</p>}
+                                <p className="text-[10px] text-gray-500">From: {m.rangeName} &rarr; To: {m.toAuthority || 'DCF Rajgarh'}</p>
+                              </div>
+
+                              {/* Actions Bar */}
+                              <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
+                                <button
+                                  type="button"
+                                  onClick={() => setViewingMemo(m)}
+                                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95"
+                                >
+                                  <Printer className="w-3 h-3" />
+                                  <span>View & Print</span>
+                                </button>
+
+                                <div className="flex items-center gap-1.5">
+                                  {/* Send back for correction button for Admin/DEO if submitted */}
+                                  {isSubmitted && (userRole === 'admin' || userRole === 'deo') && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSendBackForCorrection(m)}
+                                      className="px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-lg text-[11px] font-bold transition-all"
+                                      title="Return memo to user for correction"
+                                    >
+                                      Return for Correction
+                                    </button>
+                                  )}
+
+                                  {/* Edit button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEditMemo(m)}
+                                    disabled={!canEdit}
+                                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
+                                      canEdit
+                                        ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
+                                        : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                    }`}
+                                    title={!canEdit ? 'Locked (Submitted)' : 'Edit Memo'}
+                                  >
+                                    <Edit2 className="w-3 h-3" />
+                                    <span>Edit</span>
+                                  </button>
+
+                                  {/* Delete button */}
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteMemo(m)}
+                                    disabled={!canEdit}
+                                    className={`p-1 rounded-lg text-xs font-bold transition-all ${
+                                      canEdit
+                                        ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200'
+                                        : 'bg-gray-100 text-gray-300 cursor-not-allowed'
+                                    }`}
+                                    title={!canEdit ? 'Locked' : 'Delete Memo'}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-8 text-center border-2 border-dashed border-gray-200 rounded-xl text-gray-400 text-xs space-y-1">
+                        <FileText className="w-8 h-8 mx-auto text-gray-300" />
+                        <p className="font-semibold text-gray-600">No Memos created for FY {selectedFY}.</p>
+                        <p>Fill out the form on the left to generate a Memo for Fund.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Full-screen Printable Memo View Modal */}
+        {viewingMemo && (
+          <div
+            className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setViewingMemo(null);
+            }}
+          >
+            {/* Fixed Floating Top-Right Close Button */}
+            <button
+              type="button"
+              onClick={() => setViewingMemo(null)}
+              className="no-print fixed top-3 right-3 sm:top-5 sm:right-5 z-[110] bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3.5 py-2 rounded-xl shadow-2xl font-black text-xs flex items-center gap-1.5 transition-all ring-2 ring-white/30 cursor-pointer"
+              title="Close Letter (Esc)"
+            >
+              <X className="w-5 h-5" />
+              <span className="hidden sm:inline">CLOSE (X)</span>
+            </button>
+
+            <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
+              {/* Sticky Top Modal Toolbar - Hidden in Print */}
+              <div className="no-print bg-gray-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-800 sticky top-0 z-20">
+                <div className="flex items-center gap-2.5">
+                  <FileText className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div>
+                    <h3 className="font-bold text-xs sm:text-sm text-white">Memo for Fund - Printable View</h3>
+                    <p className="text-[11px] text-gray-400">Memo Ref: {viewingMemo.memoNo} | Period: {viewingMemo.monthYear}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 pr-12 sm:pr-0">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                    title="Print Memo Letter"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span className="hidden sm:inline">Print Letter</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewingMemo(null)}
+                    className="flex items-center gap-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                    title="Close Preview (X)"
+                  >
+                    <X className="w-4 h-4" />
+                    <span>Close (X)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Scrollable Letter Sheet */}
+              <div className="print-area overflow-y-auto flex-1 p-6 md:p-12 space-y-6 text-gray-900 bg-white font-sans">
+                {/* Department Header */}
+                <div className="text-center space-y-1 border-b-2 border-gray-900 pb-4">
+                  <h2 className="text-xs md:text-sm font-extrabold uppercase tracking-widest text-gray-800">
+                    H.P. FOREST DEPARTMENT
+                  </h2>
+                  <h1 className="text-base md:text-xl font-black uppercase tracking-wide text-gray-900">
+                    Office of the Range Forest Officer, {viewingMemo.rangeName ? viewingMemo.rangeName.replace(/^RFO\s*/i, '') : (userRangeName || 'Sarahan')}
+                  </h1>
+                  <p className="text-xs text-gray-700 font-bold tracking-wide">
+                    Forest Division Rajgarh, District Sirmaur (H.P.)
+                  </p>
+                </div>
+
+                {/* Memo Ref & Date Header */}
+                <div className="flex justify-between items-center text-xs font-bold text-gray-900 border-b border-gray-300 pb-2">
+                  <div>
+                    <span>No. </span>
+                    <span className="font-mono font-black text-sm">{viewingMemo.memoNo}</span>
+                  </div>
+                  <div>
+                    <span>Dated: </span>
+                    <span className="font-mono font-bold">{viewingMemo.date ? viewingMemo.date.split('-').reverse().join('.') : ''}</span>
+                  </div>
+                </div>
+
+                {/* From / To */}
+                <div className="text-xs font-semibold text-gray-900 space-y-1 leading-snug">
+                  <p><strong>From:</strong> Range Forest Officer, {viewingMemo.rangeName || defaultFromAuthority}.</p>
+                  <p><strong>To:</strong> The Divisional Forest Officer, Rajgarh Forest Division, Rajgarh (H.P.).</p>
+                </div>
+
+                {/* Subject */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900 leading-snug">
+                  <span>Subject: - </span>
+                  <span className="underline">
+                    Memo for Fund for the month of {viewingMemo.monthYear} under scheme {viewingMemo.schemeName || 'All Schemes'}{viewingMemo.sectorName ? ` (${viewingMemo.sectorName})` : ''}.
+                  </span>
+                </div>
+
+                {/* Opening Letter Body */}
+                <div className="text-xs leading-relaxed text-gray-900 space-y-2">
+                  <p className="font-bold">Sir,</p>
+                  <p className="text-justify leading-relaxed">
+                    It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of <strong>{viewingMemo.monthYear}</strong> as per the details tabulated below.
+                  </p>
+                  <p className="text-justify leading-relaxed">
+                    You are kindly requested to sanction and release the total expenditure amount of <strong>₹{(viewingMemo.totalAmount || 0).toLocaleString('en-IN')}</strong> (Total Net RTGS Amount: <strong>₹{(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0).toLocaleString('en-IN')}</strong>) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.
+                  </p>
+                </div>
+
+                {/* Payees & Payment Details Table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-gray-900 text-xs">
+                    <thead>
+                      <tr className="bg-gray-100 text-gray-900 font-bold border-b border-gray-900 text-center">
+                        <th className="p-2 border-r border-gray-900 w-8">Sr. No.</th>
+                        <th className="p-2 border-r border-gray-900 min-w-[130px]">Name & Address</th>
+                        <th className="p-2 border-r border-gray-900 text-right">Total Amount</th>
+                        <th className="p-2 border-r border-gray-900 text-right">I/Tax 01%</th>
+                        <th className="p-2 border-r border-gray-900 text-right">GST TDS 02%</th>
+                        <th className="p-2 border-r border-gray-900 text-right">Net Amount RTGS</th>
+                        <th className="p-2 border-r border-gray-900">Account No.</th>
+                        <th className="p-2 border-r border-gray-900">IFSC Code</th>
+                        <th className="p-2">PAN & GSTIN</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800">
+                      {viewingMemo.payeeEntries && viewingMemo.payeeEntries.length > 0 ? (
+                        viewingMemo.payeeEntries.map((entry, idx) => (
+                          <tr key={idx} className="border-b border-gray-400">
+                            <td className="p-2 border-r border-gray-900 text-center font-medium">{idx + 1}</td>
+                            <td className="p-2 border-r border-gray-900 font-semibold">
+                              <div>{entry.name}</div>
+                              {entry.address && <div className="text-[10px] text-gray-600 font-normal">{entry.address}</div>}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 text-right font-bold">
+                              ₹{(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 text-right text-red-700 font-medium">
+                              ₹{(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 text-right text-purple-700 font-medium">
+                              ₹{(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">
+                              ₹{(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 font-mono text-[11px] font-bold">
+                              {entry.accountNumber}
+                            </td>
+                            <td className="p-2 border-r border-gray-900 font-mono text-[11px]">
+                              {entry.ifscCode}
+                            </td>
+                            <td className="p-2 font-mono text-[10px]">
+                              <div>PAN: {entry.panNumber || 'N/A'}</div>
+                              {entry.gstNumber && <div className="text-gray-600">GST: {entry.gstNumber}</div>}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={9} className="p-4 text-center text-gray-500 italic">No payee entries recorded.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-900">
+                        <td colSpan={2} className="p-2.5 text-right uppercase border-r border-gray-900">
+                          Total: -
+                        </td>
+                        <td className="p-2.5 text-right font-black text-xs border-r border-gray-900">
+                          ₹{(viewingMemo.totalAmount || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td className="p-2.5 text-right font-black text-xs text-red-800 border-r border-gray-900">
+                          ₹{(viewingMemo.totalITax || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td className="p-2.5 text-right font-black text-xs text-purple-800 border-r border-gray-900">
+                          ₹{(viewingMemo.totalGst || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td className="p-2.5 text-right font-black text-sm text-emerald-950 border-r border-gray-900">
+                          ₹{(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0).toLocaleString('en-IN')}
+                        </td>
+                        <td colSpan={3} className="p-2.5"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {/* Amount in words display */}
+                <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900">
+                  <span>Total Net Amount Payable (in words): </span>
+                  <span className="italic text-emerald-950 font-black">
+                    Rupees {convertNumberToWords(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0)} Only
+                  </span>
+                </div>
+
+                {/* Bottom Signature Section - Range Stamp */}
+                <div className="pt-20 flex justify-end text-xs font-bold text-gray-900">
+                  <div className="text-center space-y-1 min-w-[220px]">
+                    <div className="h-10"></div>
+                    <p className="text-sm font-black">Range Forest Officer</p>
+                    <p className="text-xs font-bold text-gray-800">{viewingMemo.rangeName || defaultFromAuthority}</p>
+                    <p className="text-[11px] text-gray-600 font-normal">Rajgarh Forest Division</p>
+                  </div>
+                </div>
+
+                {/* Bottom Close Button Bar - Hidden in Print */}
+                <div className="no-print pt-8 pb-4 flex justify-center items-center gap-3 border-t border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95"
+                  >
+                    <Printer className="w-4 h-4" /> Print Letter
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewingMemo(null)}
+                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95"
+                  >
+                    <X className="w-4 h-4" /> Close Letter Preview
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Expenditure List Print Modal Overlay */}
+        {showExpenditurePrintModal && (
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+            <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden border border-gray-200 my-8">
+              {/* Modal Toolbar - Hidden during print */}
+              <div className="no-print bg-gray-900 text-white px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Printer className="w-5 h-5 text-emerald-400" />
+                  <h3 className="font-bold text-base">Print Expenditure List Preview</h3>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => window.print()}
+                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                  >
+                    <Printer className="w-4 h-4" /> Print Report
+                  </button>
+                  <button
+                    onClick={() => setShowExpenditurePrintModal(false)}
+                    className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-300 hover:text-white"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Area */}
+              <div className="print-area p-8 md:p-10 space-y-6 bg-white text-gray-900">
+                <div className="text-center space-y-1 border-b pb-4">
+                  <h1 className="text-xl font-black uppercase tracking-wide text-gray-900">Department of Forests, Himachal Pradesh</h1>
+                  <h2 className="text-base font-bold text-gray-800">Rajgarh Forest Division — Expenditure Report List</h2>
+                  <p className="text-xs text-gray-500 font-medium">Financial Year: {selectedFY} | Date Generated: {new Date().toLocaleDateString('en-GB')}</p>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-gray-50 p-3 rounded-lg border border-gray-200">
+                  <div><span className="font-bold text-gray-600">Total Entries:</span> {currentExpenses.length}</div>
+                  <div><span className="font-bold text-gray-600">Total Amount:</span> ₹{currentExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0).toLocaleString('en-IN')}</div>
+                  <div><span className="font-bold text-gray-600">Range:</span> {ranges.find(r => r.id === userRangeId)?.name || userRangeName}</div>
+                  <div><span className="font-bold text-gray-600">Print Date:</span> {new Date().toLocaleDateString('en-GB')}</div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-gray-300 text-xs">
+                    <thead>
+                      <tr className="bg-gray-100 text-gray-800 font-bold border-b border-gray-300">
+                        <th className="p-2 border-r border-gray-300 w-8 text-center">#</th>
+                        <th className="p-2 border-r border-gray-300 whitespace-nowrap">Date</th>
+                        <th className="p-2 border-r border-gray-300">Payee Name & Account</th>
+                        <th className="p-2 border-r border-gray-300">Unit / Range / SOE</th>
+                        <th className="p-2 border-r border-gray-300">Description / Particulars</th>
+                        <th className="p-2 border-r border-gray-300 text-right">Amount (₹)</th>
+                        <th className="p-2 text-center">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentExpenses.map((exp, idx) => {
+                        const p = payees.find(p => p.id === exp.payeeId);
+                        const payeeName = p?.name || exp.payeeName || 'N/A';
+                        const payeeAcc = p?.accountNumber ? `A/C: ${p.accountNumber}` : '';
+                        const al = allocations.find(a => a.id === exp.allocationId);
+                        const r = ranges.find(r => r.id === al?.rangeId);
+                        const s = soes.find(s => s.id === exp.soeId);
+
+                        return (
+                          <tr key={exp.id} className="border-b border-gray-200 hover:bg-gray-50">
+                            <td className="p-2 border-r border-gray-200 text-center font-medium">{idx + 1}</td>
+                            <td className="p-2 border-r border-gray-200 whitespace-nowrap">{exp.date ? exp.date.split('-').reverse().join('/') : ''}</td>
+                            <td className="p-2 border-r border-gray-200 font-medium">
+                              <div>{payeeName}</div>
+                              {payeeAcc && <div className="text-[10px] text-gray-500 font-mono">{payeeAcc}</div>}
+                            </td>
+                            <td className="p-2 border-r border-gray-200">
+                              <div className="font-semibold">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
+                            </td>
+                            <td className="p-2 border-r border-gray-200 text-gray-700 italic">{exp.description || '-'}</td>
+                            <td className="p-2 border-r border-gray-200 text-right font-bold text-gray-900">₹{(Number(exp.amount) || 0).toLocaleString('en-IN')}</td>
+                            <td className="p-2 text-center capitalize font-semibold">{exp.status || 'pending'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-gray-100 font-bold border-t-2 border-gray-400">
+                        <td colSpan={5} className="p-2.5 text-right uppercase border-r border-gray-300">Total Expenditure Amount:</td>
+                        <td className="p-2.5 text-right text-emerald-800 text-sm font-black border-r border-gray-300">
+                          ₹{currentExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0).toLocaleString('en-IN')}
+                        </td>
+                        <td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                <div className="pt-12 flex justify-between items-end text-xs">
+                  <div>
+                    <p className="font-bold">Prepared By:</p>
+                    <p className="text-gray-500 mt-6">Dealing Assistant / Data Entry Operator</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold">Verified & Authorised By:</p>
+                    <p className="text-gray-500 mt-6">Range Forest Officer / Divisional Forest Officer</p>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
