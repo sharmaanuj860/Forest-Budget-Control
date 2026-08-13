@@ -122,6 +122,8 @@ service cloud.firestore {
              (!('netAmount' in data) || data.netAmount is number) &&
              (!('panNumber' in data) || data.panNumber == null || data.panNumber is string) &&
              (!('gstNumber' in data) || data.gstNumber == null || data.gstNumber is string) &&
+             (!('syncedMemoId' in data) || data.syncedMemoId == null || data.syncedMemoId is string) &&
+             (!('syncedMemoNo' in data) || data.syncedMemoNo == null || data.syncedMemoNo is string) &&
              (!('updatedBy' in data) || data.updatedBy is string) &&
              (!('updatedByRole' in data) || data.updatedByRole is string);
     }
@@ -129,7 +131,7 @@ service cloud.firestore {
     function isValidFeatureLock(data) {
       return hasRequiredFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
              hasOnlyAllowedFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
-             data.feature in ['Allocation', 'Expenditure', 'Access'] &&
+             data.feature in ['Allocation', 'Expenditure', 'Access', 'Memo', 'MemoSync'] &&
              data.target is string &&
              data.isLocked is bool &&
              data.updatedBy is string &&
@@ -271,20 +273,24 @@ service cloud.firestore {
 
     match /approvedBudgetFiles/{id} {
       allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /distributedBudgetFiles/{id} {
       allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /notifications/{id} {
       allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAdmin();
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /memos/{id} {
+      allow read, create, update, delete: if isAuthenticated();
+    }
+
+    match /auditLogs/{id} {
       allow read, create, update, delete: if isAuthenticated();
     }
   }

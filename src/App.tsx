@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip, BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line } from 'recharts';
-import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell, MoveHorizontal, PlusCircle, Users, Send } from 'lucide-react';
+import { IndianRupee, Wallet, TrendingDown, Landmark, Activity, FileText, Map, MapPin, Plus, Trash2, Download, LogOut, User, Shield, FileBarChart, Filter, Search, Menu, Table, Pencil, Edit2, Home, ChevronUp, ChevronDown, TreePine, Check, X, Unlock, RefreshCcw, RefreshCw, Save, Eye, EyeOff, ShieldCheck, Lock, TrendingUp, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer, CornerUpLeft, Calendar, PieChart as PieChartIcon, Maximize2, Minimize2, Bell, MoveHorizontal, PlusCircle, Users, Send, History } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { 
@@ -92,6 +92,8 @@ type Expense = {
   panNumber?: string;
   gstNumber?: string;
   netAmount?: number;
+  syncedMemoId?: string;
+  syncedMemoNo?: string;
 };
 
 type Notification = {
@@ -207,7 +209,7 @@ type AppUser = {
 
 type FeatureLock = {
   id: string;
-  feature: 'Allocation' | 'Expenditure' | 'Access';
+  feature: 'Allocation' | 'Expenditure' | 'Access' | 'Memo' | 'MemoSync';
   target: string; // role or rangeId
   isLocked: boolean;
   updatedBy: string;
@@ -636,6 +638,12 @@ export default function App() {
   const [fys, setFys] = useState<FinancialYear[]>([]);
   const [selectedFY, setSelectedFY] = useState<string>('2026-27');
   const [loginFY, setLoginFY] = useState<string>('2026-27');
+
+  const fyOptions = useMemo(() => {
+    const defaultFYs = ['2026-27', '2025-26', '2024-25'];
+    const fetchedFYs = fys.map(f => f.name).filter(Boolean);
+    return Array.from(new Set([...defaultFYs, ...fetchedFYs]));
+  }, [fys]);
   const [isFyHiddenForUsers, setIsFyHiddenForUsers] = useState<boolean>(false);
   const [ranges, setRanges] = useState<Range[]>([]);
   const [schemes, setSchemes] = useState<Scheme[]>([]);
@@ -667,6 +675,48 @@ export default function App() {
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
   const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees' | 'memo'>('list');
   const [showExpenditurePrintModal, setShowExpenditurePrintModal] = useState(false);
+
+  // Memo Sync state
+  const [selectedSyncedMemo, setSelectedSyncedMemo] = useState<{ memoId: string; memoNo: string; entryId?: string } | null>(null);
+  const [showMemoSyncModal, setShowMemoSyncModal] = useState<boolean>(false);
+  const [memoSearchTerm, setMemoSearchTerm] = useState<string>('');
+
+  // Audit Logs State & Helper
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [auditSearchTerm, setAuditSearchTerm] = useState<string>('');
+
+  const logAuditAction = async (action: string, details?: string) => {
+    try {
+      const logData = {
+        action,
+        details: details || '',
+        userName: user?.displayName || user?.email?.split('@')[0] || 'User',
+        userEmail: user?.email || '',
+        userRole: userRole || 'User',
+        timestamp: Date.now()
+      };
+      await addDoc(collection(db, 'auditLogs'), logData);
+    } catch (err) {
+      console.warn("Could not log audit action:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, 'auditLogs'));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as any);
+      logs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+      setAuditLogs(logs.slice(0, 50));
+    }, (error) => {
+      console.warn("Audit logs listener error:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const isMemoSyncEnabled = !featureLocks.some(l => l.feature === 'MemoSync' && (l.target === 'global' || l.target === 'all') && l.isLocked);
+  const userRangeRoleName = userRole && ['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userRole) ? userRole : '';
+  const isMemoLockedForUser = userRole !== 'admin' && featureLocks.some(l => l.feature === 'Memo' && l.isLocked && (l.target === 'all' || l.target === 'global' || l.target === userRangeRoleName || l.target === userRole));
 
   // Memo for Fund states
   const [memos, setMemos] = useState<MemoForFund[]>([]);
@@ -779,6 +829,7 @@ export default function App() {
           { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
         ]
       },
+      { name: 'Audit Log', icon: <History className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { name: 'Users', icon: <User className="w-3 h-3 sm:w-4 sm:h-4" /> }
     ];
 
@@ -803,7 +854,8 @@ export default function App() {
           { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
         ]
-      }
+      },
+      { name: 'Audit Log', icon: <History className="w-3 h-3 sm:w-4 sm:h-4" /> }
     ];
 
     const otherItems = [
@@ -827,7 +879,8 @@ export default function App() {
           { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
         ]
-      }
+      },
+      { name: 'Audit Log', icon: <History className="w-3 h-3 sm:w-4 sm:h-4" /> }
     ];
 
     if (userRole === 'admin') return adminItems;
@@ -1635,6 +1688,30 @@ export default function App() {
     if (userRole === 'Division') return 'Division Office';
     return 'Rajgarh Forest Division';
   }, [ranges, userRangeId, userRole]);
+
+  const filteredMemosForSync = useMemo(() => {
+    return memos.filter(m => {
+      if (selectedFY && m.financialYear && m.financialYear !== selectedFY && m.fyId !== selectedFY) {
+        return false;
+      }
+      if (userRole && userRole !== 'admin') {
+        if (m.rangeId && userRangeId && m.rangeId !== userRangeId) {
+          if (m.rangeName && userRangeName && m.rangeName.toLowerCase() !== userRangeName.toLowerCase()) {
+            return false;
+          }
+        }
+      }
+      if (memoSearchTerm.trim()) {
+        const q = memoSearchTerm.toLowerCase();
+        const matchNo = m.memoNo?.toLowerCase().includes(q);
+        const matchMonth = m.monthYear?.toLowerCase().includes(q);
+        const matchScheme = m.schemeName?.toLowerCase().includes(q);
+        const matchPayee = m.payeeEntries?.some(p => p.name?.toLowerCase().includes(q) || p.accountNumber?.includes(q));
+        return matchNo || matchMonth || matchScheme || matchPayee;
+      }
+      return true;
+    });
+  }, [memos, selectedFY, userRole, userRangeId, userRangeName, memoSearchTerm]);
 
   const memoFilteredExpenses = useMemo(() => {
     if (!selectedMemoPayeeId) return [];
@@ -3557,20 +3634,24 @@ export default function App() {
 
       try {
         let base64Data = '';
-        try {
-          base64Data = await readFileAsDataUrl(file);
-        } catch (readErr) {
-          console.error("Error reading file as data URL:", readErr);
+        if (file.size < 800 * 1024) {
+          try {
+            base64Data = await readFileAsDataUrl(file);
+          } catch (readErr) {
+            console.error("Error reading file as data URL:", readErr);
+          }
         }
 
-        let downloadURL = base64Data;
+        let downloadURL = '';
 
         try {
           const storagePath = `budget_files/${type}/${Date.now()}_${file.name}`;
           const storageRef = ref(storage, storagePath);
           const uploadTask = uploadBytesResumable(storageRef, file);
 
-          await new Promise<void>((resolve) => {
+          setUploadTasks(prev => ({ ...prev, [type]: uploadTask }));
+
+          await new Promise<void>((resolve, reject) => {
             uploadTask.on('state_changed', 
               (snapshot) => {
                 const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
@@ -3585,28 +3666,39 @@ export default function App() {
                 }));
               }, 
               (error) => {
-                console.warn("Storage upload warning (using base64 fallback):", error);
-                resolve();
+                console.warn("Storage upload warning:", error);
+                reject(error);
               }, 
               async () => {
                 try {
                   const remoteUrl = await getDownloadURL(uploadTask.snapshot.ref);
                   downloadURL = remoteUrl;
+                  resolve();
                 } catch (e) {
-                  console.warn("Could not fetch remote URL, using base64 data:", e);
+                  console.warn("Could not fetch remote URL:", e);
+                  reject(e);
                 }
-                resolve();
               }
             );
           });
         } catch (storageErr) {
-          console.warn("Storage upload error, saving base64 to Firestore:", storageErr);
+          console.warn("Storage upload error:", storageErr);
+        }
+
+        let savedFileData = '';
+        if (downloadURL && downloadURL.startsWith('http')) {
+          savedFileData = '';
+        } else if (base64Data && base64Data.length < 800000) {
+          downloadURL = base64Data;
+          savedFileData = base64Data;
+        } else {
+          throw new Error(`File upload failed. Storage upload did not complete and file size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds inline document limit.`);
         }
 
         const fileRecord: any = {
           name: file.name,
           url: downloadURL,
-          fileData: base64Data,
+          fileData: savedFileData,
           schemeId: budgetFileSelection.schemeId,
           sectorId: budgetFileSelection.sectorId || '',
           type,
@@ -3625,7 +3717,7 @@ export default function App() {
         
         setUploadStatus(prev => ({
           ...prev,
-          [type]: { ...prev[type], isUploading: false, progress: 100 }
+          [type]: { ...prev[type], isUploading: false, progress: 100, error: null }
         }));
         
         setTimeout(() => {
@@ -3634,17 +3726,23 @@ export default function App() {
             [type]: { ...prev[type], progress: 0, fileName: '', transferred: 0, total: 0 }
           }));
         }, 3000);
-      } catch (err) {
+      } catch (err: any) {
         console.error("Error saving budget file:", err);
-        showAlert(`${file.name}: Failed to save file.`);
+        const errorMsg = err?.message || "Failed to save file.";
+        showAlert(`${file.name}: ${errorMsg}`);
         setUploadStatus(prev => ({
           ...prev,
-          [type]: { ...prev[type], isUploading: false, error: "Failed to save file." }
+          [type]: { ...prev[type], isUploading: false, error: errorMsg }
         }));
+      } finally {
+        setUploadTasks(prev => {
+          const newTasks = { ...prev };
+          delete newTasks[type];
+          return newTasks;
+        });
       }
     }
     
-    showAlert(`${fileList.length} file(s) processed for ${type === 'approved' ? 'Approved' : 'Distributed'} budget.`);
     e.target.value = '';
   };
 
@@ -3744,9 +3842,24 @@ export default function App() {
                           {(uploadStatus[type].transferred / (1024 * 1024)).toFixed(2)} MB / {(uploadStatus[type].total / (1024 * 1024)).toFixed(2)} MB
                         </span>
                       </div>
-                      <span className={`text-[10px] font-bold ${uploadStatus[type].error ? 'text-red-600' : 'text-blue-600'}`}>
-                        {uploadStatus[type].error ? 'Error' : `${Math.round(uploadStatus[type].progress)}%`}
-                      </span>
+                      <div className="flex items-center gap-1">
+                        <span className={`text-[10px] font-bold ${uploadStatus[type].error ? 'text-red-600' : 'text-blue-600'}`}>
+                          {uploadStatus[type].error ? 'Error' : `${Math.round(uploadStatus[type].progress)}%`}
+                        </span>
+                        {!uploadStatus[type].isUploading && (
+                          <button
+                            type="button"
+                            onClick={() => setUploadStatus(prev => ({
+                              ...prev,
+                              [type]: { isUploading: false, progress: 0, fileName: '', transferred: 0, total: 0, error: null }
+                            }))}
+                            className="text-gray-400 hover:text-gray-700 p-0.5 rounded cursor-pointer ml-1"
+                            title="Dismiss notification"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     
                     <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
@@ -3775,6 +3888,7 @@ export default function App() {
                     type="file"
                     accept=".pdf"
                     multiple
+                    onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
                     onChange={(e) => handleBudgetFileUpload(e, type)}
                     className="hidden"
                     id={`file-upload-${type}`}
@@ -5235,9 +5349,11 @@ export default function App() {
     try {
       if (editingItem?.type === 'Financial Year') {
         await updateDoc(doc(db, 'financialYears', editingItem.item.id), { name, updatedAt: Date.now() });
+        logAuditAction('FY Updated', `Financial Year: ${name}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'financialYears'), { name, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('FY Created', `Financial Year: ${name}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5251,9 +5367,11 @@ export default function App() {
     try {
       if (editingItem?.type === 'Range') {
         await updateDoc(doc(db, 'ranges', editingItem.item.id), { name, updatedAt: Date.now() });
+        logAuditAction('Range Updated', `Range Name: ${name}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'ranges'), { name, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('Range Created', `Range Name: ${name}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5267,9 +5385,11 @@ export default function App() {
     try {
       if (editingItem?.type === 'Scheme') {
         await updateDoc(doc(db, 'schemes', editingItem.item.id), { name, updatedAt: Date.now() });
+        logAuditAction('Scheme Updated', `Scheme Name: ${name}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'schemes'), { name, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('Scheme Created', `Scheme Name: ${name}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5284,9 +5404,13 @@ export default function App() {
     try {
       if (editingItem?.type === 'Sector') {
         await updateDoc(doc(db, 'sectors', editingItem.item.id), { name, schemeId, updatedAt: Date.now() });
+        const schemeName = schemes.find(s => s.id === schemeId)?.name || schemeId;
+        logAuditAction('Sector Updated', `Sector: ${name}, Scheme: ${schemeName}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'sectors'), { name, schemeId, createdAt: Date.now(), updatedAt: Date.now() });
+        const schemeName = schemes.find(s => s.id === schemeId)?.name || schemeId;
+        logAuditAction('Sector Created', `Sector: ${name}, Scheme: ${schemeName}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5308,9 +5432,11 @@ export default function App() {
     try {
       if (editingItem?.type === 'Activity') {
         await updateDoc(doc(db, 'activities', editingItem.item.id), { name, sectorId, schemeId, updatedAt: Date.now() });
+        logAuditAction('Activity Updated', `Activity: ${name}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'activities'), { sectorId, schemeId, name, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('Activity Created', `Activity: ${name}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5331,9 +5457,11 @@ export default function App() {
     try {
       if (editingItem?.type === 'Sub-Activity') {
         await updateDoc(doc(db, 'subActivities', editingItem.item.id), { name, activityId, updatedAt: Date.now() });
+        logAuditAction('Sub-Activity Updated', `Sub-Activity: ${name}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'subActivities'), { activityId, name, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('Sub-Activity Created', `Sub-Activity: ${name}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5375,9 +5503,11 @@ export default function App() {
       };
       if (editingItem?.type === 'SOE Name') {
         await updateDoc(doc(db, 'soeHeads', editingItem.item.id), { ...data, updatedAt: Date.now() });
+        logAuditAction('SOE Head Updated', `SOE: ${name}, Scheme: ${schemes.find(s => s.id === schemeId)?.name || 'N/A'}`);
         setEditingItem(null);
       } else {
         await addDoc(collection(db, 'soeHeads'), { ...data, createdAt: Date.now(), updatedAt: Date.now() });
+        logAuditAction('SOE Head Created', `SOE: ${name}, Scheme: ${schemes.find(s => s.id === schemeId)?.name || 'N/A'}`);
       }
       e.target.reset();
     } catch (error) {
@@ -5564,6 +5694,8 @@ export default function App() {
     try {
       let fundedSOEs: any[] = [];
       let status = 'Pending SOE Funds';
+      
+      const rangeName = ranges.find(r => r.id === rangeId)?.name || rangeId;
 
       if (fundingSoeName) {
         const matchedSoes = branchSoes.filter(s => s.name === fundingSoeName);
@@ -5599,6 +5731,7 @@ export default function App() {
           status, fundedSOEs,
           updatedAt: Date.now()
         });
+        logAuditAction('Allocation Updated', `Range: ${rangeName}, Amount: ₹${amount.toLocaleString()}, SOE: ${fundingSoeName || 'Multiple'}`);
         setEditingItem(null);
       } else {
         // Always create a new entry for every allocation as requested
@@ -5609,6 +5742,7 @@ export default function App() {
           createdAt: Date.now(),
           updatedAt: Date.now()
         });
+        logAuditAction('Allocation Created', `Range: ${rangeName}, Amount: ₹${amount.toLocaleString()}, SOE: ${fundingSoeName || 'Multiple'}`);
       }
       e.target.reset();
       setAllocationAmount('');
@@ -5701,6 +5835,7 @@ export default function App() {
             approvalReason: reason || '',
             updatedAt: Date.now()
           });
+          logAuditAction('Expenditure Approved', `Status: ${status}, Approval ID: ${nextId}`);
         });
       } else {
         await updateDoc(doc(db, 'expenditures', expenseId), { 
@@ -5710,6 +5845,7 @@ export default function App() {
           updatedAt: Date.now(),
           ...(status === 'pending' ? { approvalId: null } : {})
         });
+        logAuditAction('Expenditure Status Updated', `Status: ${status}, Reason: ${reason || 'N/A'}`);
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
@@ -5912,10 +6048,13 @@ export default function App() {
             tdsGstAmount: pTdsGstAmt || null,
             netAmount: pNetAmt,
             panNumber: panNumber || null,
-            gstNumber: gstNumber || null
+            gstNumber: gstNumber || null,
+            syncedMemoId: selectedSyncedMemo?.memoId || null,
+            syncedMemoNo: selectedSyncedMemo?.memoNo || null
           });
         }
         await batch.commit();
+        logAuditAction('Expenditure Batch Created', `${selectedPayeesForExpense.length} payees added, Total: ₹${totalAmount.toLocaleString()}`);
         setSelectedPayeesForExpense([]);
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
@@ -5923,6 +6062,7 @@ export default function App() {
         setSelectedDeductions([]);
         setPanNumber('');
         setGstNumber('');
+        setSelectedSyncedMemo(null);
         showAlert(`${selectedPayeesForExpense.length} expenditures added successfully.`);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'expenditures');
@@ -5975,6 +6115,7 @@ export default function App() {
           updatedByRole: userRole,
           updatedAt: Date.now()
         });
+        logAuditAction('Expenditure Updated', `Amount: ₹${amount.toLocaleString()}, SOE: ${selectedName}`);
         setEditingItem(null);
         setExpenseAmount('');
         setExpenseDescription('');
@@ -6003,14 +6144,18 @@ export default function App() {
           tdsGstAmount: tdsGstAmt || null,
           netAmount: netAmount,
           panNumber: panNumber || null,
-          gstNumber: gstNumber || null
+          gstNumber: gstNumber || null,
+          syncedMemoId: selectedSyncedMemo?.memoId || null,
+          syncedMemoNo: selectedSyncedMemo?.memoNo || null
         });
+        logAuditAction('Expenditure Created', `Amount: ₹${amount.toLocaleString()}, SOE: ${selectedName}`);
         setCurrentSoeBalance(undefined);
         setExpenseAmount('');
         setExpenseDescription('');
         setSelectedDeductions([]);
         setPanNumber('');
         setGstNumber('');
+        setSelectedSyncedMemo(null);
       }
     } catch (error) {
       handleFirestoreError(error, editingItem?.type === 'Expenditure' ? OperationType.UPDATE : OperationType.CREATE, 'expenditures');
@@ -6082,6 +6227,182 @@ export default function App() {
     } catch (err) {
       console.error("PDF export error:", err);
       showAlert("Failed to export PDF.");
+    }
+  };
+
+  const downloadMemoPDF = (memo: MemoForFund) => {
+    try {
+      const doc = new jsPDF('p', 'mm', 'a4');
+      const rangeTitle = memo.rangeName ? memo.rangeName.replace(/^RFO\s*/i, '') : (userRangeName || 'Sarahan');
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.text("H.P. FOREST DEPARTMENT", 105, 14, { align: "center" });
+      doc.setFontSize(13);
+      doc.text(`OFFICE OF THE RANGE FOREST OFFICER, ${rangeTitle.toUpperCase()}`, 105, 21, { align: "center" });
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      doc.text("Forest Division Rajgarh, District Sirmaur (H.P.)", 105, 27, { align: "center" });
+
+      doc.setLineWidth(0.5);
+      doc.line(14, 30, 196, 30);
+
+      doc.setFontSize(10);
+      doc.setFont("helvetica", "bold");
+      doc.text(`No. ${memo.memoNo}`, 14, 36);
+      const dateFormatted = memo.date ? memo.date.split('-').reverse().join('.') : '';
+      doc.text(`Dated: ${dateFormatted}`, 196, 36, { align: "right" });
+
+      doc.setLineWidth(0.2);
+      doc.line(14, 39, 196, 39);
+
+      doc.setFontSize(9.5);
+      doc.setFont("helvetica", "bold");
+      doc.text("From:", 14, 45);
+      doc.setFont("helvetica", "normal");
+      doc.text(`Range Forest Officer, ${memo.rangeName || rangeTitle}.`, 28, 45);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("To:", 14, 51);
+      doc.setFont("helvetica", "normal");
+      doc.text("The Divisional Forest Officer, Rajgarh Forest Division, Rajgarh (H.P.).", 28, 51);
+
+      doc.setFont("helvetica", "bold");
+      doc.text("Subject:", 14, 58);
+      const schemeText = memo.schemeName || 'All Schemes';
+      const sectorText = memo.sectorName ? ` (${memo.sectorName})` : '';
+      const subjStr = `Memo for Fund for the month of ${memo.monthYear} under scheme ${schemeText}${sectorText}.`;
+      doc.text(subjStr, 32, 58, { maxWidth: 160 });
+
+      doc.text("Sir,", 14, 66);
+      const bodyText = `It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of ${memo.monthYear} as per the details tabulated below.`;
+      const splitBody = doc.splitTextToSize(bodyText, 182);
+      doc.text(splitBody, 14, 72);
+
+      let nextY = 72 + (splitBody.length * 5) + 2;
+      const bodyText2 = `You are kindly requested to sanction and release the total expenditure amount of Rs. ${(memo.totalAmount || 0).toLocaleString('en-IN')} (Total Net RTGS Amount: Rs. ${(memo.totalNetRtgs || memo.totalAmount || 0).toLocaleString('en-IN')}) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.`;
+      const splitBody2 = doc.splitTextToSize(bodyText2, 182);
+      doc.text(splitBody2, 14, nextY);
+
+      nextY += (splitBody2.length * 5) + 4;
+
+      const tableHead = [['Sr.', 'Name & Address', 'Total (Rs)', 'I/Tax 1%', 'GST 2%', 'Net RTGS', 'Account No.', 'IFSC Code', 'PAN/GSTIN']];
+      const tableData = (memo.payeeEntries || []).map((e, idx) => [
+        idx + 1,
+        `${e.name || ''}${e.address ? '\n' + e.address : ''}`,
+        (Number(e.totalAmount) || 0).toLocaleString('en-IN'),
+        (Number(e.iTaxAmount) || 0).toLocaleString('en-IN'),
+        (Number(e.gstAmount) || 0).toLocaleString('en-IN'),
+        (Number(e.netRtgsAmount) || 0).toLocaleString('en-IN'),
+        e.accountNumber || '',
+        e.ifscCode || '',
+        `PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? '\nGST: ' + e.gstNumber : ''}`
+      ]);
+
+      const footRow = [
+        '',
+        'TOTAL:',
+        (memo.totalAmount || 0).toLocaleString('en-IN'),
+        (memo.totalITax || 0).toLocaleString('en-IN'),
+        (memo.totalGst || 0).toLocaleString('en-IN'),
+        (memo.totalNetRtgs || memo.totalAmount || 0).toLocaleString('en-IN'),
+        '', '', ''
+      ];
+
+      autoTable(doc, {
+        startY: nextY,
+        head: tableHead,
+        body: tableData,
+        foot: [footRow],
+        theme: 'grid',
+        styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak' },
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
+        footStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
+        columnStyles: {
+          0: { halign: 'center', cellWidth: 8 },
+          1: { cellWidth: 35 },
+          2: { halign: 'right', cellWidth: 18 },
+          3: { halign: 'right', cellWidth: 14 },
+          4: { halign: 'right', cellWidth: 14 },
+          5: { halign: 'right', cellWidth: 22, fontStyle: 'bold' },
+          6: { cellWidth: 25 },
+          7: { cellWidth: 20 },
+          8: { cellWidth: 22 }
+        }
+      });
+
+      let finalY = (doc as any).lastAutoTable?.finalY || nextY + 40;
+      if (finalY > 250) {
+        doc.addPage();
+        finalY = 20;
+      } else {
+        finalY += 6;
+      }
+
+      const words = convertNumberToWords(memo.totalNetRtgs || memo.totalAmount || 0);
+      doc.setFontSize(8.5);
+      doc.setFont("helvetica", "bold");
+      doc.text(`Total Net Amount Payable (in words): Rupees ${words} Only`, 14, finalY);
+
+      finalY += 20;
+      if (finalY > 265) {
+        doc.addPage();
+        finalY = 30;
+      }
+      doc.text("Range Forest Officer", 160, finalY, { align: "center" });
+      doc.setFont("helvetica", "normal");
+      doc.text(memo.rangeName || rangeTitle, 160, finalY + 4, { align: "center" });
+      doc.text("Rajgarh Forest Division", 160, finalY + 8, { align: "center" });
+
+      doc.save(`Memo_For_Fund_${(memo.memoNo || 'Memo').replace(/[/\\?%*:|"<>]/g, '_')}_${memo.monthYear || ''}.pdf`);
+    } catch (err) {
+      console.error("Error generating Memo PDF:", err);
+      showAlert("Failed to download Memo PDF.");
+    }
+  };
+
+  const handlePrintMemo = () => {
+    try {
+      window.focus();
+      const memoElement = document.getElementById('memo-print-area');
+      if (!memoElement) {
+        window.print();
+        return;
+      }
+      const printWin = window.open('', '_blank', 'width=900,height=800');
+      if (printWin) {
+        printWin.document.write(`
+          <!DOCTYPE html>
+          <html>
+            <head>
+              <title>Memo for Fund - ${viewingMemo?.memoNo || ''}</title>
+              <script src="https://cdn.tailwindcss.com"></script>
+              <style>
+                body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #fff; color: #000; padding: 24px; }
+                @media print {
+                  body { padding: 0; margin: 0; }
+                  .no-print { display: none !important; }
+                }
+              </style>
+            </head>
+            <body>
+              <div>${memoElement.innerHTML}</div>
+              <script>
+                setTimeout(() => {
+                  window.focus();
+                  window.print();
+                }, 400);
+              </script>
+            </body>
+          </html>
+        `);
+        printWin.document.close();
+      } else {
+        window.print();
+      }
+    } catch (e) {
+      console.error("Print error:", e);
+      window.print();
     }
   };
 
@@ -6211,12 +6532,12 @@ export default function App() {
     setEntryTotalAmount(val);
     const tot = parseFloat(val);
     if (!isNaN(tot) && tot > 0) {
-      if (tot >= 30000) {
+      if (tot > 30000) {
         setEntryDeductITax(true);
       } else {
         setEntryDeductITax(false);
       }
-      if (tot >= 250000) {
+      if (tot > 250000) {
         setEntryDeductGst(true);
       } else {
         setEntryDeductGst(false);
@@ -6238,11 +6559,15 @@ export default function App() {
       showAlert('Please enter a valid Total Amount.');
       return;
     }
-    const iTaxP = entryDeductITax ? (parseFloat(entryITaxPercent) || 0) : 0;
-    const gstP = entryDeductGst ? (parseFloat(entryGstPercent) || 0) : 0;
 
-    const iTaxAmt = entryDeductITax ? Math.round((tot * iTaxP) / 100 * 100) / 100 : 0;
-    const gstAmt = entryDeductGst ? Math.round((tot * gstP) / 100 * 100) / 100 : 0;
+    const isITaxApplicable = entryDeductITax && tot > 30000;
+    const isGstApplicable = entryDeductGst && tot > 250000;
+
+    const iTaxP = isITaxApplicable ? (parseFloat(entryITaxPercent) || 0) : 0;
+    const gstP = isGstApplicable ? (parseFloat(entryGstPercent) || 0) : 0;
+
+    const iTaxAmt = isITaxApplicable ? Math.round((tot * iTaxP) / 100 * 100) / 100 : 0;
+    const gstAmt = isGstApplicable ? Math.round((tot * gstP) / 100 * 100) / 100 : 0;
     const netRtgs = Math.round((tot - iTaxAmt - gstAmt) * 100) / 100;
 
     const newEntry: MemoPayeeEntry = {
@@ -6254,10 +6579,10 @@ export default function App() {
       panNumber: entryPan.trim(),
       gstNumber: entryGst.trim(),
       totalAmount: tot,
-      deductITax: entryDeductITax,
+      deductITax: isITaxApplicable,
       iTaxPercent: parseFloat(entryITaxPercent) || 0,
       iTaxAmount: iTaxAmt,
-      deductGst: entryDeductGst,
+      deductGst: isGstApplicable,
       gstPercent: parseFloat(entryGstPercent) || 0,
       gstAmount: gstAmt,
       netRtgsAmount: netRtgs,
@@ -6373,13 +6698,15 @@ export default function App() {
     try {
       if (editingMemo) {
         await updateDoc(doc(db, 'memos', editingMemo.id), memoData);
+        logAuditAction('Memo Updated', `Memo No: ${memoNoInput.trim()}, Status: ${status}, Payees: ${memoPayeeEntries.length}, Amount: ₹${totalGross}`);
         showAlert(`Memo for Fund ${status === 'submitted' ? 'submitted and locked' : 'updated as draft'} successfully.`);
       } else {
         await addDoc(collection(db, 'memos'), {
           ...memoData,
           createdAt: Date.now()
         });
-        showAlert(`Memo for Fund ${status === 'submitted' ? 'submitted and locked' : 'saved as draft'} successfully.`);
+        logAuditAction('Memo Created', `Memo No: ${memoNoInput.trim()}, Status: ${status}, Payees: ${memoPayeeEntries.length}, Amount: ₹${totalGross}`);
+        showAlert(`Memo for Fund ${status === 'submitted' ? 'saved as draft' : 'saved as draft'} successfully.`);
       }
       handleResetMemoForm();
     } catch (error) {
@@ -6404,6 +6731,7 @@ export default function App() {
     showConfirm(`Are you sure you want to delete Memo No. ${memo.memoNo}?`, async () => {
       try {
         await deleteDoc(doc(db, 'memos', memo.id));
+        logAuditAction('Memo Deleted', `Memo No: ${memo.memoNo}`);
         showAlert('Memo deleted successfully.');
         if (editingMemo?.id === memo.id) {
           handleResetMemoForm();
@@ -6474,13 +6802,15 @@ export default function App() {
 
       try {
         let base64Data = '';
-        try {
-          base64Data = await readFileAsDataUrl(file);
-        } catch (readErr) {
-          console.error("Error reading file:", readErr);
+        if (file.size < 800 * 1024) {
+          try {
+            base64Data = await readFileAsDataUrl(file);
+          } catch (readErr) {
+            console.error("Error reading file:", readErr);
+          }
         }
 
-        let downloadURL = base64Data;
+        let downloadURL = '';
 
         try {
           const storagePath = `notifications/${Date.now()}_${file.name}`;
@@ -6489,7 +6819,7 @@ export default function App() {
 
           setUploadTasks(prev => ({ ...prev, [type]: uploadTask }));
 
-          await new Promise<void>((resolve) => {
+          await new Promise<void>((resolve, reject) => {
             uploadTask.on('state_changed',
               (snapshot) => {
                 const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
@@ -6499,34 +6829,45 @@ export default function App() {
                 }));
               },
               (error) => {
-                console.warn("Storage upload warning (using embedded base64 fallback):", error);
-                resolve();
+                console.warn("Storage upload warning:", error);
+                reject(error);
               },
               async () => {
                 try {
                   const remoteUrl = await getDownloadURL(uploadTask.snapshot.ref);
                   downloadURL = remoteUrl;
+                  resolve();
                 } catch (err) {
                   console.warn("Could not get remote download URL:", err);
+                  reject(err);
                 }
-                resolve();
               }
             );
           });
         } catch (storageErr) {
-          console.warn("Storage upload bypassed, saving embedded file data:", storageErr);
+          console.warn("Storage upload error:", storageErr);
+        }
+
+        let savedFileData = '';
+        if (downloadURL && downloadURL.startsWith('http')) {
+          savedFileData = '';
+        } else if (base64Data && base64Data.length < 800000) {
+          downloadURL = base64Data;
+          savedFileData = base64Data;
+        } else {
+          throw new Error(`Notification upload failed. Storage upload did not complete and file size (${(file.size / (1024 * 1024)).toFixed(2)} MB) exceeds inline document limit.`);
         }
 
         await addDoc(collection(db, 'notifications'), {
           name: file.name,
           url: downloadURL,
-          fileData: base64Data,
+          fileData: savedFileData,
           type: file.type,
           createdAt: Date.now(),
           uploadedBy: user?.uid
         });
 
-        setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, progress: 100 } }));
+        setUploadStatus(prev => ({ ...prev, [type]: { ...prev[type], isUploading: false, progress: 100, error: null } }));
       } catch (error) {
         console.error("Notification upload error:", error);
         showAlert("Failed to upload notification file.");
@@ -6780,6 +7121,7 @@ export default function App() {
     showConfirm(`Are you sure you want to delete this ${collectionName.slice(0, -1)}?`, async () => {
       try {
         await deleteDoc(doc(db, collectionName, id));
+        logAuditAction('Item Deleted', `Collection: ${collectionName}, ID: ${id}`);
         showAlert("Deleted successfully.");
         if (editingItem?.item?.id === id) {
           setEditingItem(null);
@@ -7065,7 +7407,46 @@ export default function App() {
     }
   };
 
-  const handleToggleFeatureLock = async (feature: 'Allocation' | 'Expenditure' | 'Access', target: string) => {
+  const handleUnsyncExpense = async (expenseId: string) => {
+    showConfirm('Remove memo sync link from this expenditure entry?', async () => {
+      try {
+        await updateDoc(doc(db, 'expenditures', expenseId), {
+          syncedMemoId: null,
+          syncedMemoNo: null,
+          updatedAt: Date.now()
+        });
+        showAlert('Memo sync link removed successfully.');
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `expenditures/${expenseId}`);
+      }
+    });
+  };
+
+  const handleClearAllMemoSyncs = async () => {
+    showConfirm('Are you sure you want to delete/clear all memo sync references across all expenditure entries?', async () => {
+      try {
+        const syncedExpSnap = await getDocs(query(collection(db, 'expenditures'), where('syncedMemoId', '!=', null)));
+        if (syncedExpSnap.empty) {
+          showAlert('No synced expenditure entries found.');
+          return;
+        }
+        const batch = writeBatch(db);
+        syncedExpSnap.docs.forEach(d => {
+          batch.update(doc(db, 'expenditures', d.id), {
+            syncedMemoId: null,
+            syncedMemoNo: null,
+            updatedAt: Date.now()
+          });
+        });
+        await batch.commit();
+        showAlert(`Cleared sync references from ${syncedExpSnap.size} expenditure entries.`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, 'expenditures');
+      }
+    });
+  };
+
+  const handleToggleFeatureLock = async (feature: 'Allocation' | 'Expenditure' | 'Access' | 'Memo' | 'MemoSync', target: string) => {
     const existingLock = featureLocks.find(l => l.feature === feature && l.target === target);
     try {
       if (existingLock) {
@@ -7083,6 +7464,7 @@ export default function App() {
           updatedAt: Date.now()
         });
       }
+      logAuditAction('Feature Lock Toggled', `Feature: ${feature}, Target: ${target}, State: ${existingLock ? (!existingLock.isLocked ? 'Locked' : 'Unlocked') : 'Locked'}`);
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'featureLocks');
     }
@@ -7094,10 +7476,119 @@ export default function App() {
         isDisabled: !isDisabled,
         updatedAt: Date.now()
       });
+      logAuditAction('User Status Changed', `User ID: ${userId}, Status: ${!isDisabled ? 'Disabled' : 'Enabled'}`);
       showAlert(`User ${!isDisabled ? 'disabled' : 'enabled'} successfully.`);
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${userId}`);
     }
+  };
+
+  const renderAuditLogTab = () => {
+    const filteredLogs = auditLogs.filter(log => {
+      if (!auditSearchTerm.trim()) return true;
+      const q = auditSearchTerm.toLowerCase();
+      return (
+        (log.action && log.action.toLowerCase().includes(q)) ||
+        (log.userName && log.userName.toLowerCase().includes(q)) ||
+        (log.userEmail && log.userEmail.toLowerCase().includes(q)) ||
+        (log.userRole && log.userRole.toLowerCase().includes(q)) ||
+        (log.details && log.details.toLowerCase().includes(q))
+      );
+    });
+
+    return (
+      <div className="bg-white p-4 sm:p-6 rounded-xl shadow-sm border border-gray-100 space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 border-b pb-4">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <History className="h-5 w-5 text-emerald-600" /> System Audit Log
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Real-time activity monitor displaying the last 50 actions performed by users.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full border border-emerald-200">
+              {filteredLogs.length} Records
+            </span>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="relative w-full sm:w-80">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search audit logs (user, action, details)..."
+              value={auditSearchTerm}
+              onChange={(e) => setAuditSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 text-xs border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="overflow-x-auto border border-gray-200 rounded-lg">
+          <table className="w-full text-left text-xs border-collapse">
+            <thead>
+              <tr className="bg-gray-100 text-gray-700 font-bold border-b border-gray-200">
+                <th className="p-3 w-12 text-center">#</th>
+                <th className="p-3 w-40">Date & Time</th>
+                <th className="p-3 w-48">User & Role</th>
+                <th className="p-3 w-48">Action</th>
+                <th className="p-3">Details</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-gray-400">
+                    <p className="font-medium text-sm">No audit log entries found.</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map((log, index) => {
+                  const dateStr = log.timestamp ? new Date(log.timestamp).toLocaleString('en-IN', {
+                    dateStyle: 'short',
+                    timeStyle: 'medium'
+                  }) : 'N/A';
+
+                  let badgeColor = 'bg-gray-100 text-gray-800 border-gray-200';
+                  const actLower = (log.action || '').toLowerCase();
+                  if (actLower.includes('add') || actLower.includes('create')) {
+                    badgeColor = 'bg-emerald-50 text-emerald-800 border-emerald-200';
+                  } else if (actLower.includes('status') || actLower.includes('update') || actLower.includes('edit')) {
+                    badgeColor = 'bg-blue-50 text-blue-800 border-blue-200';
+                  } else if (actLower.includes('delete') || actLower.includes('remove') || actLower.includes('lock')) {
+                    badgeColor = 'bg-red-50 text-red-800 border-red-200';
+                  } else if (actLower.includes('sync') || actLower.includes('memo')) {
+                    badgeColor = 'bg-purple-50 text-purple-800 border-purple-200';
+                  }
+
+                  return (
+                    <tr key={log.id || index} className="hover:bg-gray-50 transition-colors">
+                      <td className="p-3 text-center text-gray-400 font-mono text-[11px]">{index + 1}</td>
+                      <td className="p-3 text-gray-600 font-mono text-[11px] whitespace-nowrap">{dateStr}</td>
+                      <td className="p-3">
+                        <div className="font-bold text-gray-900">{log.userName || 'User'}</div>
+                        <div className="text-[10px] text-gray-500 font-medium">
+                          {log.userRole || 'User'} {log.userEmail ? `• ${log.userEmail}` : ''}
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <span className={`inline-block px-2.5 py-1 rounded-md text-[11px] font-bold border ${badgeColor}`}>
+                          {log.action}
+                        </span>
+                      </td>
+                      <td className="p-3 text-gray-700 font-sans">{log.details || '-'}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
   };
 
   const renderUserManagement = () => (
@@ -7105,6 +7596,92 @@ export default function App() {
       <h3 className="text-lg font-semibold mb-4 border-b pb-2 flex items-center gap-2">
         <Shield className="h-5 w-5 text-emerald-600" /> User Access Management
       </h3>
+
+      {/* Memo Module & Sync Feature Controls */}
+      <div className="mb-8 p-5 bg-gradient-to-r from-emerald-50 to-teal-50 rounded-xl border border-emerald-200 space-y-4">
+        <div className="flex items-center justify-between border-b border-emerald-200 pb-3">
+          <div>
+            <h4 className="text-base font-bold text-emerald-950 flex items-center gap-2">
+              <RefreshCw className="w-5 h-5 text-emerald-700" />
+              Memo Module & Expenditure Sync Admin Controls
+            </h4>
+            <p className="text-xs text-emerald-800 mt-0.5">
+              Control Memo for Fund sync options and manage lock permissions for individual or all ranges.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Option 1: Sync Option Toggle */}
+          <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-sm text-gray-800">Memo Sync to Expenditure Option</span>
+              <button
+                type="button"
+                onClick={() => handleToggleFeatureLock('MemoSync', 'global')}
+                className={`px-3 py-1 rounded-full text-xs font-extrabold uppercase transition-all ${
+                  isMemoSyncEnabled ? 'bg-green-100 text-green-800 border border-green-300' : 'bg-red-100 text-red-800 border border-red-300'
+                }`}
+              >
+                {isMemoSyncEnabled ? '✓ Enabled' : '✕ Disabled'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              When enabled, users can import payee, amount, and scheme details from Memo for Fund directly into Expenditure entries.
+            </p>
+            <div className="pt-2 border-t">
+              <button
+                type="button"
+                onClick={handleClearAllMemoSyncs}
+                className="px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" /> Clear All Synced Memo References
+              </button>
+            </div>
+          </div>
+
+          {/* Option 2: Lock Memo Module for Ranges */}
+          <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-sm space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-sm text-gray-800">Lock Memo Module for Ranges</span>
+              <button
+                type="button"
+                onClick={() => handleToggleFeatureLock('Memo', 'all')}
+                className={`px-3 py-1 rounded-full text-xs font-extrabold uppercase transition-all ${
+                  featureLocks.some(l => l.feature === 'Memo' && l.target === 'all' && l.isLocked)
+                    ? 'bg-red-100 text-red-800 border border-red-300'
+                    : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                }`}
+              >
+                {featureLocks.some(l => l.feature === 'Memo' && l.target === 'all' && l.isLocked) ? '🔒 Locked for All' : '🔓 Allowed for All'}
+              </button>
+            </div>
+            <p className="text-xs text-gray-500">
+              Toggle Memo creation and editing lock by specific range name:
+            </p>
+            <div className="flex flex-wrap gap-2 pt-1">
+              {['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].map(rangeName => {
+                const isRangeLocked = featureLocks.some(l => l.feature === 'Memo' && l.target === rangeName && l.isLocked);
+                return (
+                  <button
+                    key={rangeName}
+                    type="button"
+                    onClick={() => handleToggleFeatureLock('Memo', rangeName)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold border transition-all flex items-center gap-1 ${
+                      isRangeLocked
+                        ? 'bg-red-50 text-red-700 border-red-300'
+                        : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                    }`}
+                  >
+                    {isRangeLocked ? <Lock className="w-3 h-3 text-red-600" /> : <Unlock className="w-3 h-3 text-emerald-600" />}
+                    <span>{rangeName}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
       
       <div className="mb-8 p-4 bg-gray-50 rounded-lg border border-gray-200">
         <h4 className="text-md font-medium mb-3">Create New User</h4>
@@ -7332,6 +7909,24 @@ export default function App() {
               >
                 {featureLocks.find(l => l.feature === 'Expenditure' && l.target === selectedLockTarget)?.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
                 {featureLocks.find(l => l.feature === 'Expenditure' && l.target === selectedLockTarget)?.isLocked ? 'Expenditure Locked' : 'Lock Expenditure'}
+              </button>
+
+              <button 
+                disabled={!selectedLockTarget}
+                onClick={() => handleToggleFeatureLock('Memo', selectedLockTarget)}
+                className={`px-3 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center gap-1.5 ${!selectedLockTarget ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : featureLocks.find(l => l.feature === 'Memo' && l.target === selectedLockTarget)?.isLocked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-purple-600 text-white hover:bg-purple-700'}`}
+              >
+                {featureLocks.find(l => l.feature === 'Memo' && l.target === selectedLockTarget)?.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                {featureLocks.find(l => l.feature === 'Memo' && l.target === selectedLockTarget)?.isLocked ? 'Memo for Fund Locked' : 'Lock Memo for Fund'}
+              </button>
+
+              <button 
+                disabled={!selectedLockTarget}
+                onClick={() => handleToggleFeatureLock('MemoSync', selectedLockTarget)}
+                className={`px-3 py-1.5 rounded text-[11px] font-bold transition-colors flex items-center gap-1.5 ${!selectedLockTarget ? 'bg-gray-200 text-gray-400 cursor-not-allowed' : featureLocks.find(l => l.feature === 'MemoSync' && l.target === selectedLockTarget)?.isLocked ? 'bg-red-600 text-white hover:bg-red-700' : 'bg-teal-600 text-white hover:bg-teal-700'}`}
+              >
+                {featureLocks.find(l => l.feature === 'MemoSync' && l.target === selectedLockTarget)?.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                {featureLocks.find(l => l.feature === 'MemoSync' && l.target === selectedLockTarget)?.isLocked ? 'Sync Memo Locked' : 'Lock Sync Memo'}
               </button>
 
               <button 
@@ -9339,11 +9934,7 @@ export default function App() {
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1 flex justify-between items-center">
                 <span>Financial Year (FY)</span>
-                {loginEmail.toLowerCase().includes('admin') || loginEmail.includes('sharmaanuj860') ? (
-                  <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">Admin Editable</span>
-                ) : (
-                  <span className="text-[10px] text-gray-500 font-medium">Default: 2026-27 (Locked)</span>
-                )}
+                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-1.5 py-0.5 rounded">Select FY for Login</span>
               </label>
               <select
                 value={loginFY}
@@ -9351,18 +9942,11 @@ export default function App() {
                   setLoginFY(e.target.value);
                   setSelectedFY(e.target.value);
                 }}
-                disabled={!loginEmail.toLowerCase().includes('admin') && loginEmail !== '' && !loginEmail.includes('sharmaanuj860')}
-                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-semibold text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 cursor-pointer"
+                className="w-full p-3 border rounded-xl focus:ring-2 focus:ring-emerald-500 outline-none bg-white font-semibold text-gray-800 cursor-pointer shadow-sm"
               >
-                {fys.length > 0 ? (
-                  fys.map(f => <option key={f.id} value={f.name}>{f.name}</option>)
-                ) : (
-                  <>
-                    <option value="2026-27">2026-27</option>
-                    <option value="2025-26">2025-26</option>
-                    <option value="2024-25">2024-25</option>
-                  </>
-                )}
+                {fyOptions.map(fyName => (
+                  <option key={fyName} value={fyName}>{fyName}</option>
+                ))}
               </select>
             </div>
             
@@ -9423,19 +10007,19 @@ export default function App() {
               <div className="flex items-center gap-1.5 bg-emerald-50 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-emerald-100">
                 <span className="text-xs md:text-sm font-semibold text-emerald-800">FY:</span>
                 <select 
-                  value={fys.find(f => f.id === selectedFY || f.name === selectedFY)?.name || selectedFY} 
+                  value={selectedFY} 
                   onChange={(e) => setSelectedFY(e.target.value)}
                   className="bg-transparent border-none focus:ring-0 text-emerald-700 font-bold cursor-pointer text-xs md:text-sm"
                 >
-                  {fys.map(fy => <option key={fy.id} value={fy.name}>{fy.name}</option>)}
+                  {fyOptions.map(fyName => <option key={fyName} value={fyName}>{fyName}</option>)}
                 </select>
               </div>
             ) : (
               !isFyHiddenForUsers && (
-                <div className="flex items-center gap-1.5 bg-gray-100 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200" title="Financial Year is locked for standard users">
+                <div className="flex items-center gap-1.5 bg-gray-100 px-2 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200" title="Financial Year selected at login">
                   <Lock className="w-3.5 h-3.5 text-gray-500" />
                   <span className="text-xs md:text-sm font-semibold text-gray-600">FY:</span>
-                  <span className="text-xs md:text-sm font-bold text-gray-800">{fys.find(f => f.id === selectedFY || f.name === selectedFY)?.name || selectedFY}</span>
+                  <span className="text-xs md:text-sm font-bold text-gray-800">{selectedFY}</span>
                 </div>
               )
             )}
@@ -10052,6 +10636,23 @@ export default function App() {
                   {key: 'description', label: 'Description', render: (val, item) => (
                     <div className="max-w-[200px] whitespace-normal break-words">
                       <div className="text-xs italic text-gray-500">{val}</div>
+                      {item.syncedMemoNo && (
+                        <div className="mt-1 flex items-center gap-1.5">
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded text-[10px] font-bold">
+                            <RefreshCw className="w-3 h-3 text-emerald-600" /> Memo #{item.syncedMemoNo}
+                          </span>
+                          {userRole === 'admin' && (
+                            <button
+                              type="button"
+                              onClick={() => handleUnsyncExpense(item.id)}
+                              className="p-0.5 text-red-500 hover:bg-red-50 rounded cursor-pointer"
+                              title="Admin: Remove Memo Sync Link"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {item.approvalReason && (
                         <div className="text-[10px] text-gray-400 italic mt-1 border-t pt-1">
                           Action Reason: {item.approvalReason}
@@ -10201,6 +10802,52 @@ export default function App() {
                   onBalanceChange={setCurrentSoeBalance}
                   onSelectionChange={setExpenseFormSelection}
                 >
+                  {isMemoSyncEnabled && !editingItem && (
+                    <div className="mb-3 p-2.5 bg-gradient-to-r from-emerald-50 to-teal-50 border border-emerald-200 rounded-lg flex items-center justify-between shadow-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-emerald-600 text-white rounded-md shadow-xs">
+                          <RefreshCw className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-emerald-950">Sync with Memo For Fund</div>
+                          <div className="text-[10px] text-emerald-800">
+                            {selectedSyncedMemo ? (
+                              <span className="font-bold text-emerald-900 bg-emerald-200/60 px-1.5 py-0.5 rounded">
+                                ✓ Synced with Memo #{selectedSyncedMemo.memoNo}
+                              </span>
+                            ) : (
+                              'Import payee, amount & scheme directly from an issued Memo'
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {selectedSyncedMemo ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSyncedMemo(null);
+                              setExpenseAmount('');
+                              setExpenseDescription('');
+                              setSelectedPayeesForExpense([]);
+                            }}
+                            className="px-2.5 py-1 bg-red-100 hover:bg-red-200 text-red-700 text-xs rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            <X className="w-3 h-3" /> Clear Sync
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setShowMemoSyncModal(true)}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs rounded-md font-bold shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" /> Sync Memo
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   <div className="space-y-2 mt-2 border-t pt-2">
                     {editingItem?.type === 'Expenditure' ? (
                       <div className="space-y-2">
@@ -11034,6 +11681,20 @@ export default function App() {
 
             {expenditureSubTab === 'memo' && (
               <div className="space-y-8">
+                {isMemoLockedForUser && (
+                  <div className="bg-amber-50 border-2 border-amber-300 p-5 rounded-2xl flex items-center gap-4 shadow-sm">
+                    <div className="p-3 bg-amber-100 text-amber-800 rounded-xl">
+                      <Lock className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-amber-950 text-sm">Memo For Fund Module is Locked</h4>
+                      <p className="text-xs text-amber-800">
+                        Creation and editing of Memo for Fund entries has been locked for {userRangeName || 'your role'} by the Division Administrator.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
                 {/* Header Banner */}
                 <div className="no-print bg-white p-5 rounded-2xl shadow-sm border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
@@ -11317,34 +11978,41 @@ export default function App() {
 
                         {/* Calculated amounts preview & Add button */}
                         <div className="sm:col-span-2 pt-2 flex flex-col sm:flex-row justify-between items-center gap-3 bg-emerald-50/70 p-3 rounded-lg border border-emerald-200">
-                          <div className="text-xs text-emerald-900 font-medium grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
-                            <div>
-                              <span className="text-[10px] text-gray-500 block">Gross Amt:</span>
-                              <strong className="text-gray-900">₹{(parseFloat(entryTotalAmount) || 0).toLocaleString('en-IN')}</strong>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-red-600 block">I/Tax (1%):</span>
-                              <strong className="text-red-700">
-                                -₹{(entryDeductITax ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0).toLocaleString('en-IN')}
-                              </strong>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-purple-600 block">GST TDS (2%):</span>
-                              <strong className="text-purple-700">
-                                -₹{(entryDeductGst ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0).toLocaleString('en-IN')}
-                              </strong>
-                            </div>
-                            <div>
-                              <span className="text-[10px] text-emerald-700 block">Net RTGS:</span>
-                              <strong className="text-emerald-950 text-sm">
-                                ₹{(
-                                  (parseFloat(entryTotalAmount) || 0) -
-                                  (entryDeductITax ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0) -
-                                  (entryDeductGst ? Math.round(((parseFloat(entryTotalAmount) || 0) * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0)
-                                ).toLocaleString('en-IN')}
-                              </strong>
-                            </div>
-                          </div>
+                          {(() => {
+                            const tot = parseFloat(entryTotalAmount) || 0;
+                            const isITax = entryDeductITax && tot > 30000;
+                            const isGst = entryDeductGst && tot > 250000;
+                            const iTaxAmt = isITax ? Math.round((tot * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0;
+                            const gstAmt = isGst ? Math.round((tot * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0;
+                            const netRtgs = Math.round((tot - iTaxAmt - gstAmt) * 100) / 100;
+
+                            return (
+                              <div className="text-xs text-emerald-900 font-medium grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
+                                <div>
+                                  <span className="text-[10px] text-gray-500 block">Gross Amt:</span>
+                                  <strong className="text-gray-900">₹{tot.toLocaleString('en-IN')}</strong>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-red-600 block">I/Tax (1%):</span>
+                                  <strong className="text-red-700">
+                                    -₹{iTaxAmt.toLocaleString('en-IN')}
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-purple-600 block">GST TDS (2%):</span>
+                                  <strong className="text-purple-700">
+                                    -₹{gstAmt.toLocaleString('en-IN')}
+                                  </strong>
+                                </div>
+                                <div>
+                                  <span className="text-[10px] text-emerald-700 block">Net RTGS:</span>
+                                  <strong className="text-emerald-950 text-sm">
+                                    ₹{netRtgs.toLocaleString('en-IN')}
+                                  </strong>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <button
                             type="submit"
                             className="w-full sm:w-auto px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow transition-all flex items-center justify-center gap-1.5 active:scale-95 shrink-0"
@@ -11566,14 +12234,25 @@ export default function App() {
 
                               {/* Actions Bar */}
                               <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-2.5">
-                                <button
-                                  type="button"
-                                  onClick={() => setViewingMemo(m)}
-                                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95"
-                                >
-                                  <Printer className="w-3 h-3" />
-                                  <span>View & Print</span>
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setViewingMemo(m)}
+                                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer"
+                                  >
+                                    <Printer className="w-3 h-3" />
+                                    <span>View & Print</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => downloadMemoPDF(m)}
+                                    className="px-2.5 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-sm active:scale-95 cursor-pointer"
+                                    title="Download Memo PDF directly"
+                                  >
+                                    <Download className="w-3 h-3" />
+                                    <span>Download PDF</span>
+                                  </button>
+                                </div>
 
                                 <div className="flex items-center gap-1.5">
                                   {/* Send back for correction button for Admin/DEO if submitted */}
@@ -11670,17 +12349,28 @@ export default function App() {
                 <div className="flex items-center gap-2 pr-12 sm:pr-0">
                   <button
                     type="button"
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
-                    title="Print Memo Letter"
+                    onClick={handlePrintMemo}
+                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                    title="Print Memo Letter to Printer"
                   >
                     <Printer className="w-4 h-4" />
                     <span className="hidden sm:inline">Print Letter</span>
                   </button>
+                  {viewingMemo && (
+                    <button
+                      type="button"
+                      onClick={() => downloadMemoPDF(viewingMemo)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                      title="Download Memo PDF File"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">Download PDF</span>
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setViewingMemo(null)}
-                    className="flex items-center gap-1 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                    className="flex items-center gap-1 px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
                     title="Close Preview (X)"
                   >
                     <X className="w-4 h-4" />
@@ -11841,19 +12531,179 @@ export default function App() {
                 <div className="no-print pt-8 pb-4 flex justify-center items-center gap-3 border-t border-gray-200">
                   <button
                     type="button"
-                    onClick={() => window.print()}
-                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95"
+                    onClick={handlePrintMemo}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
                   >
                     <Printer className="w-4 h-4" /> Print Letter
                   </button>
+                  {viewingMemo && (
+                    <button
+                      type="button"
+                      onClick={() => downloadMemoPDF(viewingMemo)}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
+                    >
+                      <Download className="w-4 h-4" /> Download PDF
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setViewingMemo(null)}
-                    className="px-6 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95"
+                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
                   >
                     <X className="w-4 h-4" /> Close Letter Preview
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Sync Memo Modal */}
+        {showMemoSyncModal && (
+          <div className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+            <div className="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col max-h-[85vh] animate-fade-in">
+              {/* Header */}
+              <div className="p-4 bg-emerald-900 text-white flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-2.5">
+                  <RefreshCw className="w-5 h-5 text-emerald-400" />
+                  <div>
+                    <h3 className="font-bold text-sm sm:text-base text-white">Sync Expenditure with Memo for Fund</h3>
+                    <p className="text-[11px] text-emerald-200">Select an issued Memo to auto-link and import details</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowMemoSyncModal(false)}
+                  className="text-white/80 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Body / Search */}
+              <div className="p-4 space-y-3 overflow-y-auto flex-1 bg-gray-50/50">
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-3 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search by Memo No, Month/Year, Scheme, or Payee..."
+                    value={memoSearchTerm}
+                    onChange={(e) => setMemoSearchTerm(e.target.value)}
+                    className="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-xl text-xs sm:text-sm focus:ring-2 focus:ring-emerald-500 outline-none shadow-xs"
+                  />
+                </div>
+
+                {/* Memos List */}
+                {filteredMemosForSync.length === 0 ? (
+                  <div className="p-8 text-center bg-white rounded-xl border border-dashed border-gray-300">
+                    <FileText className="w-10 h-10 text-gray-300 mx-auto mb-2" />
+                    <p className="text-sm font-semibold text-gray-600">No saved memos found</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                      {memoSearchTerm ? 'Try adjusting your search criteria' : `No memos created for Financial Year ${selectedFY} yet`}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {filteredMemosForSync.map((memo) => (
+                      <div
+                        key={memo.id}
+                        className="bg-white p-3.5 rounded-xl border border-gray-200 hover:border-emerald-500 hover:shadow-md transition-all space-y-2"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-black text-sm text-gray-900">Memo #{memo.memoNo}</span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-100">
+                                {memo.monthYear}
+                              </span>
+                              {memo.schemeName && (
+                                <span className="text-[10px] font-semibold px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">
+                                  {memo.schemeName}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] text-gray-500 mt-0.5">
+                              Date: {memo.date ? memo.date.split('-').reverse().join('.') : 'N/A'} | Range: {memo.rangeName || userRangeName || 'N/A'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs font-black text-emerald-800">
+                              ₹{(memo.totalNetRtgs || memo.totalAmount || 0).toLocaleString('en-IN')}
+                            </div>
+                            <div className="text-[10px] text-gray-400">Total Net Amount</div>
+                          </div>
+                        </div>
+
+                        {/* Payees snippet */}
+                        {memo.payeeEntries && memo.payeeEntries.length > 0 && (
+                          <div className="bg-gray-50 p-2 rounded-lg border border-gray-100 text-[11px] space-y-1">
+                            <div className="font-semibold text-gray-700 flex justify-between text-[10px] uppercase text-gray-400">
+                              <span>Payees ({memo.payeeEntries.length})</span>
+                              <span>Net Amount</span>
+                            </div>
+                            {memo.payeeEntries.map((p, pIdx) => (
+                              <div key={pIdx} className="flex justify-between items-center text-gray-800">
+                                <span className="font-medium truncate max-w-[240px]">
+                                  {pIdx + 1}. {p.name} {p.accountNumber ? `(A/C: ${p.accountNumber})` : ''}
+                                </span>
+                                <span className="font-semibold text-emerald-950">₹{(Number(p.netRtgsAmount) || Number(p.totalAmount) || 0).toLocaleString('en-IN')}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex justify-end items-center gap-2 pt-1 border-t border-gray-100">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedSyncedMemo({ memoId: memo.id, memoNo: memo.memoNo });
+
+                              if (!expenseDescription) {
+                                setExpenseDescription(`Expenditure as per Memo #${memo.memoNo} (${memo.monthYear})`);
+                              }
+
+                              if (memo.payeeEntries && memo.payeeEntries.length > 0) {
+                                const matchedPayees: { payeeId: string; amount: string }[] = [];
+                                memo.payeeEntries.forEach(entry => {
+                                  const matched = payees.find(p =>
+                                    (p.accountNumber && entry.accountNumber && p.accountNumber.trim() === entry.accountNumber.trim()) ||
+                                    (p.name && entry.name && p.name.trim().toLowerCase() === entry.name.trim().toLowerCase())
+                                  );
+                                  if (matched) {
+                                    matchedPayees.push({
+                                      payeeId: matched.id,
+                                      amount: String(entry.netRtgsAmount || entry.totalAmount || '')
+                                    });
+                                  }
+                                });
+                                if (matchedPayees.length > 0) {
+                                  setSelectedPayeesForExpense(matchedPayees);
+                                }
+                              }
+
+                              setShowMemoSyncModal(false);
+                              showAlert(`Successfully synced with Memo #${memo.memoNo}!`);
+                            }}
+                            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                          >
+                            <Check className="w-3.5 h-3.5" /> Sync Memo #{memo.memoNo}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-3 bg-gray-100 border-t flex justify-end shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowMemoSyncModal(false)}
+                  className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
@@ -12242,6 +13092,7 @@ export default function App() {
         )}
 
         {activeTab === 'Reports' && renderReports()}
+        {activeTab === 'Audit Log' && renderAuditLogTab()}
         {activeTab === 'Users' && userRole === 'admin' && renderUserManagement()}
 
         {renderFundingModal()}
