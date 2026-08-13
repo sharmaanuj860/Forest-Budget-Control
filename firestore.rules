@@ -61,8 +61,13 @@ service cloud.firestore {
       return isAuthenticated() && 
         (isAdmin() || isDEO() || 
          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          exists(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)) &&
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == get(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)).data.name));
+          (
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh', 'Rajgarh Forest Division'] ||
+            (exists(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == get(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)).data.name)
+          )
+         )
+        );
     }
 
     function canApproveExpenditure() {

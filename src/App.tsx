@@ -5528,8 +5528,23 @@ export default function App() {
       showAlert("This feature is currently locked by Admin. Please contact Admin for permission.");
       return;
     }
-    const allocationId = e.target.allocationId.value;
-    const soeId = e.target.soeId.value;
+
+    // Safely extract field values even if multiple elements share the same name in DOM
+    const getFieldValue = (fieldName: string) => {
+      const field = e.target[fieldName];
+      if (!field) return '';
+      if (field.value !== undefined && typeof field.value === 'string') return field.value;
+      if (field instanceof HTMLCollection || field instanceof NodeList) {
+        for (let i = 0; i < field.length; i++) {
+          const val = (field[i] as any).value;
+          if (val) return val;
+        }
+      }
+      return '';
+    };
+
+    const allocationId = getFieldValue('allocationId') || expenseFormSelection?.allocationId;
+    const soeId = getFieldValue('soeId') || expenseFormSelection?.soeId;
     const amount = selectedPayeesForExpense.length > 0 
       ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
       : parseFloat(expenseAmount || '0');
@@ -5543,8 +5558,16 @@ export default function App() {
       return;
     }
 
+    if (!allocationId) {
+      showAlert("Please select a valid SOE Head / Allocation before adding expenditure.");
+      return;
+    }
+
     const alloc = allocations.find(a => a.id === allocationId);
-    if (!alloc) return;
+    if (!alloc) {
+      showAlert("Selected allocation could not be found. Please re-select the SOE Head.");
+      return;
+    }
 
     const selectedSoe = soes.find(s => s.id === soeId);
     const selectedName = selectedSoe?.name || 'Unnamed SOE';
@@ -10984,7 +11007,7 @@ function CascadingDropdowns({
         setSoeId('');
         setAllocationId('');
         setFundingSoeName('');
-        setRangeId('');
+        setRangeId(userRangeId || '');
       } else {
         // For other types, we might want to keep some context or reset leaf nodes
         if (type !== 'Allocation') {
@@ -11119,9 +11142,11 @@ function CascadingDropdowns({
 
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
-    if (type === 'Expenditure' && filteredAllocations.length === 1 && !allocationId && !editingItem) {
-      setAllocationId(filteredAllocations[0].id);
-      setRangeId(filteredAllocations[0].rangeId);
+    if (type === 'Expenditure' && filteredAllocations.length > 0 && !editingItem) {
+      if (!allocationId || !filteredAllocations.some((a: any) => a.id === allocationId)) {
+        setAllocationId(filteredAllocations[0].id);
+        setRangeId(filteredAllocations[0].rangeId);
+      }
     }
   }, [filteredAllocations, allocationId, type, editingItem]);
 
@@ -11429,7 +11454,6 @@ function CascadingDropdowns({
               </div>
             ) : (
               <>
-                <input type="hidden" name="allocationId" value={allocationId} />
                 {allocationId && (
                   <div className="text-[10px] text-emerald-600 font-bold bg-emerald-50 p-1.5 rounded border border-emerald-100 flex items-center justify-between">
                     <span>Range: {ranges.find((r: any) => r.id === userRangeId)?.name}</span>
