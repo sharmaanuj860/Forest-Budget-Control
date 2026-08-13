@@ -723,6 +723,23 @@ export default function App() {
   const [editingMemo, setEditingMemo] = useState<MemoForFund | null>(null);
   const [viewingMemo, setViewingMemo] = useState<MemoForFund | null>(null);
 
+  const [viewingBillPdf, setViewingBillPdf] = useState<{ url: string; bill: any } | null>(null);
+  const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
+  const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showExpenditurePrintModal) setShowExpenditurePrintModal(false);
+        if (viewingMemo) setViewingMemo(null);
+        if (showMemoSyncModal) setShowMemoSyncModal(false);
+        if (viewingBillPdf) setViewingBillPdf(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showExpenditurePrintModal, viewingMemo, showMemoSyncModal, viewingBillPdf]);
+
   // Form Header State
   const [memoNoInput, setMemoNoInput] = useState<string>('');
   const [memoDateInput, setMemoDateInput] = useState<string>(() => new Date().toISOString().split('T')[0]);
@@ -763,9 +780,6 @@ export default function App() {
   const [billExpFilters, setBillExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
   const [isBillFormFullScreen, setIsBillFormFullScreen] = useState(false);
   const [isTableFullScreen, setIsTableFullScreen] = useState(false);
-  const [viewingBillPdf, setViewingBillPdf] = useState<{ url: string; bill: any } | null>(null);
-  const [allocFilters, setAllocFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeId: '' });
-  const [soeFilters, setSoeFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '', soeName: '' });
 
   const [notifSearchTerm, setNotifSearchTerm] = useState('');
   const [notifPage, setNotifPage] = useState(1);
@@ -5178,15 +5192,26 @@ export default function App() {
                 </button>
               )}
               {title === 'Expenditure' && (
-                <button
-                  type="button"
-                  onClick={() => setShowExpenditurePrintModal(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95"
-                  title="Print Expenditure List"
-                >
-                  <Printer className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Print List</span>
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={downloadExpenditureListPDF}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer"
+                    title="Export PDF Document"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Export PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExpenditurePrintModal(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm active:scale-95 cursor-pointer"
+                    title="Print Expenditure List Preview"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Print List</span>
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -6364,45 +6389,100 @@ export default function App() {
   const handlePrintMemo = () => {
     try {
       window.focus();
-      const memoElement = document.getElementById('memo-print-area');
-      if (!memoElement) {
-        window.print();
-        return;
-      }
-      const printWin = window.open('', '_blank', 'width=900,height=800');
-      if (printWin) {
-        printWin.document.write(`
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <title>Memo for Fund - ${viewingMemo?.memoNo || ''}</title>
-              <script src="https://cdn.tailwindcss.com"></script>
-              <style>
-                body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; background: #fff; color: #000; padding: 24px; }
-                @media print {
-                  body { padding: 0; margin: 0; }
-                  .no-print { display: none !important; }
-                }
-              </style>
-            </head>
-            <body>
-              <div>${memoElement.innerHTML}</div>
-              <script>
-                setTimeout(() => {
-                  window.focus();
-                  window.print();
-                }, 400);
-              </script>
-            </body>
-          </html>
-        `);
-        printWin.document.close();
-      } else {
-        window.print();
-      }
+      window.print();
     } catch (e) {
       console.error("Print error:", e);
+    }
+  };
+
+  const generateExpenditurePDFDoc = () => {
+    const doc = new jsPDF('landscape');
+    const fyName = fys.find(f => f.id === selectedFY)?.name || selectedFY;
+    const rangeNameDisplay = ranges.find(r => r.id === userRangeId)?.name || userRangeName || 'Rajgarh Forest Division';
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text("Department of Forests, Himachal Pradesh", 14, 12);
+    
+    doc.setFontSize(11);
+    doc.text(`Rajgarh Forest Division — Expenditure Report List (FY ${fyName})`, 14, 18);
+    
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Range/Unit: ${rangeNameDisplay} | Generated On: ${new Date().toLocaleDateString('en-GB')} | Total Entries: ${currentExpenses.length}`, 14, 24);
+
+    const tableData = currentExpenses.map((exp, idx) => {
+      const p = payees.find(p => p.id === exp.payeeId);
+      const payeeName = p?.name || exp.payeeName || 'N/A';
+      const payeeAcc = p?.accountNumber ? `A/C: ${p.accountNumber}` : '';
+      const payeeInfo = payeeAcc ? `${payeeName}\n${payeeAcc}` : payeeName;
+      
+      const al = allocations.find(a => a.id === exp.allocationId);
+      const r = ranges.find(r => r.id === al?.rangeId);
+      const s = soes.find(s => s.id === exp.soeId);
+      const locationInfo = `${r?.name || 'N/A'} / ${s?.name || 'N/A'}`;
+
+      return [
+        (idx + 1).toString(),
+        exp.date ? exp.date.split('-').reverse().join('/') : '',
+        payeeInfo,
+        locationInfo,
+        exp.description || '-',
+        `Rs. ${(Number(exp.amount) || 0).toLocaleString('en-IN')}`,
+        exp.status || 'pending'
+      ];
+    });
+
+    const totalAmt = currentExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    autoTable(doc, {
+      startY: 28,
+      head: [['#', 'Date', 'Payee Name & Account', 'Unit / Range / SOE', 'Description / Particulars', 'Amount (Rs.)', 'Status']],
+      body: tableData,
+      theme: 'grid',
+      headStyles: { fillColor: [5, 150, 105], textColor: 255, fontStyle: 'bold' },
+      styles: { fontSize: 8, cellPadding: 2 },
+      columnStyles: {
+        0: { cellWidth: 10, halign: 'center' },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 50 },
+        3: { cellWidth: 40 },
+        4: { cellWidth: 80 },
+        5: { cellWidth: 35, halign: 'right', fontStyle: 'bold' },
+        6: { cellWidth: 25, halign: 'center' }
+      },
+      foot: [[
+        { content: 'Total Expenditure Amount:', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
+        { content: `Rs. ${totalAmt.toLocaleString('en-IN')}`, styles: { halign: 'right', fontStyle: 'bold', textColor: [5, 150, 105] } },
+        ''
+      ]]
+    });
+
+    const finalY = (doc as any).lastAutoTable?.finalY || 150;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'normal');
+    doc.text("Prepared By: Dealing Assistant / Data Entry Operator", 14, finalY + 15);
+    doc.text("Verified & Authorised By: Range Forest Officer / DFO", 200, finalY + 15);
+
+    return { doc, fyName };
+  };
+
+  const downloadExpenditureListPDF = () => {
+    try {
+      const { doc, fyName } = generateExpenditurePDFDoc();
+      doc.save(`Expenditure_List_FY_${fyName}_${new Date().toISOString().split('T')[0]}.pdf`);
+    } catch (err) {
+      console.error("PDF Export Error:", err);
+      showAlert("Failed to export Expenditure PDF.");
+    }
+  };
+
+  const handlePrintExpenditureReport = () => {
+    try {
+      window.focus();
       window.print();
+    } catch (e) {
+      console.error("Print error:", e);
     }
   };
 
@@ -12711,24 +12791,57 @@ export default function App() {
 
         {/* Expenditure List Print Modal Overlay */}
         {showExpenditurePrintModal && (
-          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-            <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden border border-gray-200 my-8">
+          <div
+            className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowExpenditurePrintModal(false);
+            }}
+          >
+            {/* Fixed Floating Top-Right Close Button */}
+            <button
+              type="button"
+              onClick={() => setShowExpenditurePrintModal(false)}
+              className="no-print fixed top-3 right-3 sm:top-5 sm:right-5 z-[120] bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3.5 py-2 rounded-xl shadow-2xl font-black text-xs flex items-center gap-1.5 transition-all ring-2 ring-white/30 cursor-pointer"
+              title="Close Preview (Esc)"
+            >
+              <X className="w-5 h-5" />
+              <span className="hidden sm:inline">CLOSE (X)</span>
+            </button>
+
+            <div className="bg-white w-full max-w-5xl h-[92vh] max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
               {/* Modal Toolbar - Hidden during print */}
-              <div className="no-print bg-gray-900 text-white px-6 py-4 flex items-center justify-between">
+              <div className="no-print bg-gray-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-800 sticky top-0 z-20">
                 <div className="flex items-center gap-3">
-                  <Printer className="w-5 h-5 text-emerald-400" />
-                  <h3 className="font-bold text-base">Print Expenditure List Preview</h3>
+                  <Printer className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div>
+                    <h3 className="font-bold text-xs sm:text-sm text-white">Print Expenditure List Preview</h3>
+                    <p className="text-[11px] text-gray-400">Total Entries: {currentExpenses.length} | Financial Year: {selectedFY}</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 pr-28 sm:pr-0">
                   <button
-                    onClick={() => window.print()}
-                    className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-bold transition-all shadow-md active:scale-95"
+                    type="button"
+                    onClick={handlePrintExpenditureReport}
+                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                    title="Print Report"
                   >
-                    <Printer className="w-4 h-4" /> Print Report
+                    <Printer className="w-4 h-4" />
+                    <span className="hidden sm:inline">Print Report</span>
                   </button>
                   <button
+                    type="button"
+                    onClick={downloadExpenditureListPDF}
+                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
+                    title="Export PDF Document"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden sm:inline">Export PDF</span>
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setShowExpenditurePrintModal(false)}
-                    className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-300 hover:text-white"
+                    className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-300 hover:text-white cursor-pointer"
+                    title="Close (Esc)"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -12736,7 +12849,7 @@ export default function App() {
               </div>
 
               {/* Printable Area */}
-              <div className="print-area p-8 md:p-10 space-y-6 bg-white text-gray-900">
+              <div id="expenditure-print-area" className="print-area flex-1 overflow-y-auto p-6 md:p-10 space-y-6 bg-white text-gray-900 font-sans">
                 <div className="text-center space-y-1 border-b pb-4">
                   <h1 className="text-xl font-black uppercase tracking-wide text-gray-900">Department of Forests, Himachal Pradesh</h1>
                   <h2 className="text-base font-bold text-gray-800">Rajgarh Forest Division — Expenditure Report List</h2>
@@ -12811,6 +12924,36 @@ export default function App() {
                     <p className="font-bold">Verified & Authorised By:</p>
                     <p className="text-gray-500 mt-6">Range Forest Officer / Divisional Forest Officer</p>
                   </div>
+                </div>
+              </div>
+
+              {/* Bottom Footer Actions (Hidden in Print) */}
+              <div className="no-print bg-gray-100 p-3 sm:p-4 border-t border-gray-200 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                <div className="text-xs text-gray-600 font-medium">
+                  Showing <span className="font-bold text-gray-900">{currentExpenses.length}</span> record(s) • Total: <span className="font-bold text-emerald-800">₹{currentExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0).toLocaleString('en-IN')}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintExpenditureReport}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Printer className="w-4 h-4" /> Print Report
+                  </button>
+                  <button
+                    type="button"
+                    onClick={downloadExpenditureListPDF}
+                    className="flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer"
+                  >
+                    <Download className="w-4 h-4" /> Export PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowExpenditurePrintModal(false)}
+                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    Close Preview
+                  </button>
                 </div>
               </div>
             </div>
@@ -13173,10 +13316,12 @@ export default function App() {
                     onClick={() => {
                       const link = document.createElement('a');
                       link.href = viewingBillPdf.url;
-                      link.download = `bill_${viewingBillPdf.bill.billNo}.pdf`;
+                      link.download = `bill_${viewingBillPdf.bill.billNo || 'document'}.pdf`;
+                      document.body.appendChild(link);
                       link.click();
+                      document.body.removeChild(link);
                     }}
-                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
                     title="Download PDF"
                   >
                     <Download className="w-4 h-4" />
@@ -13184,10 +13329,19 @@ export default function App() {
                   </button>
                   <button 
                     onClick={() => {
-                      const printWindow = window.open(viewingBillPdf.url);
-                      if (printWindow) printWindow.print();
+                      const frame = document.getElementById('bill-pdf-iframe') as HTMLIFrameElement;
+                      if (frame && frame.contentWindow) {
+                        try {
+                          frame.contentWindow.focus();
+                          frame.contentWindow.print();
+                        } catch (e) {
+                          window.print();
+                        }
+                      } else {
+                        window.print();
+                      }
                     }}
-                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium"
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
                     title="Print PDF"
                   >
                     <Printer className="w-4 h-4" />
@@ -13199,7 +13353,7 @@ export default function App() {
                       URL.revokeObjectURL(viewingBillPdf.url);
                       setViewingBillPdf(null);
                     }}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
                   >
                     <X className="w-6 h-6" />
                   </button>
@@ -13207,6 +13361,7 @@ export default function App() {
               </div>
               <div className="flex-1 bg-gray-100 p-4 overflow-hidden">
                 <iframe 
+                  id="bill-pdf-iframe"
                   src={`${viewingBillPdf.url}#toolbar=0`} 
                   className="w-full h-full rounded-lg border border-gray-200 shadow-inner bg-white"
                   title="Bill PDF"
