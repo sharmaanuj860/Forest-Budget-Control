@@ -378,7 +378,9 @@ const PayeeSelector = ({
   onRemove, 
   onAmountChange,
   ranges,
-  availableBalance
+  availableBalance,
+  selectedDeductions = [],
+  gstNumber = ''
 }: { 
   payees: Payee[], 
   selectedPayees: { payeeId: string, amount: string }[], 
@@ -386,7 +388,9 @@ const PayeeSelector = ({
   onRemove: (payeeId: string) => void, 
   onAmountChange: (payeeId: string, amount: string) => void,
   ranges: Range[],
-  availableBalance?: number
+  availableBalance?: number,
+  selectedDeductions?: string[],
+  gstNumber?: string
 }) => {
   const [search, setSearch] = useState('');
   const [showResults, setShowResults] = useState(false);
@@ -405,10 +409,18 @@ const PayeeSelector = ({
   const filteredPayees = useMemo(() => {
     const lower = search.toLowerCase();
     const base = payees.filter(p => !selectedPayees.some(sp => sp.payeeId === p.id));
-    if (!search) return base;
-    return base.filter(p => 
-      p.name.toLowerCase().includes(lower) || 
-      p.accountNumber.toLowerCase().includes(lower) ||
+    const seen: Record<string, boolean> = {};
+    const uniqueList: Payee[] = [];
+    base.forEach(p => {
+      if (p.id && !seen[p.id]) {
+        seen[p.id] = true;
+        uniqueList.push(p);
+      }
+    });
+    if (!search) return uniqueList;
+    return uniqueList.filter(p => 
+      p.name?.toLowerCase().includes(lower) || 
+      p.accountNumber?.toLowerCase().includes(lower) ||
       p.panNumber?.toLowerCase().includes(lower) ||
       p.gstNumber?.toLowerCase().includes(lower)
     );
@@ -418,10 +430,23 @@ const PayeeSelector = ({
     selectedPayees.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
   , [selectedPayees]);
 
+  const totalCalculatedDeductions = useMemo(() => {
+    let totalDeductions = 0;
+    selectedPayees.forEach(sp => {
+      const p = payees.find(payee => payee.id === sp.payeeId);
+      const pAmt = parseFloat(sp.amount) || 0;
+      const pGst = p?.gstNumber || gstNumber;
+      const pTds = (selectedDeductions.includes('TDS') && pAmt > 30000) ? Math.round(pAmt * 0.01) : 0;
+      const pGstTds = (selectedDeductions.includes('TDS_GST') && pAmt > 250000 && Boolean(pGst && pGst.trim())) ? Math.round(pAmt * 0.02) : 0;
+      totalDeductions += (pTds + pGstTds);
+    });
+    return totalDeductions;
+  }, [selectedPayees, payees, selectedDeductions, gstNumber]);
+
   return (
     <div className="space-y-3 p-3 bg-gray-50 rounded-lg border border-gray-200" ref={dropdownRef}>
       <div className="flex justify-between items-center">
-        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee Selection</label>
+        <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee Selection & Tax Breakdown</label>
         {availableBalance !== undefined && (
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-bold text-gray-500 uppercase">Available:</span>
@@ -445,10 +470,10 @@ const PayeeSelector = ({
             }}
           >
             <option value="">-- Select Payee from List --</option>
-            {filteredPayees.map(p => {
+            {filteredPayees.map((p, idx) => {
               const rName = ranges.find(r => r.id === p.rangeId)?.name || '';
               return (
-                <option key={p.id} value={p.id} title={`${p.name} (A/C: ${p.accountNumber})`}>
+                <option key={`opt-payee-${p.id}-${idx}`} value={p.id} title={`${p.name} (A/C: ${p.accountNumber})`}>
                   {p.name} (A/C: {p.accountNumber}){rName ? ` - [${rName}]` : ''}
                 </option>
               );
@@ -479,9 +504,9 @@ const PayeeSelector = ({
         {showResults && (
           <div className="relative w-full mt-1 bg-white border rounded-lg shadow-lg max-h-60 overflow-y-auto z-20">
             {filteredPayees.length > 0 ? (
-              filteredPayees.map(p => (
+              filteredPayees.map((p, idx) => (
                 <button
-                  key={p.id}
+                  key={`btn-payee-${p.id}-${idx}`}
                   type="button"
                   onClick={() => {
                     onSelect(p.id);
@@ -515,47 +540,99 @@ const PayeeSelector = ({
 
       {selectedPayees.length > 0 && (
         <div className="space-y-2">
-          {selectedPayees.map(sp => {
+          {selectedPayees.map((sp, idx) => {
             const p = payees.find(payee => payee.id === sp.payeeId);
+            const pAmt = parseFloat(sp.amount) || 0;
+            const pGst = p?.gstNumber || gstNumber;
+            const pTds = (selectedDeductions.includes('TDS') && pAmt > 30000) ? Math.round(pAmt * 0.01) : 0;
+            const pGstTds = (selectedDeductions.includes('TDS_GST') && pAmt > 250000 && Boolean(pGst && pGst.trim())) ? Math.round(pAmt * 0.02) : 0;
+            const pTax = pTds + pGstTds;
+            const pNet = pAmt - pTax;
+
             return (
-              <div key={sp.payeeId} className="flex items-center gap-2 bg-white p-2 rounded border border-gray-200 shadow-sm">
-                <div className="flex-1 min-w-0">
-                  <div className="text-xs font-bold truncate">{p?.name}</div>
-                  <div className="text-[10px] text-gray-400 truncate">{p?.accountNumber}</div>
+              <div key={`sel-payee-${sp.payeeId}-${idx}`} className="bg-white p-2.5 rounded-lg border border-gray-200 shadow-xs space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-bold text-gray-900 truncate">{p?.name}</div>
+                    <div className="text-[10px] text-gray-500 font-mono truncate">A/C: {p?.accountNumber}{p?.ifscCode ? ` | IFSC: ${p.ifscCode}` : ''}</div>
+                  </div>
+                  <div className="w-36 shrink-0">
+                    <div className="relative">
+                      <span className="absolute left-2 top-2 text-xs font-bold text-gray-400">₹</span>
+                      <input 
+                        type="text" 
+                        inputMode="decimal"
+                        placeholder="0.00" 
+                        value={sp.amount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                            onAmountChange(sp.payeeId, val);
+                          }
+                        }}
+                        className="w-full pl-5 pr-2 py-1.5 text-sm border-2 border-emerald-100 rounded text-right font-bold text-emerald-800 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+                        required
+                      />
+                    </div>
+                  </div>
+                  <div className="shrink-0">
+                    <button 
+                      type="button"
+                      onClick={() => onRemove(sp.payeeId)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                      title="Remove Payee"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
-                <div className="w-36 shrink-0">
-                  <input 
-                    type="text" 
-                    inputMode="decimal"
-                    placeholder="Amount" 
-                    value={sp.amount}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                        onAmountChange(sp.payeeId, val);
-                      }
-                    }}
-                    className="w-full p-1.5 text-sm border-2 border-emerald-100 rounded text-right font-bold text-emerald-700 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                    required
-                  />
-                </div>
-                <div className="shrink-0">
-                  <button 
-                    type="button"
-                    onClick={() => onRemove(sp.payeeId)}
-                    className="p-1 text-red-500 hover:bg-red-50 rounded"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
+
+                {/* Tax & Net Pay Info per Payee */}
+                {pAmt > 0 && (
+                  <div className="flex flex-wrap items-center justify-between gap-1.5 pt-1.5 border-t border-gray-100 text-[11px] bg-slate-50/90 px-2.5 py-1.5 rounded-md">
+                    <div className="flex flex-wrap items-center gap-2 text-gray-700">
+                      <span>Gross: <strong className="text-gray-900 font-bold">₹{pAmt.toLocaleString('en-IN')}</strong></span>
+                      {pTds > 0 && (
+                        <span className="text-red-600 font-semibold bg-red-50 px-1.5 py-0.5 rounded border border-red-100">
+                          TDS (1%): -₹{pTds.toLocaleString('en-IN')}
+                        </span>
+                      )}
+                      {pGstTds > 0 && (
+                        <span className="text-purple-600 font-semibold bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                          TDS GST (2%): -₹{pGstTds.toLocaleString('en-IN')}
+                        </span>
+                      )}
+                      {pTax === 0 && selectedDeductions.length > 0 && (
+                        <span className="text-gray-400 text-[10px]">
+                          TDS: ₹0 {selectedDeductions.includes('TDS') && pAmt <= 30000 ? '(≤₹30k threshold)' : ''}
+                        </span>
+                      )}
+                    </div>
+                    <div className="font-extrabold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                      Net Pay (RTGS): ₹{pNet.toLocaleString('en-IN')}
+                    </div>
+                  </div>
+                )}
               </div>
             );
           })}
           <div className="space-y-1 pt-2 border-t border-gray-200">
             <div className="flex justify-between items-center">
-              <span className="text-[10px] font-bold text-gray-500 uppercase">Total Allocated:</span>
-              <span className="text-sm font-bold text-emerald-600">₹{totalAmount.toLocaleString()}</span>
+              <span className="text-[10px] font-bold text-gray-500 uppercase">Total Gross Amount:</span>
+              <span className="text-sm font-bold text-gray-900">₹{totalAmount.toLocaleString()}</span>
             </div>
+            {totalCalculatedDeductions > 0 && (
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-[10px] font-bold text-red-600 uppercase">Total Tax Deductions:</span>
+                <span className="font-bold text-red-600">-₹{totalCalculatedDeductions.toLocaleString()}</span>
+              </div>
+            )}
+            {selectedDeductions.length > 0 && (
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-[10px] font-bold text-emerald-700 uppercase">Total Net Payable (RTGS):</span>
+                <span className="text-sm font-black text-emerald-700">₹{(totalAmount - totalCalculatedDeductions).toLocaleString()}</span>
+              </div>
+            )}
             {availableBalance !== undefined && (
               <div className="flex justify-between items-center">
                 <span className="text-[10px] font-bold text-gray-500 uppercase">Remaining Balance:</span>
@@ -675,6 +752,7 @@ export default function App() {
   const [expFilters, setExpFilters] = useState({ schemeId: '', sectorId: '', activityId: '', subActivityId: '', rangeId: '' });
   const [expenditureSubTab, setExpenditureSubTab] = useState<'list' | 'bills' | 'payees' | 'memo'>('list');
   const [showExpenditurePrintModal, setShowExpenditurePrintModal] = useState(false);
+  const [showPayeePrintModal, setShowPayeePrintModal] = useState(false);
 
   // Memo Sync state
   const [selectedSyncedMemo, setSelectedSyncedMemo] = useState<{ memoId: string; memoNo: string; entryId?: string } | null>(null);
@@ -731,6 +809,7 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         if (showExpenditurePrintModal) setShowExpenditurePrintModal(false);
+        if (showPayeePrintModal) setShowPayeePrintModal(false);
         if (viewingMemo) setViewingMemo(null);
         if (showMemoSyncModal) setShowMemoSyncModal(false);
         if (viewingBillPdf) setViewingBillPdf(null);
@@ -738,7 +817,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [showExpenditurePrintModal, viewingMemo, showMemoSyncModal, viewingBillPdf]);
+  }, [showExpenditurePrintModal, showPayeePrintModal, viewingMemo, showMemoSyncModal, viewingBillPdf]);
 
   // Form Header State
   const [memoNoInput, setMemoNoInput] = useState<string>('');
@@ -1521,15 +1600,23 @@ export default function App() {
   }, [userRole, ranges]);
 
   const filteredPayeesList = useMemo(() => {
-    if (!userRole) return payees;
+    const seen: Record<string, boolean> = {};
+    const uniquePayees: Payee[] = [];
+    payees.forEach(p => {
+      if (p.id && !seen[p.id]) {
+        seen[p.id] = true;
+        uniquePayees.push(p);
+      }
+    });
+    if (!userRole) return uniquePayees;
     const roleLower = userRole.toLowerCase();
     if (roleLower === 'admin' || roleLower === 'deo' || roleLower === 'da' || roleLower === 'approver') {
-      return payees;
+      return uniquePayees;
     }
     if (userRangeId) {
-      return payees.filter(p => !p.rangeId || p.rangeId === userRangeId || p.createdBy === user?.uid);
+      return uniquePayees.filter(p => !p.rangeId || p.rangeId === userRangeId || p.createdBy === user?.uid);
     }
-    return payees;
+    return uniquePayees;
   }, [payees, userRole, userRangeId, user?.uid]);
 
   const isAdmin = () => userRole === 'admin';
@@ -5937,11 +6024,20 @@ export default function App() {
       setExpenseDate(editingItem.item.date);
       setExpenseDescription(editingItem.item.description || '');
       setSelectedPayeesForExpense(editingItem.item.payeeId ? [{ payeeId: editingItem.item.payeeId, amount: String(editingItem.item.amount) }] : []);
+      const deds: ('TDS' | 'TDS_GST')[] = [];
+      if (editingItem.item.tdsAmount || editingItem.item.deductionType === 'TDS' || editingItem.item.deductionType === 'Both') deds.push('TDS');
+      if (editingItem.item.tdsGstAmount || editingItem.item.deductionType === 'TDS_GST' || editingItem.item.deductionType === 'Both') deds.push('TDS_GST');
+      setSelectedDeductions(deds);
+      setPanNumber(editingItem.item.panNumber || '');
+      setGstNumber(editingItem.item.gstNumber || '');
     } else {
       setExpenseAmount('');
       setExpenseDate(new Date().toISOString().split('T')[0]);
       setExpenseDescription('');
       setSelectedPayeesForExpense([]);
+      setSelectedDeductions([]);
+      setPanNumber('');
+      setGstNumber('');
     }
   }, [editingItem]);
 
@@ -6042,13 +6138,16 @@ export default function App() {
         const batch = writeBatch(db);
         for (const p of selectedPayeesForExpense) {
           const pAmt = parseFloat(p.amount) || 0;
+          const pPayeeObj = payees.find(payee => payee.id === p.payeeId);
+          const pGst = pPayeeObj?.gstNumber || gstNumber;
+          const pPan = pPayeeObj?.panNumber || panNumber;
           let pTdsAmt = 0;
           let pTdsGstAmt = 0;
           
           if (selectedDeductions.includes('TDS') && pAmt > 30000) {
             pTdsAmt = Math.round(pAmt * 0.01);
           }
-          if (selectedDeductions.includes('TDS_GST') && pAmt > 250000) {
+          if (selectedDeductions.includes('TDS_GST') && pAmt > 250000 && Boolean(pGst && pGst.trim())) {
             pTdsGstAmt = Math.round(pAmt * 0.02);
           }
           
@@ -6072,8 +6171,8 @@ export default function App() {
             tdsAmount: pTdsAmt || null,
             tdsGstAmount: pTdsGstAmt || null,
             netAmount: pNetAmt,
-            panNumber: panNumber || null,
-            gstNumber: gstNumber || null,
+            panNumber: pPan || null,
+            gstNumber: pGst || null,
             syncedMemoId: selectedSyncedMemo?.memoId || null,
             syncedMemoNo: selectedSyncedMemo?.memoNo || null
           });
@@ -6109,11 +6208,12 @@ export default function App() {
     const amt = amount;
     let tdsAmt = 0;
     let tdsGstAmt = 0;
+    const hasGst = Boolean(gstNumber && gstNumber.trim());
     
     if (selectedDeductions.includes('TDS') && amt > 30000) {
       tdsAmt = Math.round(amt * 0.01);
     }
-    if (selectedDeductions.includes('TDS_GST') && amt > 250000) {
+    if (selectedDeductions.includes('TDS_GST') && amt > 250000 && hasGst) {
       tdsGstAmt = Math.round(amt * 0.02);
     }
     
@@ -6617,7 +6717,7 @@ export default function App() {
       } else {
         setEntryDeductITax(false);
       }
-      if (tot > 250000) {
+      if (tot > 250000 && Boolean(entryGst && entryGst.trim())) {
         setEntryDeductGst(true);
       } else {
         setEntryDeductGst(false);
@@ -6641,7 +6741,7 @@ export default function App() {
     }
 
     const isITaxApplicable = entryDeductITax && tot > 30000;
-    const isGstApplicable = entryDeductGst && tot > 250000;
+    const isGstApplicable = entryDeductGst && tot > 250000 && Boolean(entryGst && entryGst.trim());
 
     const iTaxP = isITaxApplicable ? (parseFloat(entryITaxPercent) || 0) : 0;
     const gstP = isGstApplicable ? (parseFloat(entryGstPercent) || 0) : 0;
@@ -10767,16 +10867,52 @@ export default function App() {
                       );
                     }
                   },
-                  {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val, item) => (
-                    <div className="flex flex-col">
-                      <span className="text-red-600 font-bold">₹{val.toLocaleString()}</span>
-                      {item.deductedAmount && (
-                        <div className="text-[9px] text-blue-600 font-medium leading-tight mt-0.5">
-                          Deducted: ₹{Math.round(item.deductedAmount).toLocaleString()} ({item.deductionType === 'TDS' ? 'TDS' : 'TDS on GST'})
+                  {key: 'amount', label: 'Amount', searchableText: (val) => String(val), render: (val, item) => {
+                    const totalAmt = Number(val) || 0;
+                    const tds = Math.round(item.tdsAmount || 0);
+                    const gstTds = Math.round(item.tdsGstAmount || 0);
+                    const totalDeducted = Math.round(item.deductedAmount || (tds + gstTds));
+                    const netPayable = Math.round(item.netAmount ?? (totalAmt - totalDeducted));
+
+                    if (totalDeducted > 0) {
+                      return (
+                        <div className="flex flex-col text-xs leading-tight min-w-[130px] space-y-0.5">
+                          <div className="flex justify-between items-center gap-2">
+                            <span className="text-[10px] text-gray-500 font-medium">Total:</span>
+                            <span className="font-bold text-gray-900">₹{totalAmt.toLocaleString('en-IN')}</span>
+                          </div>
+                          {tds > 0 && (
+                            <div className="flex justify-between items-center gap-2 text-[10px] text-red-600">
+                              <span>TDS (1%):</span>
+                              <span className="font-semibold">-₹{tds.toLocaleString('en-IN')}</span>
+                            </div>
+                          )}
+                          {gstTds > 0 && (
+                            <div className="flex justify-between items-center gap-2 text-[10px] text-purple-600">
+                              <span>TDS GST (2%):</span>
+                              <span className="font-semibold">-₹{gstTds.toLocaleString('en-IN')}</span>
+                            </div>
+                          )}
+                          {tds === 0 && gstTds === 0 && (
+                            <div className="flex justify-between items-center gap-2 text-[10px] text-red-600">
+                              <span>TDS:</span>
+                              <span className="font-semibold">-₹{totalDeducted.toLocaleString('en-IN')}</span>
+                            </div>
+                          )}
+                          <div className="flex justify-between items-center gap-2 border-t border-gray-200 pt-0.5 font-bold text-emerald-700">
+                            <span className="text-[10px]">Net to Pay:</span>
+                            <span>₹{netPayable.toLocaleString('en-IN')}</span>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                  )},
+                      );
+                    }
+
+                    return (
+                      <div className="flex flex-col">
+                        <span className="text-gray-900 font-bold">₹{totalAmt.toLocaleString('en-IN')}</span>
+                      </div>
+                    );
+                  }},
                   {key: 'updatedBy', label: 'Modified By', 
                     searchableText: (val, item) => {
                       const u = users.find(u => u.id === val || u.email === val);
@@ -10935,7 +11071,7 @@ export default function App() {
                           <label className="block text-[10px] font-bold text-gray-500 uppercase">Payee</label>
                           <select name="payeeId" defaultValue={editingItem.item.payeeId || ''} className="w-full p-2 border rounded text-sm">
                             <option value="">Select Payee (Optional)</option>
-                            {filteredPayeesList.map(p => <option key={p.id} value={p.id}>{p.name} ({p.accountNumber})</option>)}
+                            {filteredPayeesList.map((p, idx) => <option key={`exp-edit-p-${p.id}-${idx}`} value={p.id}>{p.name} ({p.accountNumber})</option>)}
                           </select>
                         </div>
                         <div className="space-y-1">
@@ -10953,6 +11089,8 @@ export default function App() {
                           onAmountChange={(payeeId, amount) => setSelectedPayeesForExpense(selectedPayeesForExpense.map(p => p.payeeId === payeeId ? { ...p, amount } : p))}
                           ranges={ranges}
                           availableBalance={currentSoeBalance}
+                          selectedDeductions={selectedDeductions}
+                          gstNumber={gstNumber}
                         />
                         {selectedPayeesForExpense.length === 0 && (
                           <div className="space-y-1">
@@ -11034,43 +11172,63 @@ export default function App() {
                             </thead>
                             <tbody>
                               {(() => {
-                                const amt = selectedPayeesForExpense.length > 0 
-                                  ? selectedPayeesForExpense.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
-                                  : (parseFloat(expenseAmount) || 0);
-                                let totalDeduction = 0;
+                                let totalGross = 0;
+                                let totalTds = 0;
+                                let totalGstTds = 0;
+
+                                if (selectedPayeesForExpense.length > 0) {
+                                  selectedPayeesForExpense.forEach(sp => {
+                                    const p = payees.find(payee => payee.id === sp.payeeId);
+                                    const pAmt = parseFloat(sp.amount) || 0;
+                                    const pGst = p?.gstNumber || gstNumber;
+                                    totalGross += pAmt;
+                                    if (selectedDeductions.includes('TDS') && pAmt > 30000) {
+                                      totalTds += Math.round(pAmt * 0.01);
+                                    }
+                                    if (selectedDeductions.includes('TDS_GST') && pAmt > 250000 && Boolean(pGst && pGst.trim())) {
+                                      totalGstTds += Math.round(pAmt * 0.02);
+                                    }
+                                  });
+                                } else {
+                                  const amt = parseFloat(expenseAmount) || 0;
+                                  totalGross = amt;
+                                  const hasGst = Boolean(gstNumber && gstNumber.trim());
+                                  if (selectedDeductions.includes('TDS') && amt > 30000) {
+                                    totalTds = Math.round(amt * 0.01);
+                                  }
+                                  if (selectedDeductions.includes('TDS_GST') && amt > 250000 && hasGst) {
+                                    totalGstTds = Math.round(amt * 0.02);
+                                  }
+                                }
+
+                                const totalDeduction = totalTds + totalGstTds;
+                                const netPayable = totalGross - totalDeduction;
+
                                 return (
                                   <>
                                     {selectedDeductions.includes('TDS') && (
                                       <tr>
-                                        <td className="py-1">TDS (1%)</td>
-                                        <td className="py-1 text-right font-bold">
-                                          ₹{(() => {
-                                            const d = amt > 30000 ? Math.round(amt * 0.01) : 0;
-                                            totalDeduction += d;
-                                            return d.toLocaleString();
-                                          })()}
+                                        <td className="py-1">TDS (1% &gt; ₹30,000)</td>
+                                        <td className="py-1 text-right font-bold text-red-600">
+                                          ₹{totalTds.toLocaleString('en-IN')}
                                         </td>
                                       </tr>
                                     )}
                                     {selectedDeductions.includes('TDS_GST') && (
                                       <tr>
-                                        <td className="py-1">TDS on GST (2%)</td>
-                                        <td className="py-1 text-right font-bold">
-                                          ₹{(() => {
-                                            const d = amt > 250000 ? Math.round(amt * 0.02) : 0;
-                                            totalDeduction += d;
-                                            return d.toLocaleString();
-                                          })()}
+                                        <td className="py-1">TDS on GST (2% &gt; ₹2,50,000 + GSTIN)</td>
+                                        <td className="py-1 text-right font-bold text-purple-600">
+                                          ₹{totalGstTds.toLocaleString('en-IN')}
                                         </td>
                                       </tr>
                                     )}
-                                    <tr className="border-t border-blue-200 font-bold text-blue-700">
-                                      <td className="pt-1">Total Deduction</td>
-                                      <td className="pt-1 text-right">₹{totalDeduction.toLocaleString()}</td>
+                                    <tr className="border-t border-blue-200 font-bold text-blue-900">
+                                      <td className="pt-1">Total Deductions</td>
+                                      <td className="pt-1 text-right text-red-600">₹{totalDeduction.toLocaleString('en-IN')}</td>
                                     </tr>
-                                    <tr className="text-emerald-700 font-bold">
-                                      <td className="pt-1">Net Amount to Pay</td>
-                                      <td className="pt-1 text-right">₹{(amt - totalDeduction).toLocaleString()}</td>
+                                    <tr className="text-emerald-800 font-black">
+                                      <td className="pt-1">Net Amount to Pay (RTGS)</td>
+                                      <td className="pt-1 text-right text-sm">₹{netPayable.toLocaleString('en-IN')}</td>
                                     </tr>
                                   </>
                                 );
@@ -11678,15 +11836,22 @@ export default function App() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
+                      onClick={() => setShowPayeePrintModal(true)}
+                      className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold shadow-sm transition-all cursor-pointer"
+                    >
+                      <Printer className="w-4 h-4" /> Print / Preview
+                    </button>
+                    <button
+                      type="button"
                       onClick={downloadPayeesPDF}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all cursor-pointer"
                     >
                       <Download className="w-4 h-4" /> Export PDF
                     </button>
                     <button
                       type="button"
                       onClick={downloadPayeesWord}
-                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all"
+                      className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold shadow-sm transition-all cursor-pointer"
                     >
                       <FileText className="w-4 h-4" /> Export Word (.doc)
                     </button>
@@ -11935,8 +12100,8 @@ export default function App() {
                           className="w-full p-2 border border-emerald-300 rounded-lg bg-emerald-50/50 font-semibold text-emerald-950 focus:ring-2 focus:ring-emerald-500 outline-none"
                         >
                           <option value="">-- Choose Payee from Directory or Fill Form Below --</option>
-                          {filteredPayeesList.map(p => (
-                            <option key={p.id} value={p.id}>
+                          {filteredPayeesList.map((p, idx) => (
+                            <option key={`memo-p-${p.id}-${idx}`} value={p.id}>
                               {p.name} (A/C: {p.accountNumber} - IFSC: {p.ifscCode || 'N/A'})
                             </option>
                           ))}
@@ -12405,56 +12570,42 @@ export default function App() {
               if (e.target === e.currentTarget) setViewingMemo(null);
             }}
           >
-            {/* Fixed Floating Top-Right Close Button */}
-            <button
-              type="button"
-              onClick={() => setViewingMemo(null)}
-              className="no-print fixed top-3 right-3 sm:top-5 sm:right-5 z-[110] bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3.5 py-2 rounded-xl shadow-2xl font-black text-xs flex items-center gap-1.5 transition-all ring-2 ring-white/30 cursor-pointer"
-              title="Close Letter (Esc)"
-            >
-              <X className="w-5 h-5" />
-              <span className="hidden sm:inline">CLOSE (X)</span>
-            </button>
-
             <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
               {/* Sticky Top Modal Toolbar - Hidden in Print */}
-              <div className="no-print bg-gray-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-800 sticky top-0 z-20">
-                <div className="flex items-center gap-2.5">
-                  <FileText className="w-5 h-5 text-emerald-400 shrink-0" />
+              <div className="no-print bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <FileText className="w-5 h-5" />
+                  </div>
                   <div>
-                    <h3 className="font-bold text-xs sm:text-sm text-white">Memo for Fund - Printable View</h3>
-                    <p className="text-[11px] text-gray-400">Memo Ref: {viewingMemo.memoNo} | Period: {viewingMemo.monthYear}</p>
+                    <h3 className="font-bold text-lg">Memo for Fund - Printable View</h3>
+                    <p className="text-xs text-emerald-100">Memo Ref: {viewingMemo.memoNo} | Period: {viewingMemo.monthYear}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 pr-12 sm:pr-0">
-                  <button
-                    type="button"
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => downloadMemoPDF(viewingMemo)}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Download PDF"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden sm:inline">Download</span>
+                  </button>
+                  <button 
                     onClick={handlePrintMemo}
-                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-                    title="Print Memo Letter to Printer"
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Print"
                   >
                     <Printer className="w-4 h-4" />
-                    <span className="hidden sm:inline">Print Letter</span>
+                    <span className="hidden sm:inline">Print</span>
                   </button>
-                  {viewingMemo && (
-                    <button
-                      type="button"
-                      onClick={() => downloadMemoPDF(viewingMemo)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3.5 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-                      title="Download Memo PDF File"
-                    >
-                      <Download className="w-4 h-4" />
-                      <span className="hidden sm:inline">Download PDF</span>
-                    </button>
-                  )}
-                  <button
-                    type="button"
+                  <div className="w-px h-6 bg-white/20 mx-1"></div>
+                  <button 
                     onClick={() => setViewingMemo(null)}
-                    className="flex items-center gap-1 px-3 py-1.5 sm:py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-                    title="Close Preview (X)"
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                    title="Close"
                   >
-                    <X className="w-4 h-4" />
-                    <span>Close (X)</span>
+                    <X className="w-6 h-6" />
                   </button>
                 </div>
               </div>
@@ -12742,17 +12893,25 @@ export default function App() {
                                 setExpenseDescription(`Expenditure as per Memo #${memo.memoNo} (${memo.monthYear})`);
                               }
 
+                              const deductionsToSet: ('TDS' | 'TDS_GST')[] = [];
+                              const hasITax = (memo.totalITax || 0) > 0 || (memo.payeeEntries || []).some(e => e.deductITax || (e.iTaxAmount && e.iTaxAmount > 0) || Number(e.totalAmount) > 30000);
+                              const hasGst = (memo.totalGst || 0) > 0 || (memo.payeeEntries || []).some(e => e.deductGst || (e.gstAmount && e.gstAmount > 0) || (Number(e.totalAmount) > 250000 && Boolean(e.gstNumber && e.gstNumber.trim())));
+                              if (hasITax) deductionsToSet.push('TDS');
+                              if (hasGst) deductionsToSet.push('TDS_GST');
+                              setSelectedDeductions(deductionsToSet);
+
                               if (memo.payeeEntries && memo.payeeEntries.length > 0) {
                                 const matchedPayees: { payeeId: string; amount: string }[] = [];
                                 memo.payeeEntries.forEach(entry => {
                                   const matched = payees.find(p =>
+                                    (entry.payeeId && p.id === entry.payeeId) ||
                                     (p.accountNumber && entry.accountNumber && p.accountNumber.trim() === entry.accountNumber.trim()) ||
                                     (p.name && entry.name && p.name.trim().toLowerCase() === entry.name.trim().toLowerCase())
                                   );
                                   if (matched) {
                                     matchedPayees.push({
                                       payeeId: matched.id,
-                                      amount: String(entry.netRtgsAmount || entry.totalAmount || '')
+                                      amount: String(entry.totalAmount || entry.netRtgsAmount || '')
                                     });
                                   }
                                 });
@@ -12797,53 +12956,42 @@ export default function App() {
               if (e.target === e.currentTarget) setShowExpenditurePrintModal(false);
             }}
           >
-            {/* Fixed Floating Top-Right Close Button */}
-            <button
-              type="button"
-              onClick={() => setShowExpenditurePrintModal(false)}
-              className="no-print fixed top-3 right-3 sm:top-5 sm:right-5 z-[120] bg-red-600 hover:bg-red-700 active:scale-95 text-white px-3.5 py-2 rounded-xl shadow-2xl font-black text-xs flex items-center gap-1.5 transition-all ring-2 ring-white/30 cursor-pointer"
-              title="Close Preview (Esc)"
-            >
-              <X className="w-5 h-5" />
-              <span className="hidden sm:inline">CLOSE (X)</span>
-            </button>
-
             <div className="bg-white w-full max-w-5xl h-[92vh] max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
               {/* Modal Toolbar - Hidden during print */}
-              <div className="no-print bg-gray-900 text-white px-4 sm:px-6 py-3.5 flex items-center justify-between shrink-0 border-b border-gray-800 sticky top-0 z-20">
+              <div className="no-print bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
                 <div className="flex items-center gap-3">
-                  <Printer className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <Printer className="w-5 h-5" />
+                  </div>
                   <div>
-                    <h3 className="font-bold text-xs sm:text-sm text-white">Print Expenditure List Preview</h3>
-                    <p className="text-[11px] text-gray-400">Total Entries: {currentExpenses.length} | Financial Year: {selectedFY}</p>
+                    <h3 className="font-bold text-lg">Expenditure List Preview</h3>
+                    <p className="text-xs text-emerald-100">Total Entries: {currentExpenses.length} | Financial Year: {selectedFY}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 pr-28 sm:pr-0">
-                  <button
-                    type="button"
-                    onClick={handlePrintExpenditureReport}
-                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-                    title="Print Report"
-                  >
-                    <Printer className="w-4 h-4" />
-                    <span className="hidden sm:inline">Print Report</span>
-                  </button>
-                  <button
-                    type="button"
+                <div className="flex items-center gap-2">
+                  <button 
                     onClick={downloadExpenditureListPDF}
-                    className="flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition-all shadow-md active:scale-95 cursor-pointer"
-                    title="Export PDF Document"
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Download PDF"
                   >
                     <Download className="w-4 h-4" />
-                    <span className="hidden sm:inline">Export PDF</span>
+                    <span className="hidden sm:inline">Download</span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowExpenditurePrintModal(false)}
-                    className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-300 hover:text-white cursor-pointer"
-                    title="Close (Esc)"
+                  <button 
+                    onClick={handlePrintExpenditureReport}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Print"
                   >
-                    <X className="w-5 h-5" />
+                    <Printer className="w-4 h-4" />
+                    <span className="hidden sm:inline">Print</span>
+                  </button>
+                  <div className="w-px h-6 bg-white/20 mx-1"></div>
+                  <button 
+                    onClick={() => setShowExpenditurePrintModal(false)}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X className="w-6 h-6" />
                   </button>
                 </div>
               </div>
@@ -12897,7 +13045,28 @@ export default function App() {
                               <div className="font-semibold">{r?.name || 'N/A'} / {s?.name || 'N/A'}</div>
                             </td>
                             <td className="p-2 border-r border-gray-200 text-gray-700 italic">{exp.description || '-'}</td>
-                            <td className="p-2 border-r border-gray-200 text-right font-bold text-gray-900">₹{(Number(exp.amount) || 0).toLocaleString('en-IN')}</td>
+                            <td className="p-2 border-r border-gray-200 text-right">
+                              {(() => {
+                                const totalAmt = Number(exp.amount) || 0;
+                                const tds = Math.round(exp.tdsAmount || 0);
+                                const gstTds = Math.round(exp.tdsGstAmount || 0);
+                                const totalDeducted = Math.round(exp.deductedAmount || (tds + gstTds));
+                                const netPayable = Math.round(exp.netAmount ?? (totalAmt - totalDeducted));
+
+                                if (totalDeducted > 0) {
+                                  return (
+                                    <div className="flex flex-col text-[11px] leading-tight text-right space-y-0.5">
+                                      <div className="font-bold text-gray-900">Total: ₹{totalAmt.toLocaleString('en-IN')}</div>
+                                      {tds > 0 && <div className="text-[10px] text-red-600 font-medium">TDS: -₹{tds.toLocaleString('en-IN')}</div>}
+                                      {gstTds > 0 && <div className="text-[10px] text-purple-600 font-medium">GST TDS: -₹{gstTds.toLocaleString('en-IN')}</div>}
+                                      {tds === 0 && gstTds === 0 && <div className="text-[10px] text-red-600 font-medium">TDS: -₹{totalDeducted.toLocaleString('en-IN')}</div>}
+                                      <div className="font-bold text-emerald-800 border-t border-gray-300 pt-0.5">Net to Pay: ₹{netPayable.toLocaleString('en-IN')}</div>
+                                    </div>
+                                  );
+                                }
+                                return <span className="font-bold text-gray-900">₹{totalAmt.toLocaleString('en-IN')}</span>;
+                              })()}
+                            </td>
                             <td className="p-2 text-center capitalize font-semibold">{exp.status || 'pending'}</td>
                           </tr>
                         );
@@ -12954,6 +13123,111 @@ export default function App() {
                   >
                     Close Preview
                   </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Payee Directory Print / Preview Modal */}
+        {showPayeePrintModal && (
+          <div
+            className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setShowPayeePrintModal(false);
+            }}
+          >
+            <div className="bg-white w-full max-w-5xl h-[92vh] max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
+              {/* Modal Toolbar - Hidden during print */}
+              <div className="no-print bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="bg-white/20 p-2 rounded-lg">
+                    <FileText className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg">Payee Directory - Printable View</h3>
+                    <p className="text-xs text-emerald-100">Total Payees: {filteredPayeesList.length} | Range / Role: {userRangeName || userRole || 'All'}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={downloadPayeesPDF}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Download PDF"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span className="hidden sm:inline">Download</span>
+                  </button>
+                  <button 
+                    onClick={handlePrintExpenditureReport}
+                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                    title="Print"
+                  >
+                    <Printer className="w-4 h-4" />
+                    <span className="hidden sm:inline">Print</span>
+                  </button>
+                  <div className="w-px h-6 bg-white/20 mx-1"></div>
+                  <button 
+                    onClick={() => setShowPayeePrintModal(false)}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                    title="Close"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Printable Payee Table Area */}
+              <div className="print-area flex-1 overflow-y-auto p-6 md:p-10 space-y-6 bg-white text-gray-900 font-sans">
+                <div className="text-center space-y-1 border-b pb-4">
+                  <h1 className="text-xl font-black uppercase tracking-wide text-gray-900">Department of Forests, Himachal Pradesh</h1>
+                  <h2 className="text-base font-bold text-gray-800">Rajgarh Forest Division — Payee Directory Details</h2>
+                  <p className="text-xs text-gray-500 font-medium">Range / Role: {userRangeName || userRole || 'All'} | Date: {new Date().toLocaleDateString('en-GB')}</p>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-gray-300 text-xs">
+                    <thead>
+                      <tr className="bg-gray-100 text-gray-800 font-bold border-b border-gray-300">
+                        <th className="p-2 border-r border-gray-300 w-8 text-center">#</th>
+                        <th className="p-2 border-r border-gray-300">Payee Name</th>
+                        <th className="p-2 border-r border-gray-300">Address</th>
+                        <th className="p-2 border-r border-gray-300">Account Number</th>
+                        <th className="p-2 border-r border-gray-300">IFSC Code</th>
+                        <th className="p-2 border-r border-gray-300">PAN Number</th>
+                        <th className="p-2 border-r border-gray-300">GST Number</th>
+                        <th className="p-2 border-gray-300">Range</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {filteredPayeesList.map((p, index) => {
+                        const rName = ranges.find(r => r.id === p.rangeId)?.name || 'Not Specified';
+                        return (
+                          <tr key={`payee-print-${p.id}-${index}`} className="hover:bg-gray-50">
+                            <td className="p-2 border-r border-gray-300 text-center">{index + 1}</td>
+                            <td className="p-2 border-r border-gray-300 font-bold text-gray-900">{p.name}</td>
+                            <td className="p-2 border-r border-gray-300 text-gray-600">{p.address}</td>
+                            <td className="p-2 border-r border-gray-300 font-mono text-gray-900 font-bold">{p.accountNumber}</td>
+                            <td className="p-2 border-r border-gray-300 font-mono text-gray-700">{p.ifscCode || 'N/A'}</td>
+                            <td className="p-2 border-r border-gray-300 font-mono text-gray-700">{p.panNumber || 'N/A'}</td>
+                            <td className="p-2 border-r border-gray-300 font-mono text-gray-700">{p.gstNumber || 'N/A'}</td>
+                            <td className="p-2 border-gray-300 text-gray-700">{rName}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="pt-8 flex justify-between items-end text-xs font-semibold text-gray-700 border-t">
+                  <div>
+                    <p>Total Registered Payees: {filteredPayeesList.length}</p>
+                    <p className="text-[10px] text-gray-500 font-normal">Generated electronically via Forest Budget Control System</p>
+                  </div>
+                  <div className="text-right">
+                    <p>Divisional Forest Officer / Range Officer</p>
+                    <p className="text-[10px] text-gray-500 font-normal">Rajgarh Forest Division, H.P.</p>
+                  </div>
                 </div>
               </div>
             </div>
