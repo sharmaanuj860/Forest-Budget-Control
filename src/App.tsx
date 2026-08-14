@@ -10079,7 +10079,20 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-6">
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-4 sm:p-6 relative">
+        {/* Top-side Refresh Button on Login Page */}
+        <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            title="Refresh application and sync latest changes"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-800 hover:text-emerald-900 border border-emerald-200 hover:border-emerald-300 rounded-xl shadow-sm text-xs font-bold transition-all transform active:scale-95 cursor-pointer group"
+          >
+            <RefreshCw className="w-4 h-4 text-emerald-600 group-hover:rotate-180 transition-transform duration-500" />
+            <span>Refresh App</span>
+          </button>
+        </div>
+
         <div className="bg-white p-8 rounded-2xl shadow-xl border border-gray-100 max-w-md w-full text-center space-y-6">
           <img src="/logo.png" alt="Forest Budget Logo" className="h-16 w-auto mx-auto object-contain" onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextElementSibling?.classList.remove('hidden'); }} />
           <Landmark className="h-16 w-16 text-emerald-600 mx-auto hidden" />
@@ -10228,6 +10241,15 @@ export default function App() {
                   Load Preloaded Data
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                title="Refresh application and sync latest changes"
+                className="flex items-center gap-1.5 bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 px-2.5 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200 hover:border-emerald-300 font-semibold transition-all text-xs md:text-sm cursor-pointer shadow-xs group"
+              >
+                <RefreshCw className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-600 group-hover:rotate-180 transition-transform duration-500" />
+                <span className="hidden sm:inline">Refresh</span>
+              </button>
               {isInstallable && (
                 <button
                   onClick={handleInstallClick}
