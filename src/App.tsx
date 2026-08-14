@@ -1546,6 +1546,36 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
+  const [isRefreshingApp, setIsRefreshingApp] = useState(false);
+
+  const handleForceAppRefresh = async () => {
+    setIsRefreshingApp(true);
+    try {
+      // 1. Clear all browser and service worker caches
+      if ('caches' in window) {
+        const cacheKeys = await caches.keys();
+        await Promise.all(cacheKeys.map(key => caches.delete(key)));
+      }
+
+      // 2. Unregister or update all active Service Workers
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        for (const reg of registrations) {
+          await reg.update();
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to clear cache during refresh:', err);
+    } finally {
+      // 3. Force hard reload bypassing cache with a timestamp query param
+      const url = new URL(window.location.href);
+      url.searchParams.set('_t', Date.now().toString());
+      window.location.replace(url.toString());
+    }
+  };
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -10084,12 +10114,13 @@ export default function App() {
         <div className="absolute top-4 right-4 sm:top-6 sm:right-6 z-10 flex items-center gap-2">
           <button
             type="button"
-            onClick={() => window.location.reload()}
-            title="Refresh application and sync latest changes"
-            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-800 hover:text-emerald-900 border border-emerald-200 hover:border-emerald-300 rounded-xl shadow-sm text-xs font-bold transition-all transform active:scale-95 cursor-pointer group"
+            onClick={handleForceAppRefresh}
+            disabled={isRefreshingApp}
+            title="Purge local cache and sync the latest version of the application"
+            className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-emerald-50 text-emerald-800 hover:text-emerald-900 border border-emerald-200 hover:border-emerald-300 rounded-xl shadow-sm text-xs font-bold transition-all transform active:scale-95 cursor-pointer group disabled:opacity-60"
           >
-            <RefreshCw className="w-4 h-4 text-emerald-600 group-hover:rotate-180 transition-transform duration-500" />
-            <span>Refresh App</span>
+            <RefreshCw className={`w-4 h-4 text-emerald-600 ${isRefreshingApp ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+            <span>{isRefreshingApp ? 'Updating...' : 'Refresh App'}</span>
           </button>
         </div>
 
@@ -10243,12 +10274,13 @@ export default function App() {
               )}
               <button
                 type="button"
-                onClick={() => window.location.reload()}
-                title="Refresh application and sync latest changes"
-                className="flex items-center gap-1.5 bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 px-2.5 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200 hover:border-emerald-300 font-semibold transition-all text-xs md:text-sm cursor-pointer shadow-xs group"
+                onClick={handleForceAppRefresh}
+                disabled={isRefreshingApp}
+                title="Purge local cache and sync the latest version of the application"
+                className="flex items-center gap-1.5 bg-gray-50 hover:bg-emerald-50 text-gray-700 hover:text-emerald-800 px-2.5 md:px-3 py-1.5 md:py-2 rounded-lg border border-gray-200 hover:border-emerald-300 font-semibold transition-all text-xs md:text-sm cursor-pointer shadow-xs group disabled:opacity-60"
               >
-                <RefreshCw className="w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-600 group-hover:rotate-180 transition-transform duration-500" />
-                <span className="hidden sm:inline">Refresh</span>
+                <RefreshCw className={`w-3.5 h-3.5 md:w-4 md:h-4 text-emerald-600 ${isRefreshingApp ? 'animate-spin' : 'group-hover:rotate-180 transition-transform duration-500'}`} />
+                <span className="hidden sm:inline">{isRefreshingApp ? 'Updating...' : 'Refresh'}</span>
               </button>
               {isInstallable && (
                 <button
