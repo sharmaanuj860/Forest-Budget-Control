@@ -13709,13 +13709,16 @@ function CascadingDropdowns({
   // Calculate and notify parent of balance changes (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && onBalanceChange) {
-      if (schemeId && rangeId && soeId) {
+      const currentAlloc = allocations.find((a: any) => a.id === allocationId);
+      const targetRangeId = currentAlloc?.rangeId || (userRangeId ? userRangeId : rangeId);
+
+      if (schemeId && targetRangeId && soeId) {
         const selectedSoe = soes.find((s: any) => s.id === soeId);
         const selectedName = selectedSoe?.name || 'Unnamed SOE';
 
         // Aggregate allocation for this hierarchy and SOE Name
         const totalAllocatedForSoe = allocations.filter((a: any) => 
-          a.rangeId === rangeId &&
+          a.rangeId === targetRangeId &&
           a.schemeId === schemeId &&
           (a.sectorId || null) === (sectorId || null) &&
           (a.activityId || null) === (activityId || null) &&
@@ -13734,7 +13737,7 @@ function CascadingDropdowns({
           const eSoeName = soes.find((s: any) => s.id === e.soeId)?.name;
           return (
             eAlloc &&
-            eAlloc.rangeId === rangeId &&
+            eAlloc.rangeId === targetRangeId &&
             eAlloc.schemeId === schemeId &&
             (eAlloc.sectorId || null) === (sectorId || null) &&
             (eAlloc.activityId || null) === (activityId || null) &&
@@ -13757,7 +13760,7 @@ function CascadingDropdowns({
         }
       }
     }
-  }, [schemeId, sectorId, activityId, subActivityId, rangeId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes]);
+  }, [schemeId, sectorId, activityId, subActivityId, rangeId, allocationId, soeId, allocations, expenses, type, onBalanceChange, editingItem, soes, userRangeId]);
 
   // Initialize state based on editingItem
   useEffect(() => {
@@ -13871,16 +13874,18 @@ function CascadingDropdowns({
     });
   };
 
+  const effectiveRangeFilter = userRangeId || (type === 'Expenditure' ? '' : rangeId);
+
   const filteredSectors = useMemo(() => (sectors || []).filter((s: any) => {
     if (!schemeId && type !== 'BudgetView') return false;
     if (schemeId && s.schemeId !== schemeId) return false;
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((a: any) => 
       a.sectorId === s.id && 
-      (!rangeId || a.rangeId === rangeId) &&
+      (!effectiveRangeFilter || a.rangeId === effectiveRangeFilter) &&
       (!schemeId || a.schemeId === schemeId)
     )) return false;
     return true;
-  }), [sectors, schemeId, type, allocations, rangeId]);
+  }), [sectors, schemeId, type, allocations, effectiveRangeFilter]);
 
   const filteredActivities = useMemo(() => (activities || []).filter((a: any) => {
     if (!schemeId && type !== 'BudgetView') return false;
@@ -13893,25 +13898,25 @@ function CascadingDropdowns({
     }
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.activityId === a.id && 
-      (!rangeId || al.rangeId === rangeId) &&
+      (!effectiveRangeFilter || al.rangeId === effectiveRangeFilter) &&
       (!schemeId || al.schemeId === schemeId) &&
       (!sectorId || al.sectorId === sectorId)
     )) return false;
     return true;
-  }), [activities, schemeId, sectorId, type, allocations, rangeId, sectors]);
+  }), [activities, schemeId, sectorId, type, allocations, effectiveRangeFilter, sectors]);
 
   const filteredSubActivities = useMemo(() => (subActivities || []).filter((sa: any) => {
     if (!activityId && type !== 'BudgetView') return false;
     if (activityId && sa.activityId !== activityId) return false;
     if ((type === 'Expenditure' || type === 'Surrender') && !(allocations || []).some((al: any) => 
       al.subActivityId === sa.id && 
-      (!rangeId || al.rangeId === rangeId) &&
+      (!effectiveRangeFilter || al.rangeId === effectiveRangeFilter) &&
       (!schemeId || al.schemeId === schemeId) &&
       (!sectorId || al.sectorId === sectorId) &&
       (!activityId || al.activityId === activityId)
     )) return false;
     return true;
-  }), [subActivities, activityId, type, allocations, rangeId, schemeId, sectorId]);
+  }), [subActivities, activityId, type, allocations, effectiveRangeFilter, schemeId, sectorId]);
 
   const filteredSoes = useMemo(() => (soes || []).filter((s: any) => {
     if (!schemeId) return false;
@@ -13937,14 +13942,21 @@ function CascadingDropdowns({
     return true;
   }), [soes, schemeId, sectorId, activityId, subActivityId, type, allocations, rangeId]);
 
-  const filteredAllocations = useMemo(() => (allocations || []).filter((a: any) => {
-    if (rangeId && a.rangeId !== rangeId) return false;
-    if (!rangeId && userRangeId && userRole !== 'admin' && a.rangeId !== userRangeId) return false;
+  const hierarchyAllocations = useMemo(() => (allocations || []).filter((a: any) => {
+    if (type === 'Expenditure') {
+      if (userRangeId && a.rangeId !== userRangeId) return false;
+    } else {
+      if (rangeId && a.rangeId !== rangeId) return false;
+      if (!rangeId && userRangeId && userRole !== 'admin' && a.rangeId !== userRangeId) return false;
+    }
     if (schemeId && a.schemeId !== schemeId) return false;
     if (sectorId && a.sectorId !== sectorId) return false;
     if (activityId && a.activityId !== activityId) return false;
     if (subActivityId && a.subActivityId !== subActivityId) return false;
-    
+    return true;
+  }), [allocations, rangeId, userRangeId, userRole, schemeId, sectorId, activityId, subActivityId, type]);
+
+  const filteredAllocations = useMemo(() => hierarchyAllocations.filter((a: any) => {
     // Add SOE filtering for Expenditure
     if (type === 'Expenditure' && soeId) {
       const selectedSoe = (soes || []).find((s: any) => s.id === soeId);
@@ -13956,7 +13968,7 @@ function CascadingDropdowns({
     }
     
     return true;
-  }), [allocations, rangeId, schemeId, sectorId, activityId, subActivityId, soeId, type, soes]);
+  }), [hierarchyAllocations, soeId, type, soes]);
 
   // Auto-selection logic removed to keep form empty as requested
   useEffect(() => {
@@ -13974,12 +13986,19 @@ function CascadingDropdowns({
   // Auto-selection for allocationId (Expenditure only)
   useEffect(() => {
     if (type === 'Expenditure' && filteredAllocations.length > 0 && !editingItem) {
-      if (!allocationId || !filteredAllocations.some((a: any) => a.id === allocationId)) {
-        setAllocationId(filteredAllocations[0].id);
-        setRangeId(filteredAllocations[0].rangeId);
+      if (userRangeId) {
+        if (!allocationId || !filteredAllocations.some((a: any) => a.id === allocationId)) {
+          setAllocationId(filteredAllocations[0].id);
+          setRangeId(filteredAllocations[0].rangeId);
+        }
+      } else {
+        if (allocationId && !filteredAllocations.some((a: any) => a.id === allocationId)) {
+          setAllocationId('');
+          setRangeId('');
+        }
       }
     }
-  }, [filteredAllocations, allocationId, type, editingItem]);
+  }, [filteredAllocations, allocationId, type, editingItem, userRangeId]);
 
   // Auto-selection for soeId (Expenditure only)
   useEffect(() => {
@@ -14214,7 +14233,7 @@ function CascadingDropdowns({
                 const uniqueSoeNames = new Set();
                 const availableSoes: any[] = [];
                 
-                filteredAllocations.forEach(a => {
+                hierarchyAllocations.forEach(a => {
                   a.fundedSOEs?.forEach((f: any) => {
                     const s = soes.find((soe: any) => soe.id === f.soeId);
                     if (s && !uniqueSoeNames.has(s.name)) {
@@ -14270,6 +14289,7 @@ function CascadingDropdowns({
                   <option value="">Select Allocation (Range)</option>
                   {filteredAllocations.map((a: any) => {
                     const r = ranges.find((r: any) => r.id === a.rangeId);
+                    const rangeDisplayName = r?.name === 'Rajgarh Forest Division' ? 'Division' : (r?.name || 'Unknown Range');
                     const selectedSoe = soes.find(s => s.id === soeId);
                     const selectedName = selectedSoe?.name;
                     const funded = a.fundedSOEs?.find((f: any) => soes.find(s => s.id === f.soeId)?.name === selectedName);
@@ -14278,7 +14298,7 @@ function CascadingDropdowns({
                       .reduce((sum: number, e: any) => sum + e.amount, 0);
                     const available = (funded?.amount || 0) - spent;
 
-                    return <option key={a.id} value={a.id}>{r?.name} (Available: ₹{available.toLocaleString()})</option>
+                    return <option key={a.id} value={a.id}>{rangeDisplayName} (Available: ₹{available.toLocaleString()})</option>
                   })}
                 </select>
                 <button type="button" onClick={() => document.getElementById('tab-Allocations')?.click()} className="px-2 bg-gray-100 border rounded hover:bg-gray-200 text-gray-600 text-sm" title="Add Allocation">+</button>
