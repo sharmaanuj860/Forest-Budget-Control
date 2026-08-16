@@ -135,6 +135,13 @@ type Payee = {
   createdBy: string;
 };
 
+type MemoSubVoucher = {
+  id: string;
+  voucherNo?: string;
+  description?: string;
+  amount: number;
+};
+
 type MemoPayeeEntry = {
   id?: string;
   payeeId?: string;
@@ -153,6 +160,7 @@ type MemoPayeeEntry = {
   gstAmount?: number;
   netRtgsAmount: number;
   description?: string;
+  subVouchers?: MemoSubVoucher[];
 };
 
 type MemoForFund = {
@@ -781,6 +789,10 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
+    if (userRole && !['admin', 'deo', 'DA', 'approver'].includes(userRole)) {
+      setAuditLogs([]);
+      return;
+    }
     const q = query(collection(db, 'auditLogs'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const logs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }) as any);
@@ -790,7 +802,7 @@ export default function App() {
       console.warn("Audit logs listener error:", error);
     });
     return () => unsubscribe();
-  }, [user]);
+  }, [user, userRole]);
 
   const isMemoSyncEnabled = !featureLocks.some(l => l.feature === 'MemoSync' && (l.target === 'global' || l.target === 'all') && l.isLocked);
   const userRangeRoleName = userRole && ['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh'].includes(userRole) ? userRole : '';
@@ -843,6 +855,13 @@ export default function App() {
   const [entryDeductGst, setEntryDeductGst] = useState<boolean>(false);
   const [entryGstPercent, setEntryGstPercent] = useState<string>('2');
   const [editingEntryIndex, setEditingEntryIndex] = useState<number | null>(null);
+
+  // Payee Sub-Vouchers / Bills Breakdown State
+  const [entrySubVouchers, setEntrySubVouchers] = useState<MemoSubVoucher[]>([]);
+  const [showSubVoucherSection, setShowSubVoucherSection] = useState<boolean>(false);
+  const [subVoucherNoInput, setSubVoucherNoInput] = useState<string>('');
+  const [subVoucherDescInput, setSubVoucherDescInput] = useState<string>('');
+  const [subVoucherAmountInput, setSubVoucherAmountInput] = useState<string>('');
 
   const [selectedMemoPayeeId, setSelectedMemoPayeeId] = useState<string>('');
   const [selectedMemoSchemeId, setSelectedMemoSchemeId] = useState<string>('');
@@ -926,6 +945,32 @@ export default function App() {
       { name: 'Users', icon: <User className="w-3 h-3 sm:w-4 sm:h-4" /> }
     ];
 
+    const deoItems = [
+      { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { name: 'Notifications', icon: <Bell className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Manage Budget', 
+        icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Approved Budget', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Distributed Budget', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Allocations', icon: <Wallet className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Expenditures', icon: <TrendingDown className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Surrender', icon: <CornerUpLeft className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'Reconciliation', icon: <RefreshCcw className="w-3 h-3 sm:w-4 sm:h-4" /> },
+      { 
+        name: 'Reports', 
+        icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" />,
+        children: [
+          { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
+          { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
+        ]
+      },
+      { name: 'Audit Log', icon: <History className="w-3 h-3 sm:w-4 sm:h-4" /> }
+    ];
+
     const daItems = [
       { name: 'Dashboard', icon: <Home className="w-3 h-3 sm:w-4 sm:h-4" /> },
       { name: 'Notifications', icon: <Bell className="w-3 h-3 sm:w-4 sm:h-4" /> },
@@ -972,12 +1017,12 @@ export default function App() {
           { name: 'Ledger', icon: <FileText className="w-3 h-3 sm:w-4 sm:h-4" /> },
           { name: 'Reports', icon: <FileBarChart className="w-3 h-3 sm:w-4 sm:h-4" /> }
         ]
-      },
-      { name: 'Audit Log', icon: <History className="w-3 h-3 sm:w-4 sm:h-4" /> }
+      }
     ];
 
     if (userRole === 'admin') return adminItems;
-    if (userRole === 'DA') return daItems;
+    if (userRole === 'deo') return deoItems;
+    if (userRole === 'DA' || userRole === 'approver') return daItems;
     return otherItems;
   }, [userRole]);
 
@@ -1443,7 +1488,44 @@ export default function App() {
       or(where('financialYear', 'in', fyQueryValues), where('fyId', 'in', fyQueryValues))
     );
     const unsubMemos = onSnapshot(memosQuery, (snap) => {
-      const data = snap.docs.map(d => ({ ...d.data(), id: d.id } as MemoForFund));
+      const data = snap.docs.map(d => {
+        const raw = { ...d.data(), id: d.id } as MemoForFund;
+        const roundedPayeeEntries = (raw.payeeEntries || []).map(entry => {
+          const tot = Math.round(Number(entry.totalAmount) || 0);
+          const itax = Math.round(Number(entry.iTaxAmount) || 0);
+          const gst = Math.round(Number(entry.gstAmount) || 0);
+          const net = Math.round(Number(entry.netRtgsAmount) || (tot - itax - gst));
+          return {
+            ...entry,
+            totalAmount: tot,
+            iTaxAmount: itax,
+            gstAmount: gst,
+            netRtgsAmount: net,
+          };
+        });
+
+        const totalGross = roundedPayeeEntries.length > 0
+          ? roundedPayeeEntries.reduce((sum, e) => sum + e.totalAmount, 0)
+          : Math.round(Number(raw.totalAmount) || 0);
+        const totalITax = roundedPayeeEntries.length > 0
+          ? roundedPayeeEntries.reduce((sum, e) => sum + e.iTaxAmount, 0)
+          : Math.round(Number(raw.totalITax) || 0);
+        const totalGst = roundedPayeeEntries.length > 0
+          ? roundedPayeeEntries.reduce((sum, e) => sum + (e.gstAmount || 0), 0)
+          : Math.round(Number(raw.totalGst) || 0);
+        const totalNetRtgs = roundedPayeeEntries.length > 0
+          ? roundedPayeeEntries.reduce((sum, e) => sum + e.netRtgsAmount, 0)
+          : Math.round(Number(raw.totalNetRtgs) || (totalGross - totalITax - totalGst));
+
+        return {
+          ...raw,
+          totalAmount: totalGross,
+          totalITax: totalITax,
+          totalGst: totalGst,
+          totalNetRtgs: totalNetRtgs,
+          payeeEntries: roundedPayeeEntries,
+        };
+      });
       setMemos(data.sort((a: any, b: any) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0)));
     }, (error) => handleFirestoreError(error, OperationType.LIST, 'memos'));
 
@@ -1809,6 +1891,8 @@ export default function App() {
     return currentSectors.find(s => s.id === selectedMemoSectorId);
   }, [currentSectors, selectedMemoSectorId]);
 
+  const isRangeRole = Boolean(userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].some(r => r.toLowerCase() === userRole.toLowerCase()));
+
   const userRangeName = useMemo(() => {
     const r = ranges.find(r => r.id === userRangeId);
     if (r) return r.name;
@@ -1820,17 +1904,40 @@ export default function App() {
     return 'Rajgarh Forest Division';
   }, [ranges, userRangeId, userRole]);
 
-  const filteredMemosForSync = useMemo(() => {
+  const filteredMemos = useMemo(() => {
     return memos.filter(m => {
+      if (isRangeRole) {
+        const userRoleLower = userRole!.toLowerCase();
+        const codeMap: Record<string, string> = {
+          sarahan: 'SRH',
+          narag: 'NRG',
+          habban: 'HBN',
+          rajgarh: 'RJG',
+          division: 'DIV',
+        };
+        const code = codeMap[userRoleLower];
+
+        const matchRangeId = userRangeId && m.rangeId === userRangeId;
+        const matchRangeName = m.rangeName && (
+          m.rangeName.toLowerCase().includes(userRoleLower) ||
+          (userRangeName && m.rangeName.toLowerCase().includes(userRangeName.toLowerCase()))
+        );
+        const matchCreatedByRole = m.createdByRole && m.createdByRole.toLowerCase() === userRoleLower;
+        const matchCreatedBy = m.createdBy && user?.uid && m.createdBy === user.uid;
+        const matchMemoCode = code && m.memoNo && m.memoNo.toUpperCase().includes(`/${code}/`);
+
+        if (!matchRangeId && !matchRangeName && !matchCreatedByRole && !matchCreatedBy && !matchMemoCode) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [memos, isRangeRole, userRole, userRangeId, userRangeName, user?.uid]);
+
+  const filteredMemosForSync = useMemo(() => {
+    return filteredMemos.filter(m => {
       if (selectedFY && m.financialYear && m.financialYear !== selectedFY && m.fyId !== selectedFY) {
         return false;
-      }
-      if (userRole && userRole !== 'admin') {
-        if (m.rangeId && userRangeId && m.rangeId !== userRangeId) {
-          if (m.rangeName && userRangeName && m.rangeName.toLowerCase() !== userRangeName.toLowerCase()) {
-            return false;
-          }
-        }
       }
       if (memoSearchTerm.trim()) {
         const q = memoSearchTerm.toLowerCase();
@@ -1842,7 +1949,7 @@ export default function App() {
       }
       return true;
     });
-  }, [memos, selectedFY, userRole, userRangeId, userRangeName, memoSearchTerm]);
+  }, [filteredMemos, selectedFY, memoSearchTerm]);
 
   const memoFilteredExpenses = useMemo(() => {
     if (!selectedMemoPayeeId) return [];
@@ -6167,7 +6274,7 @@ export default function App() {
       try {
         const batch = writeBatch(db);
         for (const p of selectedPayeesForExpense) {
-          const pAmt = parseFloat(p.amount) || 0;
+          const pAmt = Math.round(parseFloat(p.amount) || 0);
           const pPayeeObj = payees.find(payee => payee.id === p.payeeId);
           const pGst = pPayeeObj?.gstNumber || gstNumber;
           const pPan = pPayeeObj?.panNumber || panNumber;
@@ -6235,7 +6342,7 @@ export default function App() {
     }
 
     // Calculate deductions
-    const amt = amount;
+    const amt = Math.round(amount);
     let tdsAmt = 0;
     let tdsGstAmt = 0;
     const hasGst = Boolean(gstNumber && gstNumber.trim());
@@ -6388,7 +6495,7 @@ export default function App() {
   const downloadMemoPDF = (memo: MemoForFund) => {
     try {
       const doc = new jsPDF('p', 'mm', 'a4');
-      const rangeTitle = memo.rangeName ? memo.rangeName.replace(/^RFO\s*/i, '') : (userRangeName || 'Sarahan');
+      const rangeTitle = memo.rangeName ? memo.rangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '') : (userRangeName || 'Sarahan');
 
       doc.setFontSize(10);
       doc.setFont("helvetica", "bold");
@@ -6411,56 +6518,64 @@ export default function App() {
       doc.setLineWidth(0.2);
       doc.line(14, 39, 196, 39);
 
+      // Single-line From & To Header
       doc.setFontSize(9.5);
       doc.setFont("helvetica", "bold");
       doc.text("From:", 14, 45);
       doc.setFont("helvetica", "normal");
-      doc.text(`Range Forest Officer, ${memo.rangeName || rangeTitle}.`, 28, 45);
+      doc.text(`Range Forest Officer, ${memo.rangeName || rangeTitle}.`, 26, 45);
 
       doc.setFont("helvetica", "bold");
-      doc.text("To:", 14, 51);
+      doc.text("To:", 112, 45);
       doc.setFont("helvetica", "normal");
-      doc.text("The Divisional Forest Officer, Rajgarh Forest Division, Rajgarh (H.P.).", 28, 51);
+      doc.text("The Divisional Forest Officer, Rajgarh (H.P.).", 119, 45);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Subject:", 14, 58);
+      doc.text("Subject:", 14, 53);
       const schemeText = memo.schemeName || 'All Schemes';
       const sectorText = memo.sectorName ? ` (${memo.sectorName})` : '';
       const subjStr = `Memo for Fund for the month of ${memo.monthYear} under scheme ${schemeText}${sectorText}.`;
-      doc.text(subjStr, 32, 58, { maxWidth: 160 });
+      doc.text(subjStr, 32, 53, { maxWidth: 160 });
 
-      doc.text("Sir,", 14, 66);
+      doc.text("Sir,", 14, 61);
       const bodyText = `It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of ${memo.monthYear} as per the details tabulated below.`;
       const splitBody = doc.splitTextToSize(bodyText, 182);
-      doc.text(splitBody, 14, 72);
+      doc.text(splitBody, 14, 67);
 
-      let nextY = 72 + (splitBody.length * 5) + 2;
-      const bodyText2 = `You are kindly requested to sanction and release the total expenditure amount of Rs. ${(memo.totalAmount || 0).toLocaleString('en-IN')} (Total Net RTGS Amount: Rs. ${(memo.totalNetRtgs || memo.totalAmount || 0).toLocaleString('en-IN')}) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.`;
+      let nextY = 67 + (splitBody.length * 5) + 2;
+      const totalGrossAmt = Math.round(Number(memo.totalAmount) || 0);
+      const totalNetRtgsAmt = Math.round(Number(memo.totalNetRtgs) || totalGrossAmt);
+      const bodyText2 = `You are kindly requested to sanction and release the total expenditure amount of Rs. ${totalGrossAmt.toLocaleString('en-IN')} (Total Net RTGS Amount: Rs. ${totalNetRtgsAmt.toLocaleString('en-IN')}) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.`;
       const splitBody2 = doc.splitTextToSize(bodyText2, 182);
       doc.text(splitBody2, 14, nextY);
 
       nextY += (splitBody2.length * 5) + 4;
 
       const tableHead = [['Sr.', 'Name & Address', 'Total (Rs)', 'I/Tax 1%', 'GST 2%', 'Net RTGS', 'Account No.', 'IFSC Code', 'PAN/GSTIN']];
-      const tableData = (memo.payeeEntries || []).map((e, idx) => [
-        idx + 1,
-        `${e.name || ''}${e.address ? '\n' + e.address : ''}`,
-        (Number(e.totalAmount) || 0).toLocaleString('en-IN'),
-        (Number(e.iTaxAmount) || 0).toLocaleString('en-IN'),
-        (Number(e.gstAmount) || 0).toLocaleString('en-IN'),
-        (Number(e.netRtgsAmount) || 0).toLocaleString('en-IN'),
-        e.accountNumber || '',
-        e.ifscCode || '',
-        `PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? '\nGST: ' + e.gstNumber : ''}`
-      ]);
+      const tableData = (memo.payeeEntries || []).map((e, idx) => {
+        const subVouchersNote = e.subVouchers && e.subVouchers.length > 0
+          ? '\n[Sub-vouchers: ' + e.subVouchers.map(sv => (sv.voucherNo ? sv.voucherNo + ': ' : '') + 'Rs. ' + Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')).join(', ') + ']'
+          : '';
+        return [
+          idx + 1,
+          `${e.name || ''}${e.address ? '\n' + e.address : ''}${subVouchersNote}`,
+          Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN'),
+          Math.round(Number(e.iTaxAmount) || 0).toLocaleString('en-IN'),
+          Math.round(Number(e.gstAmount) || 0).toLocaleString('en-IN'),
+          Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN'),
+          e.accountNumber || '',
+          e.ifscCode || '',
+          `PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? '\nGST: ' + e.gstNumber : ''}`
+        ];
+      });
 
       const footRow = [
         '',
         'TOTAL:',
-        (memo.totalAmount || 0).toLocaleString('en-IN'),
-        (memo.totalITax || 0).toLocaleString('en-IN'),
-        (memo.totalGst || 0).toLocaleString('en-IN'),
-        (memo.totalNetRtgs || memo.totalAmount || 0).toLocaleString('en-IN'),
+        totalGrossAmt.toLocaleString('en-IN'),
+        Math.round(Number(memo.totalITax) || 0).toLocaleString('en-IN'),
+        Math.round(Number(memo.totalGst) || 0).toLocaleString('en-IN'),
+        totalNetRtgsAmt.toLocaleString('en-IN'),
         '', '', ''
       ];
 
@@ -6494,7 +6609,7 @@ export default function App() {
         finalY += 6;
       }
 
-      const words = convertNumberToWords(memo.totalNetRtgs || memo.totalAmount || 0);
+      const words = convertNumberToWords(totalNetRtgsAmt);
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "bold");
       doc.text(`Total Net Amount Payable (in words): Rupees ${words} Only`, 14, finalY);
@@ -6516,12 +6631,266 @@ export default function App() {
     }
   };
 
-  const handlePrintMemo = () => {
+  const handlePrintMemo = (targetMemo?: MemoForFund) => {
+    const memoToPrint = targetMemo || viewingMemo;
+    if (!memoToPrint) return;
     try {
-      window.focus();
-      window.print();
+      const rangeTitle = memoToPrint.rangeName ? memoToPrint.rangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '') : (userRangeName || 'Sarahan');
+      const dateFormatted = memoToPrint.date ? memoToPrint.date.split('-').reverse().join('.') : '';
+      const totalGrossAmt = Math.round(Number(memoToPrint.totalAmount) || 0);
+      const totalITaxAmt = Math.round(Number(memoToPrint.totalITax) || 0);
+      const totalGstAmt = Math.round(Number(memoToPrint.totalGst) || 0);
+      const totalNetRtgsAmt = Math.round(Number(memoToPrint.totalNetRtgs) || totalGrossAmt);
+      const words = convertNumberToWords(totalNetRtgsAmt);
+
+      const tableRowsHtml = (memoToPrint.payeeEntries || []).map((e, idx) => {
+        const subVouchersHtml = e.subVouchers && e.subVouchers.length > 0
+          ? `<div style="font-size:10px; color:#047857; margin-top:3px; font-weight:normal;">Sub-vouchers: ${e.subVouchers.map(sv => `${sv.voucherNo ? '<strong>' + sv.voucherNo + '</strong>: ' : ''}₹${Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')}${sv.description ? ' (' + sv.description + ')' : ''}`).join(', ')}</div>`
+          : '';
+        return `
+          <tr>
+            <td style="text-align:center; padding:6px 4px; border:1px solid #444; font-size:11px;">${idx + 1}</td>
+            <td style="padding:6px 6px; border:1px solid #444; font-size:11px;">
+              <strong>${e.name || ''}</strong>
+              ${e.address ? `<div style="font-size:10px; color:#555;">${e.address}</div>` : ''}
+              ${subVouchersHtml}
+            </td>
+            <td style="text-align:right; padding:6px; border:1px solid #444; font-weight:bold; font-size:11px;">₹${Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="text-align:right; padding:6px; border:1px solid #444; color:#b91c1c; font-size:11px;">₹${Math.round(Number(e.iTaxAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="text-align:right; padding:6px; border:1px solid #444; color:#6b21a8; font-size:11px;">₹${Math.round(Number(e.gstAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="text-align:right; padding:6px; border:1px solid #444; font-weight:bold; color:#064e3b; font-size:11px;">₹${Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="padding:6px; border:1px solid #444; font-family:monospace; font-size:10px;">${e.accountNumber || ''}</td>
+            <td style="padding:6px; border:1px solid #444; font-family:monospace; font-size:10px;">${e.ifscCode || ''}</td>
+            <td style="padding:6px; border:1px solid #444; font-size:10px;">PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? `<br/>GST: ${e.gstNumber}` : ''}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Memo No. ${memoToPrint.memoNo}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+              margin: 12mm 15mm 15mm 15mm;
+            }
+            body {
+              font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+              color: #111;
+              margin: 0;
+              padding: 0;
+              font-size: 11.5px;
+              line-height: 1.45;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .header {
+              text-align: center;
+              border-bottom: 2px solid #222;
+              padding-bottom: 8px;
+              margin-bottom: 8px;
+            }
+            .header h2 {
+              margin: 0;
+              font-size: 11px;
+              letter-spacing: 2px;
+              text-transform: uppercase;
+              color: #333;
+            }
+            .header h1 {
+              margin: 4px 0 2px 0;
+              font-size: 15px;
+              font-weight: bold;
+              text-transform: uppercase;
+              color: #000;
+            }
+            .header p {
+              margin: 0;
+              font-size: 11px;
+              color: #444;
+            }
+            .ref-date {
+              display: flex;
+              justify-content: space-between;
+              border-bottom: 1px solid #666;
+              padding-bottom: 5px;
+              margin-bottom: 8px;
+              font-size: 12px;
+            }
+            .from-to-row {
+              display: flex;
+              justify-content: space-between;
+              border-bottom: 1px solid #eee;
+              padding-bottom: 6px;
+              margin-bottom: 8px;
+              font-size: 12px;
+            }
+            .subject-box {
+              background: #f8fafc;
+              border: 1px solid #cbd5e1;
+              padding: 7px 10px;
+              margin-bottom: 10px;
+              border-radius: 4px;
+              font-weight: bold;
+              font-size: 11.5px;
+            }
+            .letter-text {
+              margin-bottom: 8px;
+              text-align: justify;
+              font-size: 11.5px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 8px;
+              margin-bottom: 10px;
+            }
+            th {
+              background-color: #f1f5f9;
+              font-weight: bold;
+              text-align: center;
+              border: 1px solid #444;
+              padding: 6px 4px;
+              font-size: 10.5px;
+            }
+            tfoot td {
+              font-weight: bold;
+              background-color: #f8fafc;
+              border: 1px solid #444;
+              padding: 6px;
+              font-size: 11px;
+            }
+            .words-box {
+              background: #f8fafc;
+              border: 1px solid #cbd5e1;
+              padding: 7px 10px;
+              margin-top: 8px;
+              border-radius: 4px;
+              font-weight: bold;
+              font-size: 11px;
+            }
+            .signature {
+              margin-top: 35px;
+              float: right;
+              width: 240px;
+              text-align: center;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h2>H.P. FOREST DEPARTMENT</h2>
+            <h1>OFFICE OF THE RANGE FOREST OFFICER, ${rangeTitle.toUpperCase()}</h1>
+            <p>Forest Division Rajgarh, District Sirmaur (H.P.)</p>
+          </div>
+
+          <div class="ref-date">
+            <div>No. <strong>${memoToPrint.memoNo}</strong></div>
+            <div>Dated: <strong>${dateFormatted}</strong></div>
+          </div>
+
+          <div class="from-to-row">
+            <div><strong>From:</strong> Range Forest Officer, ${memoToPrint.rangeName || rangeTitle}.</div>
+            <div><strong>To:</strong> The Divisional Forest Officer, Rajgarh Forest Division (H.P.).</div>
+          </div>
+
+          <div class="subject-box">
+            Subject: - <u>Memo for Fund for the month of ${memoToPrint.monthYear} under scheme ${memoToPrint.schemeName || 'All Schemes'}${memoToPrint.sectorName ? ` (${memoToPrint.sectorName})` : ''}.</u>
+          </div>
+
+          <div class="letter-text">
+            <p style="margin: 0 0 4px 0;"><strong>Sir,</strong></p>
+            <p style="margin: 0 0 4px 0;">
+              It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of <strong>${memoToPrint.monthYear}</strong> as per the details tabulated below.
+            </p>
+            <p style="margin: 0;">
+              You are kindly requested to sanction and release the total expenditure amount of <strong>₹${totalGrossAmt.toLocaleString('en-IN')}</strong> (Total Net RTGS Amount: <strong>₹${totalNetRtgsAmt.toLocaleString('en-IN')}</strong>) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.
+            </p>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 24px;">Sr.</th>
+                <th>Name & Address</th>
+                <th style="width: 78px;">Total Amt</th>
+                <th style="width: 60px;">I/Tax 1%</th>
+                <th style="width: 60px;">GST 2%</th>
+                <th style="width: 85px;">Net RTGS</th>
+                <th style="width: 100px;">Account No.</th>
+                <th style="width: 75px;">IFSC Code</th>
+                <th style="width: 90px;">PAN & GSTIN</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2" style="text-align: right; font-weight: bold;">TOTAL: -</td>
+                <td style="text-align: right; font-weight: bold;">₹${totalGrossAmt.toLocaleString('en-IN')}</td>
+                <td style="text-align: right; color:#b91c1c; font-weight: bold;">₹${totalITaxAmt.toLocaleString('en-IN')}</td>
+                <td style="text-align: right; color:#6b21a8; font-weight: bold;">₹${totalGstAmt.toLocaleString('en-IN')}</td>
+                <td style="text-align: right; color:#064e3b; font-weight: bold;">₹${totalNetRtgsAmt.toLocaleString('en-IN')}</td>
+                <td colspan="3"></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div class="words-box">
+            Total Net Amount Payable (in words): <em>Rupees ${words} Only</em>
+          </div>
+
+          <div class="signature">
+            <br/><br/>
+            <p style="margin:2px 0; font-weight:bold;">Range Forest Officer</p>
+            <p style="margin:2px 0;">${memoToPrint.rangeName || rangeTitle}</p>
+            <p style="margin:2px 0; font-size:10px; color:#555;">Rajgarh Forest Division</p>
+          </div>
+        </body>
+        </html>
+      `;
+
+      // Create a hidden print iframe
+      const printFrame = document.createElement('iframe');
+      printFrame.style.position = 'fixed';
+      printFrame.style.right = '0';
+      printFrame.style.bottom = '0';
+      printFrame.style.width = '0';
+      printFrame.style.height = '0';
+      printFrame.style.border = '0';
+      document.body.appendChild(printFrame);
+
+      const frameDoc = printFrame.contentWindow?.document || printFrame.contentDocument;
+      if (frameDoc) {
+        frameDoc.open();
+        frameDoc.write(htmlContent);
+        frameDoc.close();
+
+        setTimeout(() => {
+          try {
+            printFrame.contentWindow?.focus();
+            printFrame.contentWindow?.print();
+          } catch (err) {
+            console.warn("Iframe print fallback to window.print", err);
+            window.print();
+          } finally {
+            setTimeout(() => {
+              if (document.body.contains(printFrame)) {
+                document.body.removeChild(printFrame);
+              }
+            }, 1500);
+          }
+        }, 300);
+      } else {
+        window.print();
+      }
     } catch (e) {
       console.error("Print error:", e);
+      window.print();
     }
   };
 
@@ -6679,11 +7048,12 @@ export default function App() {
 
   // --- Derived default From authority and auto-generated Memo Number ---
   const defaultFromAuthority = useMemo(() => {
-    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].includes(userRole)) {
-      return `RFO ${userRole}`;
+    if (userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].some(r => r.toLowerCase() === userRole.toLowerCase())) {
+      const match = ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].find(r => r.toLowerCase() === userRole.toLowerCase());
+      return `RFO ${match || userRole}`;
     }
     if (userRangeName) {
-      return `RFO ${userRangeName}`;
+      return `RFO ${userRangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '')}`;
     }
     return 'RFO Sarahan';
   }, [userRole, userRangeName]);
@@ -6691,9 +7061,8 @@ export default function App() {
   const autoMemoNo = useMemo(() => {
     if (editingMemo) return editingMemo.memoNo;
 
-    const rangeKey = userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].includes(userRole)
-      ? userRole
-      : (userRangeName || 'Sarahan');
+    const rangeKey = userRole && ['Sarahan', 'Narag', 'Habban', 'Rajgarh', 'Division'].find(r => r.toLowerCase() === (userRole || '').toLowerCase())
+      || (userRangeName ? userRangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '') : 'Sarahan');
 
     const codeMap: Record<string, string> = {
       Sarahan: 'SRH',
@@ -6706,8 +7075,9 @@ export default function App() {
 
     // Count existing memos for this range
     const rangeCount = memos.filter(m => {
-      if (m.createdByRole && m.createdByRole === rangeKey) return true;
+      if (m.createdByRole && m.createdByRole.toLowerCase() === rangeKey.toLowerCase()) return true;
       if (m.rangeName && m.rangeName.toLowerCase().includes(rangeKey.toLowerCase())) return true;
+      if (m.memoNo && m.memoNo.toUpperCase().includes(`/${code}/`)) return true;
       return false;
     }).length;
 
@@ -6758,6 +7128,41 @@ export default function App() {
     }
   };
 
+  const handleAddSubVoucher = () => {
+    const amt = parseFloat(subVoucherAmountInput);
+    if (isNaN(amt) || amt <= 0) {
+      showAlert('Please enter a valid Sub-voucher Amount.');
+      return;
+    }
+    const newSubVoucher: MemoSubVoucher = {
+      id: Math.random().toString(36).substring(2, 9),
+      voucherNo: subVoucherNoInput.trim() || undefined,
+      description: subVoucherDescInput.trim() || undefined,
+      amount: Math.round(amt)
+    };
+
+    const updatedSubVouchers = [...entrySubVouchers, newSubVoucher];
+    setEntrySubVouchers(updatedSubVouchers);
+
+    // Automatically recalculate sum and update entryTotalAmount
+    const totalSum = updatedSubVouchers.reduce((s, v) => s + v.amount, 0);
+    handleTotalAmountInputChange(String(totalSum));
+
+    // Clear sub-voucher inputs
+    setSubVoucherNoInput('');
+    setSubVoucherDescInput('');
+    setSubVoucherAmountInput('');
+  };
+
+  const handleRemoveSubVoucher = (id: string) => {
+    const updated = entrySubVouchers.filter(v => v.id !== id);
+    setEntrySubVouchers(updated);
+    if (updated.length > 0) {
+      const totalSum = updated.reduce((s, v) => s + v.amount, 0);
+      handleTotalAmountInputChange(String(totalSum));
+    }
+  };
+
   const handleAddOrUpdatePayeeEntry = (e: React.FormEvent) => {
     e.preventDefault();
     if (!entryName.trim()) {
@@ -6776,9 +7181,9 @@ export default function App() {
     const iTaxP = isITaxApplicable ? (parseFloat(entryITaxPercent) || 0) : 0;
     const gstP = isGstApplicable ? (parseFloat(entryGstPercent) || 0) : 0;
 
-    const iTaxAmt = isITaxApplicable ? Math.round((tot * iTaxP) / 100 * 100) / 100 : 0;
-    const gstAmt = isGstApplicable ? Math.round((tot * gstP) / 100 * 100) / 100 : 0;
-    const netRtgs = Math.round((tot - iTaxAmt - gstAmt) * 100) / 100;
+    const iTaxAmt = isITaxApplicable ? Math.round((tot * iTaxP) / 100) : 0;
+    const gstAmt = isGstApplicable ? Math.round((tot * gstP) / 100) : 0;
+    const netRtgs = Math.round(tot) - iTaxAmt - gstAmt;
 
     const newEntry: MemoPayeeEntry = {
       payeeId: entryPayeeId || undefined,
@@ -6788,7 +7193,7 @@ export default function App() {
       ifscCode: entryIfsc.trim(),
       panNumber: entryPan.trim(),
       gstNumber: entryGst.trim(),
-      totalAmount: tot,
+      totalAmount: Math.round(tot),
       deductITax: isITaxApplicable,
       iTaxPercent: parseFloat(entryITaxPercent) || 0,
       iTaxAmount: iTaxAmt,
@@ -6796,6 +7201,7 @@ export default function App() {
       gstPercent: parseFloat(entryGstPercent) || 0,
       gstAmount: gstAmt,
       netRtgsAmount: netRtgs,
+      subVouchers: entrySubVouchers.length > 0 ? entrySubVouchers : undefined,
     };
 
     if (editingEntryIndex !== null) {
@@ -6820,6 +7226,11 @@ export default function App() {
     setEntryITaxPercent('1');
     setEntryDeductGst(false);
     setEntryGstPercent('2');
+    setEntrySubVouchers([]);
+    setShowSubVoucherSection(false);
+    setSubVoucherNoInput('');
+    setSubVoucherDescInput('');
+    setSubVoucherAmountInput('');
   };
 
   const handleEditPayeeEntryInForm = (index: number) => {
@@ -6838,6 +7249,11 @@ export default function App() {
     setEntryITaxPercent(entry.iTaxPercent !== undefined ? String(entry.iTaxPercent) : '1');
     setEntryDeductGst(entry.deductGst !== undefined ? entry.deductGst : ((entry.gstAmount || 0) > 0));
     setEntryGstPercent(entry.gstPercent !== undefined ? String(entry.gstPercent) : '2');
+    setEntrySubVouchers(entry.subVouchers || []);
+    setShowSubVoucherSection(Boolean(entry.subVouchers && entry.subVouchers.length > 0));
+    setSubVoucherNoInput('');
+    setSubVoucherDescInput('');
+    setSubVoucherAmountInput('');
   };
 
   const handleRemovePayeeEntryFromForm = (index: number) => {
@@ -6856,6 +7272,11 @@ export default function App() {
       setEntryITaxPercent('1');
       setEntryDeductGst(false);
       setEntryGstPercent('2');
+      setEntrySubVouchers([]);
+      setShowSubVoucherSection(false);
+      setSubVoucherNoInput('');
+      setSubVoucherDescInput('');
+      setSubVoucherAmountInput('');
     }
   };
 
@@ -6876,10 +7297,10 @@ export default function App() {
     const schemeObj = currentSchemes.find(s => s.id === memoSchemeIdInput);
     const sectorObj = currentSectors.find(s => s.id === memoSectorIdInput);
 
-    const totalGross = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.totalAmount) || 0), 0);
-    const totalITax = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.iTaxAmount) || 0), 0);
-    const totalGst = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.gstAmount) || 0), 0);
-    const totalNetRtgs = memoPayeeEntries.reduce((sum, e) => sum + (Number(e.netRtgsAmount) || 0), 0);
+    const totalGross = memoPayeeEntries.reduce((sum, e) => sum + (Math.round(Number(e.totalAmount)) || 0), 0);
+    const totalITax = memoPayeeEntries.reduce((sum, e) => sum + (Math.round(Number(e.iTaxAmount)) || 0), 0);
+    const totalGst = memoPayeeEntries.reduce((sum, e) => sum + (Math.round(Number(e.gstAmount)) || 0), 0);
+    const totalNetRtgs = memoPayeeEntries.reduce((sum, e) => sum + (Math.round(Number(e.netRtgsAmount)) || 0), 0);
 
     const memoData = {
       memoNo: memoNoInput.trim(),
@@ -6916,7 +7337,7 @@ export default function App() {
           createdAt: Date.now()
         });
         logAuditAction('Memo Created', `Memo No: ${memoNoInput.trim()}, Status: ${status}, Payees: ${memoPayeeEntries.length}, Amount: ₹${totalGross}`);
-        showAlert(`Memo for Fund ${status === 'submitted' ? 'saved as draft' : 'saved as draft'} successfully.`);
+        showAlert(`Memo for Fund ${status === 'submitted' ? 'submitted and locked' : 'saved as draft'} successfully.`);
       }
       handleResetMemoForm();
     } catch (error) {
@@ -6996,6 +7417,11 @@ export default function App() {
     setEntryITaxPercent('1');
     setEntryDeductGst(false);
     setEntryGstPercent('2');
+    setEntrySubVouchers([]);
+    setShowSubVoucherSection(false);
+    setSubVoucherNoInput('');
+    setSubVoucherDescInput('');
+    setSubVoucherAmountInput('');
   };
 
   const handleNotificationUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -11255,6 +11681,7 @@ export default function App() {
                                   }
                                 }
 
+                                totalGross = Math.round(totalGross);
                                 const totalDeduction = totalTds + totalGstTds;
                                 const netPayable = totalGross - totalDeduction;
 
@@ -12233,17 +12660,147 @@ export default function App() {
                           />
                         </div>
 
-                        <div className="space-y-1 sm:col-span-2">
-                          <label className="block font-bold text-gray-700">Total Expenditure Amount (₹) <span className="text-red-500">*</span></label>
+                        {/* Expenditure Amount & Sub-Vouchers Breakdown */}
+                        <div className="space-y-2 sm:col-span-2 bg-white p-3 rounded-xl border border-gray-200">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+                            <label className="block font-bold text-gray-800">
+                              Total Expenditure Amount (₹) <span className="text-red-500">*</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setShowSubVoucherSection(!showSubVoucherSection)}
+                              className={`text-[11px] font-bold px-2.5 py-1 rounded-lg border transition-all flex items-center gap-1.5 self-start sm:self-auto cursor-pointer ${
+                                showSubVoucherSection || entrySubVouchers.length > 0
+                                  ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border-slate-200'
+                              }`}
+                            >
+                              <Plus className="w-3.5 h-3.5" />
+                              <span>
+                                {entrySubVouchers.length > 0
+                                  ? `Sub-Vouchers Active (${entrySubVouchers.length})`
+                                  : '+ Breakdown into Sub-Vouchers / Bills'}
+                              </span>
+                            </button>
+                          </div>
+
                           <input
                             type="number"
                             required
-                            step="0.01"
+                            step="1"
                             value={entryTotalAmount}
                             onChange={(e) => handleTotalAmountInputChange(e.target.value)}
                             placeholder="e.g. 35000"
-                            className="w-full p-2 border rounded-lg font-bold text-base bg-white focus:ring-2 focus:ring-emerald-500 outline-none text-emerald-950"
+                            className="w-full p-2.5 border rounded-lg font-black text-lg bg-emerald-50/40 border-emerald-300 focus:ring-2 focus:ring-emerald-500 outline-none text-emerald-950"
                           />
+
+                          {/* Sub-Vouchers Breakdown Box */}
+                          {(showSubVoucherSection || entrySubVouchers.length > 0) && (
+                            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2.5">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[11px] font-extrabold text-slate-800 uppercase tracking-wide flex items-center gap-1">
+                                  <FileText className="w-3.5 h-3.5 text-emerald-600" />
+                                  Sub-Vouchers / Bill Breakdown
+                                </span>
+                                <span className="text-[10px] text-slate-500 font-medium">
+                                  Sum auto-populates Total Amount
+                                </span>
+                              </div>
+
+                              {/* Sub-voucher inline adder */}
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 bg-white p-2.5 rounded-lg border border-slate-200 items-end">
+                                <div className="sm:col-span-3 space-y-1">
+                                  <label className="block text-[10px] font-bold text-gray-600">Voucher / Bill No.</label>
+                                  <input
+                                    type="text"
+                                    value={subVoucherNoInput}
+                                    onChange={(e) => setSubVoucherNoInput(e.target.value)}
+                                    placeholder="e.g. V-01 / Bill-104"
+                                    className="w-full p-1.5 border rounded text-xs bg-gray-50 focus:bg-white outline-none"
+                                  />
+                                </div>
+                                <div className="sm:col-span-5 space-y-1">
+                                  <label className="block text-[10px] font-bold text-gray-600">Work Description / Purpose</label>
+                                  <input
+                                    type="text"
+                                    value={subVoucherDescInput}
+                                    onChange={(e) => setSubVoucherDescInput(e.target.value)}
+                                    placeholder="e.g. Nursery labour / Soil works"
+                                    className="w-full p-1.5 border rounded text-xs bg-gray-50 focus:bg-white outline-none"
+                                  />
+                                </div>
+                                <div className="sm:col-span-2 space-y-1">
+                                  <label className="block text-[10px] font-bold text-gray-600">Amount (₹)</label>
+                                  <input
+                                    type="number"
+                                    step="1"
+                                    value={subVoucherAmountInput}
+                                    onChange={(e) => setSubVoucherAmountInput(e.target.value)}
+                                    placeholder="e.g. 5000"
+                                    className="w-full p-1.5 border rounded text-xs font-bold bg-gray-50 focus:bg-white outline-none"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        handleAddSubVoucher();
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="sm:col-span-2">
+                                  <button
+                                    type="button"
+                                    onClick={handleAddSubVoucher}
+                                    className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                                  >
+                                    <Plus className="w-3 h-3" /> Add
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* List of added sub-vouchers */}
+                              {entrySubVouchers.length > 0 && (
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                  {entrySubVouchers.map((sv, idx) => (
+                                    <div
+                                      key={sv.id}
+                                      className="flex items-center justify-between bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs"
+                                    >
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-bold text-slate-400 text-[10px]">#{idx + 1}</span>
+                                        <span className="font-bold text-slate-800 font-mono">
+                                          {sv.voucherNo || 'Sub-voucher'}
+                                        </span>
+                                        {sv.description && (
+                                          <span className="text-slate-500 text-[11px] italic">
+                                            ({sv.description})
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-black text-emerald-800">
+                                          ₹{Math.round(sv.amount).toLocaleString('en-IN')}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveSubVoucher(sv.id)}
+                                          className="text-red-500 hover:text-red-700 p-0.5 rounded cursor-pointer"
+                                          title="Remove sub-voucher"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ))}
+                                  <div className="flex justify-between items-center px-2 py-1 text-[11px] font-bold text-slate-700 bg-slate-100 rounded">
+                                    <span>Total Sub-Vouchers Sum:</span>
+                                    <span className="text-emerald-900 font-black">
+                                      ₹{entrySubVouchers.reduce((s, v) => s + v.amount, 0).toLocaleString('en-IN')}
+                                    </span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
 
                         {/* Deductions Checkboxes */}
@@ -12281,9 +12838,9 @@ export default function App() {
                             const tot = parseFloat(entryTotalAmount) || 0;
                             const isITax = entryDeductITax && tot > 30000;
                             const isGst = entryDeductGst && tot > 250000;
-                            const iTaxAmt = isITax ? Math.round((tot * (parseFloat(entryITaxPercent) || 1)) / 100 * 100) / 100 : 0;
-                            const gstAmt = isGst ? Math.round((tot * (parseFloat(entryGstPercent) || 2)) / 100 * 100) / 100 : 0;
-                            const netRtgs = Math.round((tot - iTaxAmt - gstAmt) * 100) / 100;
+                            const iTaxAmt = isITax ? Math.round((tot * (parseFloat(entryITaxPercent) || 1)) / 100) : 0;
+                            const gstAmt = isGst ? Math.round((tot * (parseFloat(entryGstPercent) || 2)) / 100) : 0;
+                            const netRtgs = Math.round(tot) - iTaxAmt - gstAmt;
 
                             return (
                               <div className="text-xs text-emerald-900 font-medium grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto">
@@ -12352,18 +12909,23 @@ export default function App() {
                                   <td className="p-2 border-r">
                                     <div className="font-bold text-gray-900">{entry.name}</div>
                                     {entry.address && <div className="text-[10px] text-gray-500">{entry.address}</div>}
+                                    {entry.subVouchers && entry.subVouchers.length > 0 && (
+                                      <div className="mt-1 text-[10px] text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block font-medium">
+                                        Sub-vouchers ({entry.subVouchers.length}): {entry.subVouchers.map(sv => `${sv.voucherNo ? sv.voucherNo + ': ' : ''}₹${Math.round(sv.amount).toLocaleString('en-IN')}`).join(', ')}
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="p-2 text-right font-bold border-r">
-                                    ₹{(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                                    ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
                                   </td>
                                   <td className="p-2 text-right text-red-600 font-medium border-r">
-                                    ₹{(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
+                                    ₹{Math.round(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
                                   </td>
                                   <td className="p-2 text-right text-purple-600 font-medium border-r">
-                                    ₹{(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
+                                    ₹{Math.round(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
                                   </td>
                                   <td className="p-2 text-right font-black text-emerald-800 border-r">
-                                    ₹{(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                                    ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
                                   </td>
                                   <td className="p-2 border-r font-mono text-[10px]">
                                     <div>{entry.accountNumber}</div>
@@ -12378,7 +12940,7 @@ export default function App() {
                                       <button
                                         type="button"
                                         onClick={() => handleEditPayeeEntryInForm(idx)}
-                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded"
+                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
                                         title="Edit Row"
                                       >
                                         <Edit2 className="w-3.5 h-3.5" />
@@ -12386,7 +12948,7 @@ export default function App() {
                                       <button
                                         type="button"
                                         onClick={() => handleRemovePayeeEntryFromForm(idx)}
-                                        className="p-1 text-red-600 hover:bg-red-50 rounded"
+                                        className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
                                         title="Remove Payee"
                                       >
                                         <Trash2 className="w-3.5 h-3.5" />
@@ -12402,16 +12964,16 @@ export default function App() {
                                   Total:
                                 </td>
                                 <td className="p-2 text-right text-xs text-gray-900 border-r">
-                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0).toLocaleString('en-IN')}
+                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0)).toLocaleString('en-IN')}
                                 </td>
                                 <td className="p-2 text-right text-xs text-red-700 border-r">
-                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.iTaxAmount) || 0), 0).toLocaleString('en-IN')}
+                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.iTaxAmount) || 0), 0)).toLocaleString('en-IN')}
                                 </td>
                                 <td className="p-2 text-right text-xs text-purple-700 border-r">
-                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.gstAmount) || 0), 0).toLocaleString('en-IN')}
+                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.gstAmount) || 0), 0)).toLocaleString('en-IN')}
                                 </td>
                                 <td className="p-2 text-right text-xs font-black text-emerald-900 border-r">
-                                  ₹{memoPayeeEntries.reduce((a, b) => a + (Number(b.netRtgsAmount) || 0), 0).toLocaleString('en-IN')}
+                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.netRtgsAmount) || 0), 0)).toLocaleString('en-IN')}
                                 </td>
                                 <td colSpan={3}></td>
                               </tr>
@@ -12462,14 +13024,14 @@ export default function App() {
                     <div className="border-b pb-3 flex justify-between items-center">
                       <h4 className="text-sm font-extrabold text-gray-800 uppercase tracking-wide flex items-center gap-2">
                         <FileText className="w-4 h-4 text-emerald-600" />
-                        Saved Memos ({memos.length})
+                        Saved Memos ({filteredMemos.length})
                       </h4>
                       <span className="text-[11px] font-bold text-gray-500">FY: {selectedFY}</span>
                     </div>
 
-                    {memos.length > 0 ? (
+                    {filteredMemos.length > 0 ? (
                       <div className="space-y-3 max-h-[800px] overflow-y-auto pr-1">
-                        {memos.map((m) => {
+                        {filteredMemos.map((m) => {
                           const isSubmitted = m.status === 'submitted';
                           const isCorrection = m.status === 'correction';
                           const canEdit = userRole === 'admin' || userRole === 'deo' || !isSubmitted;
@@ -12516,7 +13078,7 @@ export default function App() {
                                 </div>
                                 <div className="text-right">
                                   <div className="text-xs font-black text-emerald-950">
-                                    ₹{(m.totalNetRtgs || m.totalAmount || 0).toLocaleString('en-IN')}
+                                    ₹{Math.round(Number(m.totalNetRtgs) || Number(m.totalAmount) || 0).toLocaleString('en-IN')}
                                   </div>
                                   <div className="text-[10px] text-gray-500 font-medium">
                                     {m.payeeEntries ? m.payeeEntries.length : 0} Payee(s)
@@ -12617,211 +13179,229 @@ export default function App() {
         )}
 
         {/* Full-screen Printable Memo View Modal */}
-        {viewingMemo && (
-          <div
-            className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) setViewingMemo(null);
-            }}
-          >
-            <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
-              {/* Sticky Top Modal Toolbar - Hidden in Print */}
-              <div className="no-print bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-3">
-                  <div className="bg-white/20 p-2 rounded-lg">
-                    <FileText className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-lg">Memo for Fund - Printable View</h3>
-                    <p className="text-xs text-emerald-100">Memo Ref: {viewingMemo.memoNo} | Period: {viewingMemo.monthYear}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => downloadMemoPDF(viewingMemo)}
-                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
-                    title="Download PDF"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span className="hidden sm:inline">Download</span>
-                  </button>
-                  <button 
-                    onClick={handlePrintMemo}
-                    className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
-                    title="Print"
-                  >
-                    <Printer className="w-4 h-4" />
-                    <span className="hidden sm:inline">Print</span>
-                  </button>
-                  <div className="w-px h-6 bg-white/20 mx-1"></div>
-                  <button 
-                    onClick={() => setViewingMemo(null)}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
-                    title="Close"
-                  >
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-              </div>
+        {viewingMemo && (() => {
+          const rangeTitle = viewingMemo.rangeName
+            ? viewingMemo.rangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '')
+            : (userRangeName || 'Sarahan');
+          const totalGrossAmt = Math.round(Number(viewingMemo.totalAmount) || 0);
+          const totalITaxAmt = Math.round(Number(viewingMemo.totalITax) || 0);
+          const totalGstAmt = Math.round(Number(viewingMemo.totalGst) || 0);
+          const totalNetRtgsAmt = Math.round(Number(viewingMemo.totalNetRtgs) || totalGrossAmt);
+          const words = convertNumberToWords(totalNetRtgsAmt);
 
-              {/* Scrollable Letter Sheet */}
-              <div className="print-area overflow-y-auto flex-1 p-6 md:p-12 space-y-6 text-gray-900 bg-white font-sans">
-                {/* Department Header */}
-                <div className="text-center space-y-1 border-b-2 border-gray-900 pb-4">
-                  <h2 className="text-xs md:text-sm font-extrabold uppercase tracking-widest text-gray-800">
-                    H.P. FOREST DEPARTMENT
-                  </h2>
-                  <h1 className="text-base md:text-xl font-black uppercase tracking-wide text-gray-900">
-                    Office of the Range Forest Officer, {viewingMemo.rangeName ? viewingMemo.rangeName.replace(/^RFO\s*/i, '') : (userRangeName || 'Sarahan')}
-                  </h1>
-                  <p className="text-xs text-gray-700 font-bold tracking-wide">
-                    Forest Division Rajgarh, District Sirmaur (H.P.)
-                  </p>
-                </div>
-
-                {/* Memo Ref & Date Header */}
-                <div className="flex justify-between items-center text-xs font-bold text-gray-900 border-b border-gray-300 pb-2">
-                  <div>
-                    <span>No. </span>
-                    <span className="font-mono font-black text-sm">{viewingMemo.memoNo}</span>
+          return (
+            <div
+              className="fixed inset-0 z-[100] bg-black/75 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-hidden"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) setViewingMemo(null);
+              }}
+            >
+              <div className="bg-white w-full max-w-4xl max-h-[92vh] rounded-2xl shadow-2xl overflow-hidden border border-gray-200 flex flex-col my-auto relative">
+                {/* Sticky Top Modal Toolbar - Hidden in Print */}
+                <div className="no-print bg-emerald-600 p-4 text-white flex justify-between items-center shrink-0">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-white/20 p-2 rounded-lg">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-lg">Memo for Fund - Printable View</h3>
+                      <p className="text-xs text-emerald-100">Memo Ref: {viewingMemo.memoNo} | Period: {viewingMemo.monthYear}</p>
+                    </div>
                   </div>
-                  <div>
-                    <span>Dated: </span>
-                    <span className="font-mono font-bold">{viewingMemo.date ? viewingMemo.date.split('-').reverse().join('.') : ''}</span>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => downloadMemoPDF(viewingMemo)}
+                      className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                      title="Download PDF"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="hidden sm:inline">Download PDF</span>
+                    </button>
+                    <button 
+                      onClick={() => handlePrintMemo(viewingMemo)}
+                      className="flex items-center gap-2 bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors text-sm font-medium cursor-pointer"
+                      title="Print"
+                    >
+                      <Printer className="w-4 h-4" />
+                      <span className="hidden sm:inline">Print Letter</span>
+                    </button>
+                    <div className="w-px h-6 bg-white/20 mx-1"></div>
+                    <button 
+                      onClick={() => setViewingMemo(null)}
+                      className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-pointer"
+                      title="Close"
+                    >
+                      <X className="w-6 h-6" />
+                    </button>
                   </div>
                 </div>
 
-                {/* From / To */}
-                <div className="text-xs font-semibold text-gray-900 space-y-1 leading-snug">
-                  <p><strong>From:</strong> Range Forest Officer, {viewingMemo.rangeName || defaultFromAuthority}.</p>
-                  <p><strong>To:</strong> The Divisional Forest Officer, Rajgarh Forest Division, Rajgarh (H.P.).</p>
-                </div>
+                {/* Scrollable Letter Sheet */}
+                <div className="print-area overflow-y-auto flex-1 p-6 md:p-12 space-y-5 text-gray-900 bg-white font-sans">
+                  {/* Department Header */}
+                  <div className="text-center space-y-1 border-b-2 border-gray-900 pb-3">
+                    <h2 className="text-xs md:text-sm font-extrabold uppercase tracking-widest text-gray-800">
+                      H.P. FOREST DEPARTMENT
+                    </h2>
+                    <h1 className="text-base md:text-xl font-black uppercase tracking-wide text-gray-900">
+                      Office of the Range Forest Officer, {rangeTitle}
+                    </h1>
+                    <p className="text-xs text-gray-700 font-bold tracking-wide">
+                      Forest Division Rajgarh, District Sirmaur (H.P.)
+                    </p>
+                  </div>
 
-                {/* Subject */}
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900 leading-snug">
-                  <span>Subject: - </span>
-                  <span className="underline">
-                    Memo for Fund for the month of {viewingMemo.monthYear} under scheme {viewingMemo.schemeName || 'All Schemes'}{viewingMemo.sectorName ? ` (${viewingMemo.sectorName})` : ''}.
-                  </span>
-                </div>
+                  {/* Memo Ref & Date Header */}
+                  <div className="flex justify-between items-center text-xs font-bold text-gray-900 border-b border-gray-300 pb-2">
+                    <div>
+                      <span>No. </span>
+                      <span className="font-mono font-black text-sm">{viewingMemo.memoNo}</span>
+                    </div>
+                    <div>
+                      <span>Dated: </span>
+                      <span className="font-mono font-bold">{viewingMemo.date ? viewingMemo.date.split('-').reverse().join('.') : ''}</span>
+                    </div>
+                  </div>
 
-                {/* Opening Letter Body */}
-                <div className="text-xs leading-relaxed text-gray-900 space-y-2">
-                  <p className="font-bold">Sir,</p>
-                  <p className="text-justify leading-relaxed">
-                    It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of <strong>{viewingMemo.monthYear}</strong> as per the details tabulated below.
-                  </p>
-                  <p className="text-justify leading-relaxed">
-                    You are kindly requested to sanction and release the total expenditure amount of <strong>₹{(viewingMemo.totalAmount || 0).toLocaleString('en-IN')}</strong> (Total Net RTGS Amount: <strong>₹{(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0).toLocaleString('en-IN')}</strong>) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.
-                  </p>
-                </div>
+                  {/* Single Line From & To Header */}
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs font-semibold text-gray-900 border-b border-gray-200 pb-2 gap-2">
+                    <div>
+                      <strong>From:</strong> Range Forest Officer, {viewingMemo.rangeName || rangeTitle}.
+                    </div>
+                    <div className="sm:text-right">
+                      <strong>To:</strong> The Divisional Forest Officer, Rajgarh Forest Division (H.P.).
+                    </div>
+                  </div>
 
-                {/* Payees & Payment Details Table */}
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse border border-gray-900 text-xs">
-                    <thead>
-                      <tr className="bg-gray-100 text-gray-900 font-bold border-b border-gray-900 text-center">
-                        <th className="p-2 border-r border-gray-900 w-8">Sr. No.</th>
-                        <th className="p-2 border-r border-gray-900 min-w-[130px]">Name & Address</th>
-                        <th className="p-2 border-r border-gray-900 text-right">Total Amount</th>
-                        <th className="p-2 border-r border-gray-900 text-right">I/Tax 01%</th>
-                        <th className="p-2 border-r border-gray-900 text-right">GST TDS 02%</th>
-                        <th className="p-2 border-r border-gray-900 text-right">Net Amount RTGS</th>
-                        <th className="p-2 border-r border-gray-900">Account No.</th>
-                        <th className="p-2 border-r border-gray-900">IFSC Code</th>
-                        <th className="p-2">PAN & GSTIN</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-800">
-                      {viewingMemo.payeeEntries && viewingMemo.payeeEntries.length > 0 ? (
-                        viewingMemo.payeeEntries.map((entry, idx) => (
-                          <tr key={idx} className="border-b border-gray-400">
-                            <td className="p-2 border-r border-gray-900 text-center font-medium">{idx + 1}</td>
-                            <td className="p-2 border-r border-gray-900 font-semibold">
-                              <div>{entry.name}</div>
-                              {entry.address && <div className="text-[10px] text-gray-600 font-normal">{entry.address}</div>}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 text-right font-bold">
-                              ₹{(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 text-right text-red-700 font-medium">
-                              ₹{(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 text-right text-purple-700 font-medium">
-                              ₹{(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">
-                              ₹{(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 font-mono text-[11px] font-bold">
-                              {entry.accountNumber}
-                            </td>
-                            <td className="p-2 border-r border-gray-900 font-mono text-[11px]">
-                              {entry.ifscCode}
-                            </td>
-                            <td className="p-2 font-mono text-[10px]">
-                              <div>PAN: {entry.panNumber || 'N/A'}</div>
-                              {entry.gstNumber && <div className="text-gray-600">GST: {entry.gstNumber}</div>}
-                            </td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr>
-                          <td colSpan={9} className="p-4 text-center text-gray-500 italic">No payee entries recorded.</td>
+                  {/* Subject */}
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900 leading-snug">
+                    <span>Subject: - </span>
+                    <span className="underline">
+                      Memo for Fund for the month of {viewingMemo.monthYear} under scheme {viewingMemo.schemeName || 'All Schemes'}{viewingMemo.sectorName ? ` (${viewingMemo.sectorName})` : ''}.
+                    </span>
+                  </div>
+
+                  {/* Opening Letter Body */}
+                  <div className="text-xs leading-relaxed text-gray-900 space-y-2">
+                    <p className="font-bold">Sir,</p>
+                    <p className="text-justify leading-relaxed">
+                      It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of <strong>{viewingMemo.monthYear}</strong> as per the details tabulated below.
+                    </p>
+                    <p className="text-justify leading-relaxed">
+                      You are kindly requested to sanction and release the total expenditure amount of <strong>₹{totalGrossAmt.toLocaleString('en-IN')}</strong> (Total Net RTGS Amount: <strong>₹{totalNetRtgsAmt.toLocaleString('en-IN')}</strong>) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.
+                    </p>
+                  </div>
+
+                  {/* Payees & Payment Details Table */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse border border-gray-900 text-xs">
+                      <thead>
+                        <tr className="bg-gray-100 text-gray-900 font-bold border-b border-gray-900 text-center">
+                          <th className="p-2 border-r border-gray-900 w-8">Sr. No.</th>
+                          <th className="p-2 border-r border-gray-900 min-w-[130px]">Name & Address</th>
+                          <th className="p-2 border-r border-gray-900 text-right">Total Amount</th>
+                          <th className="p-2 border-r border-gray-900 text-right">I/Tax 01%</th>
+                          <th className="p-2 border-r border-gray-900 text-right">GST TDS 02%</th>
+                          <th className="p-2 border-r border-gray-900 text-right">Net Amount RTGS</th>
+                          <th className="p-2 border-r border-gray-900">Account No.</th>
+                          <th className="p-2 border-r border-gray-900">IFSC Code</th>
+                          <th className="p-2">PAN & GSTIN</th>
                         </tr>
-                      )}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-900">
-                        <td colSpan={2} className="p-2.5 text-right uppercase border-r border-gray-900">
-                          Total: -
-                        </td>
-                        <td className="p-2.5 text-right font-black text-xs border-r border-gray-900">
-                          ₹{(viewingMemo.totalAmount || 0).toLocaleString('en-IN')}
-                        </td>
-                        <td className="p-2.5 text-right font-black text-xs text-red-800 border-r border-gray-900">
-                          ₹{(viewingMemo.totalITax || 0).toLocaleString('en-IN')}
-                        </td>
-                        <td className="p-2.5 text-right font-black text-xs text-purple-800 border-r border-gray-900">
-                          ₹{(viewingMemo.totalGst || 0).toLocaleString('en-IN')}
-                        </td>
-                        <td className="p-2.5 text-right font-black text-sm text-emerald-950 border-r border-gray-900">
-                          ₹{(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0).toLocaleString('en-IN')}
-                        </td>
-                        <td colSpan={3} className="p-2.5"></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-
-                {/* Amount in words display */}
-                <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900">
-                  <span>Total Net Amount Payable (in words): </span>
-                  <span className="italic text-emerald-950 font-black">
-                    Rupees {convertNumberToWords(viewingMemo.totalNetRtgs || viewingMemo.totalAmount || 0)} Only
-                  </span>
-                </div>
-
-                {/* Bottom Signature Section - Range Stamp */}
-                <div className="pt-20 flex justify-end text-xs font-bold text-gray-900">
-                  <div className="text-center space-y-1 min-w-[220px]">
-                    <div className="h-10"></div>
-                    <p className="text-sm font-black">Range Forest Officer</p>
-                    <p className="text-xs font-bold text-gray-800">{viewingMemo.rangeName || defaultFromAuthority}</p>
-                    <p className="text-[11px] text-gray-600 font-normal">Rajgarh Forest Division</p>
+                      </thead>
+                      <tbody className="divide-y divide-gray-800">
+                        {viewingMemo.payeeEntries && viewingMemo.payeeEntries.length > 0 ? (
+                          viewingMemo.payeeEntries.map((entry, idx) => (
+                            <tr key={idx} className="border-b border-gray-400">
+                              <td className="p-2 border-r border-gray-900 text-center font-medium">{idx + 1}</td>
+                              <td className="p-2 border-r border-gray-900 font-semibold">
+                                <div>{entry.name}</div>
+                                {entry.address && <div className="text-[10px] text-gray-600 font-normal">{entry.address}</div>}
+                                {entry.subVouchers && entry.subVouchers.length > 0 && (
+                                  <div className="mt-1 text-[10px] text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-normal">
+                                    Sub-vouchers: {entry.subVouchers.map(sv => `${sv.voucherNo ? sv.voucherNo + ': ' : ''}₹${Math.round(sv.amount).toLocaleString('en-IN')}${sv.description ? ' (' + sv.description + ')' : ''}`).join(', ')}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 text-right font-bold">
+                                ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 text-right text-red-700 font-medium">
+                                ₹{Math.round(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 text-right text-purple-700 font-medium">
+                                ₹{Math.round(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">
+                                ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 font-mono text-[11px] font-bold">
+                                {entry.accountNumber}
+                              </td>
+                              <td className="p-2 border-r border-gray-900 font-mono text-[11px]">
+                                {entry.ifscCode}
+                              </td>
+                              <td className="p-2 font-mono text-[10px]">
+                                <div>PAN: {entry.panNumber || 'N/A'}</div>
+                                {entry.gstNumber && <div className="text-gray-600">GST: {entry.gstNumber}</div>}
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr>
+                            <td colSpan={9} className="p-4 text-center text-gray-500 italic">No payee entries recorded.</td>
+                          </tr>
+                        )}
+                      </tbody>
+                      <tfoot>
+                        <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-900">
+                          <td colSpan={2} className="p-2.5 text-right uppercase border-r border-gray-900">
+                            Total: -
+                          </td>
+                          <td className="p-2.5 text-right font-black text-xs border-r border-gray-900">
+                            ₹{totalGrossAmt.toLocaleString('en-IN')}
+                          </td>
+                          <td className="p-2.5 text-right font-black text-xs text-red-800 border-r border-gray-900">
+                            ₹{totalITaxAmt.toLocaleString('en-IN')}
+                          </td>
+                          <td className="p-2.5 text-right font-black text-xs text-purple-800 border-r border-gray-900">
+                            ₹{totalGstAmt.toLocaleString('en-IN')}
+                          </td>
+                          <td className="p-2.5 text-right font-black text-sm text-emerald-950 border-r border-gray-900">
+                            ₹{totalNetRtgsAmt.toLocaleString('en-IN')}
+                          </td>
+                          <td colSpan={3} className="p-2.5"></td>
+                        </tr>
+                      </tfoot>
+                    </table>
                   </div>
-                </div>
 
-                {/* Bottom Close Button Bar - Hidden in Print */}
-                <div className="no-print pt-8 pb-4 flex justify-center items-center gap-3 border-t border-gray-200">
-                  <button
-                    type="button"
-                    onClick={handlePrintMemo}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
-                  >
-                    <Printer className="w-4 h-4" /> Print Letter
-                  </button>
-                  {viewingMemo && (
+                  {/* Amount in words display */}
+                  <div className="bg-slate-50 p-3 rounded-lg border border-slate-300 text-xs font-bold text-gray-900">
+                    <span>Total Net Amount Payable (in words): </span>
+                    <span className="italic text-emerald-950 font-black">
+                      Rupees {words} Only
+                    </span>
+                  </div>
+
+                  {/* Bottom Signature Section - Range Stamp */}
+                  <div className="pt-16 flex justify-end text-xs font-bold text-gray-900">
+                    <div className="text-center space-y-1 min-w-[220px]">
+                      <div className="h-8"></div>
+                      <p className="text-sm font-black">Range Forest Officer</p>
+                      <p className="text-xs font-bold text-gray-800">{viewingMemo.rangeName || rangeTitle}</p>
+                      <p className="text-[11px] text-gray-600 font-normal">Rajgarh Forest Division</p>
+                    </div>
+                  </div>
+
+                  {/* Bottom Close Button Bar - Hidden in Print */}
+                  <div className="no-print pt-6 pb-2 flex justify-center items-center gap-3 border-t border-gray-200">
+                    <button
+                      type="button"
+                      onClick={() => handlePrintMemo(viewingMemo)}
+                      className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
+                    >
+                      <Printer className="w-4 h-4" /> Print Letter
+                    </button>
                     <button
                       type="button"
                       onClick={() => downloadMemoPDF(viewingMemo)}
@@ -12829,19 +13409,20 @@ export default function App() {
                     >
                       <Download className="w-4 h-4" /> Download PDF
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setViewingMemo(null)}
-                    className="px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-xs font-bold shadow-lg transition-all flex items-center gap-2 active:scale-95 cursor-pointer"
-                  >
-                    <X className="w-4 h-4" /> Close Letter Preview
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewingMemo(null)}
+                      className="px-5 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-xl text-xs font-bold transition-all active:scale-95 cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
+
 
         {/* Sync Memo Modal */}
         {showMemoSyncModal && (
@@ -13563,7 +14144,7 @@ export default function App() {
         )}
 
         {activeTab === 'Reports' && renderReports()}
-        {activeTab === 'Audit Log' && renderAuditLogTab()}
+        {activeTab === 'Audit Log' && (userRole === 'admin' || userRole === 'deo' || userRole === 'DA' || userRole === 'approver') && renderAuditLogTab()}
         {activeTab === 'Users' && userRole === 'admin' && renderUserManagement()}
 
         {renderFundingModal()}

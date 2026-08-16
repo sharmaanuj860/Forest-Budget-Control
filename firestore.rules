@@ -2,27 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // ===============================================================
-    // Assumed Data Model
-    // ===============================================================
-    //
-    // Collection: payees
-    // Document ID: auto-generated
-    // Fields:
-    //   - name: string (required) - Payee name
-    //   - address: string (required) - Payee address
-    //   - accountNumber: string (required) - Bank account number
-    //   - rangeId: string (optional) - Associated range ID
-    //   - createdBy: string (required) - Creator UID
-    //   - createdAt: number (required) - Creation timestamp
-    //   - updatedAt: number (required) - Update timestamp
-    //
-    // ===============================================================
-    
-    // ===============================================================
-    // Helper Functions
-    // ===============================================================
-    
     function isAuthenticated() {
       return request.auth != null;
     }
@@ -44,127 +23,18 @@ service cloud.firestore {
     function isApprover() {
       return isAuthenticated() && (
         request.auth.token.email == "da789@rajgarhforest.app" ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver')
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'DA'))
       );
     }
 
     function isDA() {
       return isAuthenticated() && 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'DA');
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'DA' || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'approver'));
     }
-
-    function canWrite() {
-      return isAdmin() || isDEO();
-    }
-
-    function canWriteExpenditure(data) {
-      return isAuthenticated() && 
-        (isAdmin() || isDEO() || 
-         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-          (
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['Sarahan', 'Narag', 'Habban', 'Division', 'Rajgarh', 'Rajgarh Forest Division'] ||
-            (exists(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)) &&
-             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == get(/databases/$(database)/documents/ranges/$(('rangeId' in data) ? data.rangeId : get(/databases/$(database)/documents/allocations/$(data.allocationId)).data.rangeId)).data.name)
-          )
-         )
-        );
-    }
-
-    function canApproveExpenditure() {
-      return isAdmin() || isApprover() || isDA();
-    }
-
-    function hasRequiredFields(fields) {
-       return request.resource.data.keys().hasAll(fields);
-    }
-
-    function hasOnlyAllowedFields(fields) {
-      return request.resource.data.keys().hasOnly(fields);
-    }
-
-    function isValidPayee(data) {
-      return hasRequiredFields(['name', 'address', 'accountNumber', 'createdBy', 'createdAt', 'updatedAt']) &&
-             hasOnlyAllowedFields(['name', 'address', 'accountNumber', 'ifscCode', 'panNumber', 'gstNumber', 'rangeId', 'createdBy', 'createdAt', 'updatedAt']) &&
-             data.name is string && data.name.size() > 0 && data.name.size() < 200 &&
-             data.address is string && data.address.size() >= 0 && data.address.size() < 500 &&
-             data.accountNumber is string && data.accountNumber.size() > 0 && data.accountNumber.size() < 100 &&
-             (!('ifscCode' in data) || data.ifscCode == null || data.ifscCode is string) &&
-             (!('panNumber' in data) || data.panNumber == null || data.panNumber is string) &&
-             (!('gstNumber' in data) || data.gstNumber == null || data.gstNumber is string) &&
-             (!('rangeId' in data) || data.rangeId == null || data.rangeId is string) &&
-             data.createdBy is string &&
-             data.createdAt is number &&
-             data.updatedAt is number;
-    }
-
-    function isValidExpenditure(data) {
-      return hasRequiredFields(['allocationId', 'soeId', 'amount', 'date', 'description', 'createdBy', 'status', 'createdAt', 'updatedAt']) &&
-             data.allocationId is string &&
-             data.soeId is string &&
-             data.amount is number &&
-             data.date is string &&
-             data.description is string &&
-             data.createdBy is string &&
-             data.status in ['pending', 'approved', 'rejected'] &&
-             data.createdAt is number &&
-             data.updatedAt is number &&
-             (!('isLocked' in data) || data.isLocked is bool) &&
-             (!('createdByRole' in data) || data.createdByRole is string) &&
-             (!('financialYear' in data) || data.financialYear is string) &&
-             (!('rangeId' in data) || data.rangeId is string) &&
-             (!('payeeId' in data) || data.payeeId == null || data.payeeId is string) &&
-             (!('payeeName' in data) || data.payeeName == null || data.payeeName is string) &&
-             (!('deductionType' in data) || data.deductionType in ['None', 'TDS', 'TDS_GST', 'Both']) &&
-             (!('deductions' in data) || data.deductions is list) &&
-             (!('deductedAmount' in data) || data.deductedAmount == null || data.deductedAmount is number) &&
-             (!('tdsAmount' in data) || data.tdsAmount == null || data.tdsAmount is number) &&
-             (!('tdsGstAmount' in data) || data.tdsGstAmount == null || data.tdsGstAmount is number) &&
-             (!('netAmount' in data) || data.netAmount is number) &&
-             (!('panNumber' in data) || data.panNumber == null || data.panNumber is string) &&
-             (!('gstNumber' in data) || data.gstNumber == null || data.gstNumber is string) &&
-             (!('syncedMemoId' in data) || data.syncedMemoId == null || data.syncedMemoId is string) &&
-             (!('syncedMemoNo' in data) || data.syncedMemoNo == null || data.syncedMemoNo is string) &&
-             (!('updatedBy' in data) || data.updatedBy is string) &&
-             (!('updatedByRole' in data) || data.updatedByRole is string);
-    }
-
-    function isValidFeatureLock(data) {
-      return hasRequiredFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
-             hasOnlyAllowedFields(['feature', 'target', 'isLocked', 'updatedBy', 'updatedAt']) &&
-             data.feature in ['Allocation', 'Expenditure', 'Access', 'Memo', 'MemoSync'] &&
-             data.target is string &&
-             data.isLocked is bool &&
-             data.updatedBy is string &&
-             data.updatedAt is number;
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
 
     match /users/{userId} {
-      // Allow a user to read their own document
-      allow get: if request.auth != null && request.auth.uid == userId;
-      
-      // Allow admins to read other user documents
-      allow get: if request.auth != null && request.auth.uid != userId && isAdmin();
-      
-      // Allow admins to list all users
-      allow list: if isAdmin();
-      
-      // Allow a user to create their own document, or an admin to create any user
-      allow create: if request.auth != null && (request.auth.uid == userId || isAdmin());
-      
-      // Allow update: 
-      // 1. Admins can update anything
-      // 2. Users can only update their own activeSessions
-      allow update: if request.auth != null && (
-        isAdmin() || 
-        (request.auth.uid == userId && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['activeSessions']))
-      );
-      
-      // Only admins can delete users
-      allow delete: if isAdmin();
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAuthenticated();
     }
 
     match /test/connection {
@@ -172,126 +42,91 @@ service cloud.firestore {
     }
 
     match /financialYears/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /ranges/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /schemes/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /sectors/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /activities/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /subActivities/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /soeHeads/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /approvedBudgets/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /treasuryReceipts/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /soeBudgets/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /allocations/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /expenditures/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && canWriteExpenditure(request.resource.data) && isValidExpenditure(request.resource.data);
-      allow update: if isAuthenticated() && isValidExpenditure(request.resource.data) && (
-        isAdmin() || 
-        (isDEO() && !resource.data.isLocked) ||
-        (resource.data.createdBy == request.auth.uid && resource.data.status == 'pending' && !resource.data.isLocked) ||
-        canApproveExpenditure()
-      );
-      allow delete: if isAuthenticated() && (
-        isAdmin() ||
-        (isDEO() && resource.data.status == 'pending' && (resource.data.createdByRole == 'deo' || resource.data.createdByRole == 'user' || resource.data.createdBy == request.auth.uid) && !resource.data.isLocked) ||
-        (resource.data.createdBy == request.auth.uid && resource.data.status == 'pending' && !resource.data.isLocked)
-      );
+      allow read, write: if isAuthenticated();
     }
 
     match /appSettings/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated() && (isAdmin() || isApprover());
+      allow read, write: if isAuthenticated();
     }
 
     match /bills/{id} {
-      allow read: if isAuthenticated();
-      allow create: if canWrite();
-      allow update: if isAdmin() || (isDEO() && resource.data.status == 'draft');
-      allow delete: if isAdmin() || (isDEO() && resource.data.status == 'draft');
+      allow read, write: if isAuthenticated();
     }
 
     match /surrenders/{id} {
-      allow read: if isAuthenticated();
-      allow create, update, delete: if canWrite();
+      allow read, write: if isAuthenticated();
     }
 
     match /payees/{id} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isValidPayee(request.resource.data);
-      allow update: if isAuthenticated() && isValidPayee(request.resource.data);
-      allow delete: if canWrite() || (isAuthenticated() && resource.data.createdBy == request.auth.uid);
+      allow read, write: if isAuthenticated();
     }
 
     match /featureLocks/{id} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() && isValidFeatureLock(request.resource.data);
+      allow read, write: if isAuthenticated();
     }
 
     match /approvedBudgetFiles/{id} {
-      allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated();
     }
 
     match /distributedBudgetFiles/{id} {
-      allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated();
     }
 
     match /notifications/{id} {
-      allow get, list: if isAuthenticated();
-      allow create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated();
     }
 
     match /memos/{id} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated();
     }
 
     match /auditLogs/{id} {
-      allow read, create, update, delete: if isAuthenticated();
+      allow read, write: if isAuthenticated();
     }
   }
 }
