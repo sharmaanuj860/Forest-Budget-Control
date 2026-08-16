@@ -6494,89 +6494,106 @@ export default function App() {
 
   const downloadMemoPDF = (memo: MemoForFund) => {
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
+      const doc = new jsPDF('landscape', 'mm', 'a4');
       const rangeTitle = memo.rangeName ? memo.rangeName.replace(/^RFO\s*/i, '').replace(/\s*Range$/i, '').replace(/\s*Office$/i, '') : (userRangeName || 'Sarahan');
 
-      doc.setFontSize(10);
+      doc.setFontSize(11);
       doc.setFont("helvetica", "bold");
-      doc.text("H.P. FOREST DEPARTMENT", 105, 14, { align: "center" });
+      doc.text("H.P. FOREST DEPARTMENT", 148.5, 12, { align: "center" });
       doc.setFontSize(13);
-      doc.text(`OFFICE OF THE RANGE FOREST OFFICER, ${rangeTitle.toUpperCase()}`, 105, 21, { align: "center" });
+      doc.text(`OFFICE OF THE RANGE FOREST OFFICER, ${rangeTitle.toUpperCase()}`, 148.5, 18, { align: "center" });
       doc.setFontSize(9);
       doc.setFont("helvetica", "normal");
-      doc.text("Forest Division Rajgarh, District Sirmaur (H.P.)", 105, 27, { align: "center" });
+      doc.text("Forest Division Rajgarh, District Sirmaur (H.P.)", 148.5, 23, { align: "center" });
 
-      doc.setLineWidth(0.5);
-      doc.line(14, 30, 196, 30);
+      doc.setLineWidth(0.4);
+      doc.line(12, 26, 285, 26);
 
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.text(`No. ${memo.memoNo}`, 14, 36);
-      const dateFormatted = memo.date ? memo.date.split('-').reverse().join('.') : '';
-      doc.text(`Dated: ${dateFormatted}`, 196, 36, { align: "right" });
-
-      doc.setLineWidth(0.2);
-      doc.line(14, 39, 196, 39);
-
-      // Single-line From & To Header
       doc.setFontSize(9.5);
       doc.setFont("helvetica", "bold");
-      doc.text("From:", 14, 45);
+      doc.text(`No. ${memo.memoNo || ''}`, 12, 31);
+      const dateFormatted = memo.date ? memo.date.split('-').reverse().join('.') : '';
+      doc.text(`Dated: ${dateFormatted}`, 285, 31, { align: "right" });
+
+      doc.setLineWidth(0.2);
+      doc.line(12, 33, 285, 33);
+
+      // Single-line From & To Header
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "bold");
+      doc.text("From:", 12, 38);
       doc.setFont("helvetica", "normal");
-      doc.text(`Range Forest Officer, ${memo.rangeName || rangeTitle}.`, 26, 45);
+      doc.text(`Range Forest Officer, ${memo.rangeName || rangeTitle}.`, 24, 38);
 
       doc.setFont("helvetica", "bold");
-      doc.text("To:", 112, 45);
+      doc.text("To:", 155, 38);
       doc.setFont("helvetica", "normal");
-      doc.text("The Divisional Forest Officer, Rajgarh (H.P.).", 119, 45);
+      doc.text("The Divisional Forest Officer, Rajgarh Forest Division (H.P.).", 162, 38);
 
       doc.setFont("helvetica", "bold");
-      doc.text("Subject:", 14, 53);
+      doc.text("Subject:", 12, 44);
       const schemeText = memo.schemeName || 'All Schemes';
       const sectorText = memo.sectorName ? ` (${memo.sectorName})` : '';
       const subjStr = `Memo for Fund for the month of ${memo.monthYear} under scheme ${schemeText}${sectorText}.`;
-      doc.text(subjStr, 32, 53, { maxWidth: 160 });
+      doc.text(subjStr, 28, 44, { maxWidth: 255 });
 
-      doc.text("Sir,", 14, 61);
-      const bodyText = `It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of ${memo.monthYear} as per the details tabulated below.`;
-      const splitBody = doc.splitTextToSize(bodyText, 182);
-      doc.text(splitBody, 14, 67);
-
-      let nextY = 67 + (splitBody.length * 5) + 2;
+      doc.text("Sir,", 12, 50);
       const totalGrossAmt = Math.round(Number(memo.totalAmount) || 0);
+      const totalITaxAmt = Math.round(Number(memo.totalITax) || 0);
+      const totalGstAmt = Math.round(Number(memo.totalGst) || 0);
       const totalNetRtgsAmt = Math.round(Number(memo.totalNetRtgs) || totalGrossAmt);
-      const bodyText2 = `You are kindly requested to sanction and release the total expenditure amount of Rs. ${totalGrossAmt.toLocaleString('en-IN')} (Total Net RTGS Amount: Rs. ${totalNetRtgsAmt.toLocaleString('en-IN')}) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.`;
-      const splitBody2 = doc.splitTextToSize(bodyText2, 182);
-      doc.text(splitBody2, 14, nextY);
 
-      nextY += (splitBody2.length * 5) + 4;
+      const bodyText = `It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of ${memo.monthYear} as per the details tabulated below. You are kindly requested to sanction and release the total expenditure amount of Rs. ${totalGrossAmt.toLocaleString('en-IN')} (Total Net RTGS Amount: Rs. ${totalNetRtgsAmt.toLocaleString('en-IN')}) and arrange payment through RTGS / Treasury e-Transfer mode to the respective payees at the earliest.`;
+      const splitBody = doc.splitTextToSize(bodyText, 273);
+      doc.text(splitBody, 12, 55);
 
-      const tableHead = [['Sr.', 'Name & Address', 'Total (Rs)', 'I/Tax 1%', 'GST 2%', 'Net RTGS', 'Account No.', 'IFSC Code', 'PAN/GSTIN']];
+      const nextY = 55 + (splitBody.length * 4.2) + 2;
+
+      // Table columns requested:
+      // 1. Name & Address
+      // 2. Account No.
+      // 3. IFSC Code
+      // 4. Total Amount
+      // 5. Sub-voucher amount with description
+      // 6. Combined Deduction (I/Tax + GST)
+      // 7. Net Amount
+      // 8. PAN & GST Number
+      const tableHead = [['Sr.', 'Name & Address', 'Account No.', 'IFSC Code', 'Total (Rs)', 'Sub Voucher Details', 'Deductions\n(I.Tax + GST)', 'Net RTGS (Rs)', 'PAN & GSTIN']];
       const tableData = (memo.payeeEntries || []).map((e, idx) => {
-        const subVouchersNote = e.subVouchers && e.subVouchers.length > 0
-          ? '\n[Sub-vouchers: ' + e.subVouchers.map(sv => (sv.voucherNo ? sv.voucherNo + ': ' : '') + 'Rs. ' + Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')).join(', ') + ']'
-          : '';
+        const subVouchersText = e.subVouchers && e.subVouchers.length > 0
+          ? e.subVouchers.map((sv, svIdx) => `${svIdx + 1}. Rs. ${Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')}${sv.voucherNo ? ' [' + sv.voucherNo + ']' : ''}${sv.description ? ' (' + sv.description + ')' : ''}`).join('\n')
+          : `Single Bill: Rs. ${Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN')}`;
+
+        const iTax = Math.round(Number(e.iTaxAmount) || 0);
+        const gst = Math.round(Number(e.gstAmount) || 0);
+        const totDed = iTax + gst;
+        const dedText = totDed > 0
+          ? `Rs. ${totDed.toLocaleString('en-IN')}${iTax > 0 ? `\n(IT: Rs. ${iTax.toLocaleString('en-IN')})` : ''}${gst > 0 ? `\n(GST: Rs. ${gst.toLocaleString('en-IN')})` : ''}`
+          : 'Nil (Rs. 0)';
+
         return [
           idx + 1,
-          `${e.name || ''}${e.address ? '\n' + e.address : ''}${subVouchersNote}`,
-          Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN'),
-          Math.round(Number(e.iTaxAmount) || 0).toLocaleString('en-IN'),
-          Math.round(Number(e.gstAmount) || 0).toLocaleString('en-IN'),
-          Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN'),
+          `${e.name || ''}${e.address ? '\n' + e.address : ''}`,
           e.accountNumber || '',
           e.ifscCode || '',
+          Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN'),
+          subVouchersText,
+          dedText,
+          Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN'),
           `PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? '\nGST: ' + e.gstNumber : ''}`
         ];
       });
 
       const footRow = [
         '',
-        'TOTAL:',
+        'TOTAL: -',
+        '',
+        '',
         totalGrossAmt.toLocaleString('en-IN'),
-        Math.round(Number(memo.totalITax) || 0).toLocaleString('en-IN'),
-        Math.round(Number(memo.totalGst) || 0).toLocaleString('en-IN'),
+        '',
+        (totalITaxAmt + totalGstAmt).toLocaleString('en-IN'),
         totalNetRtgsAmt.toLocaleString('en-IN'),
-        '', '', ''
+        ''
       ];
 
       autoTable(doc, {
@@ -6585,44 +6602,46 @@ export default function App() {
         body: tableData,
         foot: [footRow],
         theme: 'grid',
+        showHead: 'everyPage',
+        pageBreak: 'auto',
         styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak' },
         headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'center' },
         footStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
         columnStyles: {
-          0: { halign: 'center', cellWidth: 8 },
-          1: { cellWidth: 35 },
-          2: { halign: 'right', cellWidth: 18 },
-          3: { halign: 'right', cellWidth: 14 },
-          4: { halign: 'right', cellWidth: 14 },
-          5: { halign: 'right', cellWidth: 22, fontStyle: 'bold' },
-          6: { cellWidth: 25 },
-          7: { cellWidth: 20 },
-          8: { cellWidth: 22 }
+          0: { halign: 'center', cellWidth: 9 },
+          1: { cellWidth: 48 },
+          2: { cellWidth: 32 },
+          3: { cellWidth: 24 },
+          4: { halign: 'right', cellWidth: 26, fontStyle: 'bold' },
+          5: { cellWidth: 46 },
+          6: { halign: 'right', cellWidth: 28 },
+          7: { halign: 'right', cellWidth: 30, fontStyle: 'bold' },
+          8: { cellWidth: 28 }
         }
       });
 
       let finalY = (doc as any).lastAutoTable?.finalY || nextY + 40;
-      if (finalY > 250) {
+      if (finalY > 175) {
         doc.addPage();
         finalY = 20;
       } else {
-        finalY += 6;
+        finalY += 5;
       }
 
       const words = convertNumberToWords(totalNetRtgsAmt);
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "bold");
-      doc.text(`Total Net Amount Payable (in words): Rupees ${words} Only`, 14, finalY);
+      doc.text(`Total Net Amount Payable (in words): Rupees ${words} Only`, 12, finalY);
 
-      finalY += 20;
-      if (finalY > 265) {
+      finalY += 15;
+      if (finalY > 185) {
         doc.addPage();
-        finalY = 30;
+        finalY = 25;
       }
-      doc.text("Range Forest Officer", 160, finalY, { align: "center" });
+      doc.text("Range Forest Officer", 245, finalY, { align: "center" });
       doc.setFont("helvetica", "normal");
-      doc.text(memo.rangeName || rangeTitle, 160, finalY + 4, { align: "center" });
-      doc.text("Rajgarh Forest Division", 160, finalY + 8, { align: "center" });
+      doc.text(memo.rangeName || rangeTitle, 245, finalY + 4, { align: "center" });
+      doc.text("Rajgarh Forest Division", 245, finalY + 8, { align: "center" });
 
       doc.save(`Memo_For_Fund_${(memo.memoNo || 'Memo').replace(/[/\\?%*:|"<>]/g, '_')}_${memo.monthYear || ''}.pdf`);
     } catch (err) {
@@ -6645,23 +6664,30 @@ export default function App() {
 
       const tableRowsHtml = (memoToPrint.payeeEntries || []).map((e, idx) => {
         const subVouchersHtml = e.subVouchers && e.subVouchers.length > 0
-          ? `<div style="font-size:10px; color:#047857; margin-top:3px; font-weight:normal;">Sub-vouchers: ${e.subVouchers.map(sv => `${sv.voucherNo ? '<strong>' + sv.voucherNo + '</strong>: ' : ''}₹${Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')}${sv.description ? ' (' + sv.description + ')' : ''}`).join(', ')}</div>`
-          : '';
+          ? e.subVouchers.map((sv, svIdx) => `<div style="font-size:10px; color:#047857; line-height:1.3;">${svIdx + 1}. ${sv.voucherNo ? '<strong>' + sv.voucherNo + '</strong>: ' : ''}₹${Math.round(Number(sv.amount) || 0).toLocaleString('en-IN')}${sv.description ? ' <em>(' + sv.description + ')</em>' : ''}</div>`).join('')
+          : `<div style="font-size:10px; color:#666;">Single Bill: ₹${Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN')}</div>`;
+
+        const iTax = Math.round(Number(e.iTaxAmount) || 0);
+        const gst = Math.round(Number(e.gstAmount) || 0);
+        const totDed = iTax + gst;
+        const dedHtml = totDed > 0
+          ? `<strong>₹${totDed.toLocaleString('en-IN')}</strong>${iTax > 0 ? `<div style="font-size:9.5px; color:#b91c1c;">(IT: ₹${iTax.toLocaleString('en-IN')})</div>` : ''}${gst > 0 ? `<div style="font-size:9.5px; color:#6b21a8;">(GST: ₹${gst.toLocaleString('en-IN')})</div>` : ''}`
+          : `<span style="color:#666; font-size:10px;">Nil (₹0)</span>`;
+
         return `
           <tr>
-            <td style="text-align:center; padding:6px 4px; border:1px solid #444; font-size:11px;">${idx + 1}</td>
-            <td style="padding:6px 6px; border:1px solid #444; font-size:11px;">
+            <td style="text-align:center; padding:5px 3px; border:1px solid #444; font-size:11px;">${idx + 1}</td>
+            <td style="padding:5px 6px; border:1px solid #444; font-size:11px;">
               <strong>${e.name || ''}</strong>
-              ${e.address ? `<div style="font-size:10px; color:#555;">${e.address}</div>` : ''}
-              ${subVouchersHtml}
+              ${e.address ? `<div style="font-size:10px; color:#555; margin-top:2px;">${e.address}</div>` : ''}
             </td>
-            <td style="text-align:right; padding:6px; border:1px solid #444; font-weight:bold; font-size:11px;">₹${Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN')}</td>
-            <td style="text-align:right; padding:6px; border:1px solid #444; color:#b91c1c; font-size:11px;">₹${Math.round(Number(e.iTaxAmount) || 0).toLocaleString('en-IN')}</td>
-            <td style="text-align:right; padding:6px; border:1px solid #444; color:#6b21a8; font-size:11px;">₹${Math.round(Number(e.gstAmount) || 0).toLocaleString('en-IN')}</td>
-            <td style="text-align:right; padding:6px; border:1px solid #444; font-weight:bold; color:#064e3b; font-size:11px;">₹${Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN')}</td>
-            <td style="padding:6px; border:1px solid #444; font-family:monospace; font-size:10px;">${e.accountNumber || ''}</td>
-            <td style="padding:6px; border:1px solid #444; font-family:monospace; font-size:10px;">${e.ifscCode || ''}</td>
-            <td style="padding:6px; border:1px solid #444; font-size:10px;">PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? `<br/>GST: ${e.gstNumber}` : ''}</td>
+            <td style="padding:5px; border:1px solid #444; font-family:monospace; font-size:10.5px; font-weight:600;">${e.accountNumber || ''}</td>
+            <td style="padding:5px; border:1px solid #444; font-family:monospace; font-size:10.5px;">${e.ifscCode || ''}</td>
+            <td style="text-align:right; padding:5px; border:1px solid #444; font-weight:bold; font-size:11px;">₹${Math.round(Number(e.totalAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="padding:5px; border:1px solid #444; font-size:10.5px;">${subVouchersHtml}</td>
+            <td style="text-align:right; padding:5px; border:1px solid #444; font-size:10.5px;">${dedHtml}</td>
+            <td style="text-align:right; padding:5px; border:1px solid #444; font-weight:bold; color:#064e3b; font-size:11px;">₹${Math.round(Number(e.netRtgsAmount) || 0).toLocaleString('en-IN')}</td>
+            <td style="padding:5px; border:1px solid #444; font-size:10px;">PAN: ${e.panNumber || 'N/A'}${e.gstNumber ? `<br/>GST: ${e.gstNumber}` : ''}</td>
           </tr>
         `;
       }).join('');
@@ -6674,8 +6700,8 @@ export default function App() {
           <title>Memo No. ${memoToPrint.memoNo}</title>
           <style>
             @page {
-              size: A4 portrait;
-              margin: 12mm 15mm 15mm 15mm;
+              size: A4 landscape;
+              margin: 10mm 12mm 12mm 12mm;
             }
             body {
               font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
@@ -6683,15 +6709,15 @@ export default function App() {
               margin: 0;
               padding: 0;
               font-size: 11.5px;
-              line-height: 1.45;
+              line-height: 1.4;
               -webkit-print-color-adjust: exact;
               print-color-adjust: exact;
             }
             .header {
               text-align: center;
               border-bottom: 2px solid #222;
-              padding-bottom: 8px;
-              margin-bottom: 8px;
+              padding-bottom: 6px;
+              margin-bottom: 6px;
             }
             .header h2 {
               margin: 0;
@@ -6701,82 +6727,93 @@ export default function App() {
               color: #333;
             }
             .header h1 {
-              margin: 4px 0 2px 0;
-              font-size: 15px;
+              margin: 3px 0 2px 0;
+              font-size: 14px;
               font-weight: bold;
               text-transform: uppercase;
               color: #000;
             }
             .header p {
               margin: 0;
-              font-size: 11px;
+              font-size: 10.5px;
               color: #444;
             }
             .ref-date {
               display: flex;
               justify-content: space-between;
               border-bottom: 1px solid #666;
-              padding-bottom: 5px;
-              margin-bottom: 8px;
-              font-size: 12px;
+              padding-bottom: 4px;
+              margin-bottom: 6px;
+              font-size: 11px;
             }
             .from-to-row {
               display: flex;
               justify-content: space-between;
               border-bottom: 1px solid #eee;
-              padding-bottom: 6px;
-              margin-bottom: 8px;
-              font-size: 12px;
+              padding-bottom: 4px;
+              margin-bottom: 6px;
+              font-size: 11px;
             }
             .subject-box {
               background: #f8fafc;
               border: 1px solid #cbd5e1;
-              padding: 7px 10px;
-              margin-bottom: 10px;
+              padding: 6px 10px;
+              margin-bottom: 8px;
               border-radius: 4px;
               font-weight: bold;
-              font-size: 11.5px;
+              font-size: 11px;
             }
             .letter-text {
-              margin-bottom: 8px;
+              margin-bottom: 6px;
               text-align: justify;
-              font-size: 11.5px;
+              font-size: 11px;
             }
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-top: 8px;
-              margin-bottom: 10px;
+              margin-top: 6px;
+              margin-bottom: 8px;
+              page-break-inside: auto;
+            }
+            thead {
+              display: table-header-group;
+            }
+            tfoot {
+              display: table-footer-group;
+            }
+            tr {
+              page-break-inside: avoid;
             }
             th {
               background-color: #f1f5f9;
               font-weight: bold;
               text-align: center;
               border: 1px solid #444;
-              padding: 6px 4px;
-              font-size: 10.5px;
+              padding: 5px 3px;
+              font-size: 10px;
             }
             tfoot td {
               font-weight: bold;
               background-color: #f8fafc;
               border: 1px solid #444;
-              padding: 6px;
+              padding: 5px;
               font-size: 11px;
             }
             .words-box {
               background: #f8fafc;
               border: 1px solid #cbd5e1;
-              padding: 7px 10px;
-              margin-top: 8px;
+              padding: 6px 10px;
+              margin-top: 6px;
               border-radius: 4px;
               font-weight: bold;
               font-size: 11px;
             }
             .signature {
-              margin-top: 35px;
+              margin-top: 25px;
               float: right;
               width: 240px;
               text-align: center;
+              page-break-inside: avoid;
             }
           </style>
         </head>
@@ -6802,8 +6839,8 @@ export default function App() {
           </div>
 
           <div class="letter-text">
-            <p style="margin: 0 0 4px 0;"><strong>Sir,</strong></p>
-            <p style="margin: 0 0 4px 0;">
+            <p style="margin: 0 0 3px 0;"><strong>Sir,</strong></p>
+            <p style="margin: 0 0 3px 0;">
               It is submitted that this Range wishes to make payment to the payee(s) for the execution of departmental forestry works / liabilities for the month of <strong>${memoToPrint.monthYear}</strong> as per the details tabulated below.
             </p>
             <p style="margin: 0;">
@@ -6816,13 +6853,13 @@ export default function App() {
               <tr>
                 <th style="width: 24px;">Sr.</th>
                 <th>Name & Address</th>
-                <th style="width: 78px;">Total Amt</th>
-                <th style="width: 60px;">I/Tax 1%</th>
-                <th style="width: 60px;">GST 2%</th>
-                <th style="width: 85px;">Net RTGS</th>
-                <th style="width: 100px;">Account No.</th>
-                <th style="width: 75px;">IFSC Code</th>
-                <th style="width: 90px;">PAN & GSTIN</th>
+                <th style="width: 105px;">Account No.</th>
+                <th style="width: 80px;">IFSC Code</th>
+                <th style="width: 85px;">Total Amount</th>
+                <th>Sub Voucher Details</th>
+                <th style="width: 90px;">Deductions<br/>(I.Tax / GST)</th>
+                <th style="width: 95px;">Net RTGS</th>
+                <th style="width: 95px;">PAN & GSTIN</th>
               </tr>
             </thead>
             <tbody>
@@ -6830,12 +6867,12 @@ export default function App() {
             </tbody>
             <tfoot>
               <tr>
-                <td colspan="2" style="text-align: right; font-weight: bold;">TOTAL: -</td>
+                <td colspan="4" style="text-align: right; font-weight: bold;">TOTAL: -</td>
                 <td style="text-align: right; font-weight: bold;">₹${totalGrossAmt.toLocaleString('en-IN')}</td>
-                <td style="text-align: right; color:#b91c1c; font-weight: bold;">₹${totalITaxAmt.toLocaleString('en-IN')}</td>
-                <td style="text-align: right; color:#6b21a8; font-weight: bold;">₹${totalGstAmt.toLocaleString('en-IN')}</td>
+                <td style="text-align: center;">-</td>
+                <td style="text-align: right; color:#b91c1c; font-weight: bold;">₹${(totalITaxAmt + totalGstAmt).toLocaleString('en-IN')}</td>
                 <td style="text-align: right; color:#064e3b; font-weight: bold;">₹${totalNetRtgsAmt.toLocaleString('en-IN')}</td>
-                <td colspan="3"></td>
+                <td></td>
               </tr>
             </tfoot>
           </table>
@@ -8656,34 +8693,218 @@ export default function App() {
   const renderReports = () => {
     const downloadPDF = (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
       const doc = new jsPDF('landscape');
-      doc.setFontSize(16);
-      doc.text(title, 14, 15);
+      const fyName = fys.find(f => f.id === selectedFY)?.name || selectedFY;
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`${title} - FY ${fyName}`, 14, 14);
       
-      let finalY = 15;
+      let finalY = 16;
 
       if (abstractData.length > 0) {
-        doc.setFontSize(12);
-        doc.text("SOE Abstract Summary", 14, 25);
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.text("SOE Abstract Summary", 14, finalY + 8);
         autoTable(doc, {
           head: [abstractHeaders],
           body: abstractData,
-          startY: 30,
-          styles: { fontSize: 7 },
-          headStyles: { fillColor: [5, 150, 105] }
+          startY: finalY + 12,
+          theme: 'grid',
+          showHead: 'everyPage',
+          pageBreak: 'auto',
+          styles: { fontSize: 7, cellPadding: 1.5 },
+          headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontStyle: 'bold' }
         });
-        finalY = (doc as any).lastAutoTable.finalY || 30;
+        finalY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 8 : 35;
       }
 
-      doc.setFontSize(12);
-      doc.text("Detailed Range-wise Report", 14, finalY + 15);
-      autoTable(doc, {
-        head: [detailedHeaders],
-        body: detailedData,
-        startY: finalY + 20,
-        styles: { fontSize: 7 },
-        headStyles: { fillColor: [5, 150, 105] }
-      });
+      if (detailedData.length > 0) {
+        if (finalY > 175) {
+          doc.addPage();
+          finalY = 14;
+        }
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.text("Detailed Range-wise Report", 14, finalY + 6);
+        autoTable(doc, {
+          head: [detailedHeaders],
+          body: detailedData,
+          startY: finalY + 10,
+          theme: 'grid',
+          showHead: 'everyPage',
+          pageBreak: 'auto',
+          styles: { fontSize: 7, cellPadding: 1.5 },
+          headStyles: { fillColor: [5, 150, 105], textColor: [255, 255, 255], fontStyle: 'bold' }
+        });
+      }
       doc.save(`${title.toLowerCase().replace(/\s+/g, '_')}.pdf`);
+    };
+
+    const downloadLedgerPDF = () => {
+      const doc = new jsPDF('landscape');
+      const fyName = fys.find(f => f.id === selectedFY)?.name || selectedFY;
+      doc.setFontSize(14);
+      doc.setFont('helvetica', 'bold');
+      doc.text(`Scheme Wise Allocation & Expenditure Ledger - FY ${fyName}`, 14, 14);
+
+      // Build groups
+      const ledgerGroups: Record<string, { hierarchy: string, soeName: string, totalAllocation: number, items: any[] }> = {};
+      const filteredAllocations = currentAllocations.filter(alloc => {
+        const sch = schemes.find(s => s.id === alloc.schemeId);
+        const sec = sectors.find(s => s.id === alloc.sectorId);
+        const act = activities.find(a => a.id === alloc.activityId);
+        const sa = subActivities.find(s => s.id === alloc.subActivityId);
+        const r = ranges.find(r => r.id === alloc.rangeId);
+        const rangeName = r?.name === 'Rajgarh Forest Division' ? 'Division' : (r?.name || '');
+        
+        const matchesFilters = (
+          (!reportFilters.scheme || sch?.name === reportFilters.scheme) &&
+          (!reportFilters.sector || sec?.name === reportFilters.sector) &&
+          (!reportFilters.activity || act?.name === reportFilters.activity) &&
+          (!reportFilters.subActivity || sa?.name === reportFilters.subActivity) &&
+          (!reportFilters.range || rangeName === reportFilters.range)
+        );
+        if (!matchesFilters) return false;
+        if (ledgerSearchTerm) {
+          const searchLower = ledgerSearchTerm.toLowerCase();
+          const soeNames = alloc.fundedSOEs?.map(f => soes.find(s => s.id === f.soeId)?.name).filter(Boolean).join(' ') || '';
+          const hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+          return (
+            hierarchy.toLowerCase().includes(searchLower) ||
+            soeNames.toLowerCase().includes(searchLower) ||
+            rangeName.toLowerCase().includes(searchLower) ||
+            alloc.remarks?.toLowerCase().includes(searchLower)
+          );
+        }
+        return true;
+      });
+
+      filteredAllocations.forEach(alloc => {
+        alloc.fundedSOEs?.forEach(f => {
+          const soe = soes.find(s => s.id === f.soeId);
+          if (!soe) return;
+          let hierarchy = '';
+          if (alloc.subActivityId) {
+            const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+            const act = activities.find(a => a.id === sa?.activityId);
+            const sec = sectors.find(sec => sec.id === act?.sectorId);
+            const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+            hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+          } else if (alloc.activityId) {
+            const act = activities.find(a => a.id === alloc.activityId);
+            const sec = sectors.find(sec => sec.id === act?.sectorId);
+            const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+            hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+          }
+          const key = `${hierarchy}-${soe.name}`;
+          if (!ledgerGroups[key]) {
+            ledgerGroups[key] = { hierarchy, soeName: soe.name, totalAllocation: 0, items: [] };
+          }
+          ledgerGroups[key].totalAllocation += f.amount;
+        });
+      });
+
+      currentExpenses.forEach(exp => {
+        const alloc = filteredAllocations.find(a => a.id === exp.allocationId);
+        if (!alloc) return;
+        const soe = soes.find(s => s.id === exp.soeId);
+        if (!soe) return;
+        let hierarchy = '';
+        if (alloc.subActivityId) {
+          const sa = subActivities.find(sa => sa.id === alloc.subActivityId);
+          const act = activities.find(a => a.id === sa?.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name, sa?.name].filter(Boolean).join(' > ');
+        } else if (alloc.activityId) {
+          const act = activities.find(a => a.id === alloc.activityId);
+          const sec = sectors.find(sec => sec.id === act?.sectorId);
+          const sch = schemes.find(sc => sc.id === (sec ? sec.schemeId : act?.schemeId));
+          hierarchy = [sch?.name, sec?.name, act?.name].filter(Boolean).join(' > ');
+        }
+        const key = `${hierarchy}-${soe.name}`;
+        if (ledgerGroups[key]) {
+          ledgerGroups[key].items.push({
+            date: exp.date,
+            expenditure: exp.amount,
+            status: exp.status || 'pending'
+          });
+        }
+      });
+
+      const sortedGroups = Object.values(ledgerGroups).sort((a, b) => a.hierarchy.localeCompare(b.hierarchy) || a.soeName.localeCompare(b.soeName));
+
+      let currentY = 22;
+      sortedGroups.forEach((group, idx) => {
+        if (currentY > 160) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        doc.setFontSize(9.5);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(5, 150, 105);
+        doc.text(`${idx + 1}. ${group.soeName} [${group.hierarchy}]`, 14, currentY);
+        doc.setTextColor(30, 64, 175);
+        doc.text(`Total Allocation: Rs. ${Math.round(group.totalAllocation).toLocaleString('en-IN')}`, 280, currentY, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+
+        currentY += 4;
+
+        const head = [['S.No', 'Date', 'Allocation (Rs)', 'Expenditure (Rs)', 'Status', 'Balance (Rs)']];
+        const sortedItems = [...group.items].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        let runningBalance = group.totalAllocation;
+        let totalExp = 0;
+
+        const body = [
+          ['1', 'Allocation Date', Math.round(group.totalAllocation).toLocaleString('en-IN'), '-', '-', Math.round(runningBalance).toLocaleString('en-IN')]
+        ];
+
+        sortedItems.forEach((item, itemIdx) => {
+          const isRejected = item.status === 'rejected';
+          if (!isRejected) {
+            runningBalance -= item.expenditure;
+            totalExp += item.expenditure;
+          }
+          body.push([
+            String(itemIdx + 2),
+            item.date ? item.date.split('-').reverse().join('/') : '-',
+            '-',
+            Math.round(item.expenditure).toLocaleString('en-IN'),
+            item.status ? item.status.toUpperCase() : 'PENDING',
+            Math.round(runningBalance).toLocaleString('en-IN')
+          ]);
+        });
+
+        const foot = [
+          ['', 'TOTAL', Math.round(group.totalAllocation).toLocaleString('en-IN'), Math.round(totalExp).toLocaleString('en-IN'), '-', Math.round(runningBalance).toLocaleString('en-IN')]
+        ];
+
+        autoTable(doc, {
+          startY: currentY,
+          head,
+          body,
+          foot,
+          theme: 'grid',
+          showHead: 'everyPage',
+          pageBreak: 'auto',
+          styles: { fontSize: 7.5, cellPadding: 1.5 },
+          headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: 'bold' },
+          footStyles: { fillColor: [245, 245, 245], textColor: [0, 0, 0], fontStyle: 'bold' },
+          columnStyles: {
+            0: { halign: 'center', cellWidth: 14 },
+            1: { cellWidth: 35 },
+            2: { halign: 'right', cellWidth: 48 },
+            3: { halign: 'right', cellWidth: 48 },
+            4: { halign: 'center', cellWidth: 32 },
+            5: { halign: 'right', cellWidth: 48, fontStyle: 'bold' }
+          }
+        });
+
+        currentY = (doc as any).lastAutoTable?.finalY ? (doc as any).lastAutoTable.finalY + 10 : currentY + 30;
+      });
+
+      doc.save(`Scheme_Wise_Ledger_FY_${fyName.replace(/[/\\?%*:|"<>]/g, '_')}.pdf`);
     };
 
     const downloadExcel = async (title: string, abstractData: any[], abstractHeaders: string[], detailedData: any[], detailedHeaders: string[]) => {
@@ -10429,9 +10650,20 @@ export default function App() {
 
     return (
       <div className="mt-10">
-        <h4 className="text-md font-bold text-gray-800 mb-4 flex items-center gap-2">
-          <FileText className="w-4 h-4 text-emerald-600" /> Scheme Wise Allocation and Expenditure Details
-        </h4>
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+          <h4 className="text-md font-bold text-gray-800 flex items-center gap-2">
+            <FileText className="w-4 h-4 text-emerald-600" /> Scheme Wise Allocation and Expenditure Details
+          </h4>
+          <button
+            type="button"
+            onClick={downloadLedgerPDF}
+            className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
+            title="Download Scheme Wise Ledger as PDF"
+          >
+            <Download className="w-4 h-4" />
+            <span>Download Ledger PDF</span>
+          </button>
+        </div>
         <div className="space-y-8">
           {sortedGroups.map((group, gIdx) => {
             // Sort items by date
@@ -12892,91 +13124,121 @@ export default function App() {
                             <thead>
                               <tr className="bg-gray-100 font-bold text-gray-800 border-b border-gray-200">
                                 <th className="p-2 w-8 text-center border-r">#</th>
-                                <th className="p-2 border-r min-w-[120px]">Name & Address</th>
-                                <th className="p-2 border-r text-right">Total Amt (₹)</th>
-                                <th className="p-2 border-r text-right">I/Tax (1%)</th>
-                                <th className="p-2 border-r text-right">GST TDS (2%)</th>
-                                <th className="p-2 border-r text-right">Net RTGS (₹)</th>
-                                <th className="p-2 border-r">A/C No. & IFSC</th>
+                                <th className="p-2 border-r min-w-[130px]">Name & Address</th>
+                                <th className="p-2 border-r">A/C No.</th>
+                                <th className="p-2 border-r">IFSC Code</th>
+                                <th className="p-2 border-r text-right font-bold">Total Amt (₹)</th>
+                                <th className="p-2 border-r min-w-[140px]">Sub Voucher Details</th>
+                                <th className="p-2 border-r text-right">Deductions (IT+GST)</th>
+                                <th className="p-2 border-r text-right font-bold text-emerald-900">Net RTGS (₹)</th>
                                 <th className="p-2 border-r">PAN & GSTIN</th>
                                 <th className="p-2 text-center w-16">Action</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-200">
-                              {memoPayeeEntries.map((entry, idx) => (
-                                <tr key={idx} className={editingEntryIndex === idx ? 'bg-amber-50 font-medium' : 'hover:bg-gray-50'}>
-                                  <td className="p-2 text-center font-bold text-gray-500 border-r">{idx + 1}</td>
-                                  <td className="p-2 border-r">
-                                    <div className="font-bold text-gray-900">{entry.name}</div>
-                                    {entry.address && <div className="text-[10px] text-gray-500">{entry.address}</div>}
-                                    {entry.subVouchers && entry.subVouchers.length > 0 && (
-                                      <div className="mt-1 text-[10px] text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 inline-block font-medium">
-                                        Sub-vouchers ({entry.subVouchers.length}): {entry.subVouchers.map(sv => `${sv.voucherNo ? sv.voucherNo + ': ' : ''}₹${Math.round(sv.amount).toLocaleString('en-IN')}`).join(', ')}
+                              {memoPayeeEntries.map((entry, idx) => {
+                                const iTax = Math.round(Number(entry.iTaxAmount) || 0);
+                                const gst = Math.round(Number(entry.gstAmount) || 0);
+                                const totDed = iTax + gst;
+
+                                return (
+                                  <tr key={idx} className={editingEntryIndex === idx ? 'bg-amber-50 font-medium' : 'hover:bg-gray-50'}>
+                                    <td className="p-2 text-center font-bold text-gray-500 border-r">{idx + 1}</td>
+                                    <td className="p-2 border-r">
+                                      <div className="font-bold text-gray-900">{entry.name}</div>
+                                      {entry.address && <div className="text-[10px] text-gray-500">{entry.address}</div>}
+                                    </td>
+                                    <td className="p-2 border-r font-mono text-[10.5px] font-semibold">
+                                      {entry.accountNumber || '-'}
+                                    </td>
+                                    <td className="p-2 border-r font-mono text-[10.5px]">
+                                      {entry.ifscCode || '-'}
+                                    </td>
+                                    <td className="p-2 text-right font-bold border-r">
+                                      ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="p-2 border-r text-[10px]">
+                                      {entry.subVouchers && entry.subVouchers.length > 0 ? (
+                                        <div className="space-y-0.5 text-emerald-800">
+                                          {entry.subVouchers.map((sv, sIdx) => (
+                                            <div key={sIdx} className="leading-tight">
+                                              <span className="font-semibold">{sIdx + 1}.</span> {sv.voucherNo ? `[${sv.voucherNo}] ` : ''}₹{Math.round(sv.amount).toLocaleString('en-IN')}{sv.description ? ` (${sv.description})` : ''}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span className="text-gray-500 italic">Single Bill</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-right border-r">
+                                      {totDed > 0 ? (
+                                        <div>
+                                          <span className="font-bold text-red-700">₹{totDed.toLocaleString('en-IN')}</span>
+                                          <div className="text-[9.5px] text-gray-500">
+                                            {iTax > 0 && <span>IT: ₹{iTax.toLocaleString('en-IN')} </span>}
+                                            {gst > 0 && <span>GST: ₹{gst.toLocaleString('en-IN')}</span>}
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <span className="text-gray-400">Nil (₹0)</span>
+                                      )}
+                                    </td>
+                                    <td className="p-2 text-right font-black text-emerald-900 border-r">
+                                      ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="p-2 border-r font-mono text-[10px]">
+                                      <div>PAN: {entry.panNumber || 'N/A'}</div>
+                                      {entry.gstNumber && <div className="text-gray-500">GST: {entry.gstNumber}</div>}
+                                    </td>
+                                    <td className="p-2 text-center">
+                                      <div className="flex items-center justify-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleEditPayeeEntryInForm(idx)}
+                                          className="p-1 text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
+                                          title="Edit Row"
+                                        >
+                                          <Edit2 className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemovePayeeEntryFromForm(idx)}
+                                          className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
+                                          title="Remove Payee"
+                                        >
+                                          <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
                                       </div>
-                                    )}
-                                  </td>
-                                  <td className="p-2 text-right font-bold border-r">
-                                    ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="p-2 text-right text-red-600 font-medium border-r">
-                                    ₹{Math.round(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="p-2 text-right text-purple-600 font-medium border-r">
-                                    ₹{Math.round(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="p-2 text-right font-black text-emerald-800 border-r">
-                                    ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
-                                  </td>
-                                  <td className="p-2 border-r font-mono text-[10px]">
-                                    <div>{entry.accountNumber}</div>
-                                    <div className="text-gray-500">{entry.ifscCode}</div>
-                                  </td>
-                                  <td className="p-2 border-r font-mono text-[10px]">
-                                    <div>PAN: {entry.panNumber || 'N/A'}</div>
-                                    {entry.gstNumber && <div className="text-gray-500">GST: {entry.gstNumber}</div>}
-                                  </td>
-                                  <td className="p-2 text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => handleEditPayeeEntryInForm(idx)}
-                                        className="p-1 text-blue-600 hover:bg-blue-50 rounded cursor-pointer"
-                                        title="Edit Row"
-                                      >
-                                        <Edit2 className="w-3.5 h-3.5" />
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemovePayeeEntryFromForm(idx)}
-                                        className="p-1 text-red-600 hover:bg-red-50 rounded cursor-pointer"
-                                        title="Remove Payee"
-                                      >
-                                        <Trash2 className="w-3.5 h-3.5" />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
                             </tbody>
                             <tfoot>
-                              <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-300">
-                                <td colSpan={2} className="p-2 text-right uppercase border-r">
-                                  Total:
-                                </td>
-                                <td className="p-2 text-right text-xs text-gray-900 border-r">
-                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0)).toLocaleString('en-IN')}
-                                </td>
-                                <td className="p-2 text-right text-xs text-red-700 border-r">
-                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.iTaxAmount) || 0), 0)).toLocaleString('en-IN')}
-                                </td>
-                                <td className="p-2 text-right text-xs text-purple-700 border-r">
-                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.gstAmount) || 0), 0)).toLocaleString('en-IN')}
-                                </td>
-                                <td className="p-2 text-right text-xs font-black text-emerald-900 border-r">
-                                  ₹{Math.round(memoPayeeEntries.reduce((a, b) => a + (Number(b.netRtgsAmount) || 0), 0)).toLocaleString('en-IN')}
-                                </td>
-                                <td colSpan={3}></td>
-                              </tr>
+                              {(() => {
+                                const totGross = memoPayeeEntries.reduce((a, b) => a + (Number(b.totalAmount) || 0), 0);
+                                const totIT = memoPayeeEntries.reduce((a, b) => a + (Number(b.iTaxAmount) || 0), 0);
+                                const totGST = memoPayeeEntries.reduce((a, b) => a + (Number(b.gstAmount) || 0), 0);
+                                const totNet = memoPayeeEntries.reduce((a, b) => a + (Number(b.netRtgsAmount) || 0), 0);
+                                return (
+                                  <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-300">
+                                    <td colSpan={4} className="p-2 text-right uppercase border-r">
+                                      Total: -
+                                    </td>
+                                    <td className="p-2 text-right text-xs text-gray-900 border-r">
+                                      ₹{Math.round(totGross).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="p-2 text-center border-r text-gray-400">-</td>
+                                    <td className="p-2 text-right text-xs text-red-700 border-r">
+                                      ₹{Math.round(totIT + totGST).toLocaleString('en-IN')}
+                                    </td>
+                                    <td className="p-2 text-right text-xs font-black text-emerald-900 border-r">
+                                      ₹{Math.round(totNet).toLocaleString('en-IN')}
+                                    </td>
+                                    <td colSpan={2}></td>
+                                  </tr>
+                                );
+                              })()}
                             </tfoot>
                           </table>
                         </div>
@@ -13299,53 +13561,74 @@ export default function App() {
                         <tr className="bg-gray-100 text-gray-900 font-bold border-b border-gray-900 text-center">
                           <th className="p-2 border-r border-gray-900 w-8">Sr. No.</th>
                           <th className="p-2 border-r border-gray-900 min-w-[130px]">Name & Address</th>
-                          <th className="p-2 border-r border-gray-900 text-right">Total Amount</th>
-                          <th className="p-2 border-r border-gray-900 text-right">I/Tax 01%</th>
-                          <th className="p-2 border-r border-gray-900 text-right">GST TDS 02%</th>
-                          <th className="p-2 border-r border-gray-900 text-right">Net Amount RTGS</th>
                           <th className="p-2 border-r border-gray-900">Account No.</th>
                           <th className="p-2 border-r border-gray-900">IFSC Code</th>
+                          <th className="p-2 border-r border-gray-900 text-right">Total Amount</th>
+                          <th className="p-2 border-r border-gray-900 min-w-[150px]">Sub Voucher Details</th>
+                          <th className="p-2 border-r border-gray-900 text-right">Deductions (I.Tax + GST)</th>
+                          <th className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">Net Amount RTGS</th>
                           <th className="p-2">PAN & GSTIN</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-800">
                         {viewingMemo.payeeEntries && viewingMemo.payeeEntries.length > 0 ? (
-                          viewingMemo.payeeEntries.map((entry, idx) => (
-                            <tr key={idx} className="border-b border-gray-400">
-                              <td className="p-2 border-r border-gray-900 text-center font-medium">{idx + 1}</td>
-                              <td className="p-2 border-r border-gray-900 font-semibold">
-                                <div>{entry.name}</div>
-                                {entry.address && <div className="text-[10px] text-gray-600 font-normal">{entry.address}</div>}
-                                {entry.subVouchers && entry.subVouchers.length > 0 && (
-                                  <div className="mt-1 text-[10px] text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 font-normal">
-                                    Sub-vouchers: {entry.subVouchers.map(sv => `${sv.voucherNo ? sv.voucherNo + ': ' : ''}₹${Math.round(sv.amount).toLocaleString('en-IN')}${sv.description ? ' (' + sv.description + ')' : ''}`).join(', ')}
-                                  </div>
-                                )}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 text-right font-bold">
-                                ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 text-right text-red-700 font-medium">
-                                ₹{Math.round(Number(entry.iTaxAmount) || 0).toLocaleString('en-IN')}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 text-right text-purple-700 font-medium">
-                                ₹{Math.round(Number(entry.gstAmount) || 0).toLocaleString('en-IN')}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">
-                                ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 font-mono text-[11px] font-bold">
-                                {entry.accountNumber}
-                              </td>
-                              <td className="p-2 border-r border-gray-900 font-mono text-[11px]">
-                                {entry.ifscCode}
-                              </td>
-                              <td className="p-2 font-mono text-[10px]">
-                                <div>PAN: {entry.panNumber || 'N/A'}</div>
-                                {entry.gstNumber && <div className="text-gray-600">GST: {entry.gstNumber}</div>}
-                              </td>
-                            </tr>
-                          ))
+                          viewingMemo.payeeEntries.map((entry, idx) => {
+                            const iTax = Math.round(Number(entry.iTaxAmount) || 0);
+                            const gst = Math.round(Number(entry.gstAmount) || 0);
+                            const totDed = iTax + gst;
+
+                            return (
+                              <tr key={idx} className="border-b border-gray-400">
+                                <td className="p-2 border-r border-gray-900 text-center font-medium">{idx + 1}</td>
+                                <td className="p-2 border-r border-gray-900 font-semibold">
+                                  <div>{entry.name}</div>
+                                  {entry.address && <div className="text-[10px] text-gray-600 font-normal">{entry.address}</div>}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 font-mono text-[11px] font-bold">
+                                  {entry.accountNumber || '-'}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 font-mono text-[11px]">
+                                  {entry.ifscCode || '-'}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 text-right font-bold">
+                                  ₹{Math.round(Number(entry.totalAmount) || 0).toLocaleString('en-IN')}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 text-[10.5px]">
+                                  {entry.subVouchers && entry.subVouchers.length > 0 ? (
+                                    <div className="space-y-0.5 text-emerald-900">
+                                      {entry.subVouchers.map((sv, sIdx) => (
+                                        <div key={sIdx} className="leading-tight">
+                                          <span className="font-semibold">{sIdx + 1}.</span> {sv.voucherNo ? `[${sv.voucherNo}] ` : ''}₹{Math.round(sv.amount).toLocaleString('en-IN')}{sv.description ? ` (${sv.description})` : ''}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-500 italic">Single Bill</span>
+                                  )}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 text-right">
+                                  {totDed > 0 ? (
+                                    <div>
+                                      <span className="font-bold text-red-800">₹{totDed.toLocaleString('en-IN')}</span>
+                                      <div className="text-[9.5px] text-gray-600">
+                                        {iTax > 0 && <span>IT: ₹{iTax.toLocaleString('en-IN')} </span>}
+                                        {gst > 0 && <span>GST: ₹{gst.toLocaleString('en-IN')}</span>}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">Nil (₹0)</span>
+                                  )}
+                                </td>
+                                <td className="p-2 border-r border-gray-900 text-right font-black text-emerald-950">
+                                  ₹{Math.round(Number(entry.netRtgsAmount) || 0).toLocaleString('en-IN')}
+                                </td>
+                                <td className="p-2 font-mono text-[10px]">
+                                  <div>PAN: {entry.panNumber || 'N/A'}</div>
+                                  {entry.gstNumber && <div className="text-gray-600">GST: {entry.gstNumber}</div>}
+                                </td>
+                              </tr>
+                            );
+                          })
                         ) : (
                           <tr>
                             <td colSpan={9} className="p-4 text-center text-gray-500 italic">No payee entries recorded.</td>
@@ -13354,22 +13637,20 @@ export default function App() {
                       </tbody>
                       <tfoot>
                         <tr className="bg-gray-100 font-extrabold text-gray-900 border-t-2 border-gray-900">
-                          <td colSpan={2} className="p-2.5 text-right uppercase border-r border-gray-900">
+                          <td colSpan={4} className="p-2.5 text-right uppercase border-r border-gray-900">
                             Total: -
                           </td>
                           <td className="p-2.5 text-right font-black text-xs border-r border-gray-900">
                             ₹{totalGrossAmt.toLocaleString('en-IN')}
                           </td>
+                          <td className="p-2.5 text-center border-r border-gray-900 text-gray-400">-</td>
                           <td className="p-2.5 text-right font-black text-xs text-red-800 border-r border-gray-900">
-                            ₹{totalITaxAmt.toLocaleString('en-IN')}
-                          </td>
-                          <td className="p-2.5 text-right font-black text-xs text-purple-800 border-r border-gray-900">
-                            ₹{totalGstAmt.toLocaleString('en-IN')}
+                            ₹{(totalITaxAmt + totalGstAmt).toLocaleString('en-IN')}
                           </td>
                           <td className="p-2.5 text-right font-black text-sm text-emerald-950 border-r border-gray-900">
                             ₹{totalNetRtgsAmt.toLocaleString('en-IN')}
                           </td>
-                          <td colSpan={3} className="p-2.5"></td>
+                          <td className="p-2.5"></td>
                         </tr>
                       </tfoot>
                     </table>

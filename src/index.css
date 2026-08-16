@@ -68,15 +68,18 @@
 /* Cross-browser Print Styles */
 @media print {
   @page {
-    size: A4 landscape;
-    margin: 8mm;
+    size: auto;
+    margin: 8mm 10mm 10mm 10mm;
   }
   
   html, body {
     height: auto !important;
+    min-height: auto !important;
     overflow: visible !important;
     background: #ffffff !important;
     color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   /* Hide everything by default during print */
@@ -95,12 +98,12 @@
     visibility: visible !important;
   }
 
-  /* Position print-area at top left of printed page */
+  /* Position print-area cleanly with static flow so pages paginate naturally without extra blank pages */
   .print-area {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
+    position: static !important;
+    display: block !important;
     width: 100% !important;
+    max-width: 100% !important;
     max-height: none !important;
     height: auto !important;
     overflow: visible !important;
@@ -115,6 +118,7 @@
   /* Reset fixed overlays so modal containers don't restrict page flow or block interaction */
   .fixed, [class*="fixed"], [class*="overflow-"] {
     position: static !important;
+    display: block !important;
     max-height: none !important;
     height: auto !important;
     overflow: visible !important;
@@ -124,18 +128,30 @@
     border: none !important;
   }
 
-  /* Table styling for print */
-  .print-area table {
-    width: 100% !important;
-    border-collapse: collapse !important;
+  /* Repeat table headers on every printed page */
+  thead, thead tr {
+    display: table-header-group !important;
   }
 
-  .print-area th, .print-area td {
-    border: 1px solid #cbd5e1 !important;
+  tfoot, tfoot tr {
+    display: table-footer-group !important;
+  }
+
+  /* Table styling for print */
+  .print-area table, table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    page-break-inside: auto !important;
+    break-inside: auto !important;
+  }
+
+  .print-area th, .print-area td, th, td {
+    border: 1px solid #64748b !important;
     color: #000000 !important;
   }
 
-  .print-area tr {
+  .print-area tr, tr {
     page-break-inside: avoid !important;
+    break-inside: avoid !important;
   }
 }
